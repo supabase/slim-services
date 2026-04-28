@@ -1,0 +1,7 @@
+ARG BASE_IMAGE=gcr.io/distroless/cc-debian13:nonroot
+FROM ${BASE_IMAGE}
+ARG ARTIFACT_ROOT
+WORKDIR /opt/app/rel/logflare/bin
+COPY ${ARTIFACT_ROOT}/ /
+EXPOSE 4000
+ENTRYPOINT ["/usr/bin/sh", "/opt/app/rel/logflare/bin/run.sh"]

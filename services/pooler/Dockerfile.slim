@@ -1,0 +1,11 @@
+ARG BASE_IMAGE=gcr.io/distroless/cc-debian13
+FROM ${BASE_IMAGE}
+ARG ARTIFACT_ROOT
+WORKDIR /app
+ENV NODE_IP=127.0.0.1
+ENV ELIXIR_ERL_OPTIONS="+fnu"
+ENV RLIMIT_NOFILE=""
+COPY ${ARTIFACT_ROOT}/ /
+EXPOSE 4000
+ENTRYPOINT ["/usr/bin/tini", "-s", "-g", "--", "/usr/bin/sh", "/app/limits.sh"]
+CMD ["/usr/bin/sh", "/app/bin/server"]

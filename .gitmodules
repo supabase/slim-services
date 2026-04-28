@@ -1,0 +1,24 @@
+[submodule "sources/edge-runtime"]
+	path = sources/edge-runtime
+	url = https://github.com/supabase/edge-runtime
+[submodule "sources/studio"]
+	path = sources/studio
+	url = https://github.com/supabase/supabase
+[submodule "sources/pooler"]
+	path = sources/pooler
+	url = https://github.com/supabase/supavisor
+[submodule "sources/analytics"]
+	path = sources/analytics
+	url = https://github.com/Logflare/logflare
+[submodule "sources/storage"]
+	path = sources/storage
+	url = https://github.com/supabase/storage
+[submodule "sources/postgrest"]
+	path = sources/postgrest
+	url = https://github.com/PostgREST/postgrest
+[submodule "sources/realtime"]
+	path = sources/realtime
+	url = https://github.com/supabase/realtime
+[submodule "sources/pgmeta"]
+	path = sources/pgmeta
+	url = https://github.com/supabase/postgres-meta

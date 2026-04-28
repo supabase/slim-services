@@ -1,0 +1,8 @@
+ARG BASE_IMAGE=gcr.io/distroless/nodejs22-debian13:nonroot
+FROM ${BASE_IMAGE}
+ARG ARTIFACT_ROOT
+WORKDIR /app
+COPY ${ARTIFACT_ROOT}/ /
+EXPOSE 3000
+ENTRYPOINT ["/nodejs/bin/node", "/app/apps/studio/docker-entrypoint.mjs"]
+CMD ["/nodejs/bin/node", "apps/studio/server.js"]

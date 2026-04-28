@@ -1,0 +1,33 @@
+# syntax=docker/dockerfile:1.7
+ARG SOURCE_DIR=sources/edge-runtime
+ARG NIX_ATTR=edge-runtime
+
+FROM nixos/nix:2.24.9 AS builder
+ARG SOURCE_DIR
+ARG NIX_ATTR
+WORKDIR /work
+COPY ${SOURCE_DIR}/ ./edge-runtime/
+RUN rm -f ./edge-runtime/.git \
+  && nix --extra-experimental-features "nix-command flakes" build \
+      "path:/work/edge-runtime#${NIX_ATTR}" \
+      --out-link /tmp/edge-runtime-result
+
+FROM debian:bookworm-slim AS optimizer
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends binutils \
+  && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /tmp/edge-runtime-result/bin/.edge-runtime-wrapped /opt/edge-runtime/bin/edge-runtime
+COPY --from=builder /tmp/edge-runtime-result/lib/ /opt/edge-runtime/lib/
+RUN set -eux; \
+  strip --strip-unneeded /opt/edge-runtime/bin/edge-runtime || true; \
+  find /opt/edge-runtime/lib -type f -name '*.so*' -exec strip --strip-unneeded {} + || true; \
+  cd /opt/edge-runtime/lib; \
+  if [ -f libonnxruntime.so.1.24.4 ]; then \
+    rm -f libonnxruntime.so libonnxruntime.so.1; \
+    ln -s libonnxruntime.so.1.24.4 libonnxruntime.so.1; \
+    ln -s libonnxruntime.so.1 libonnxruntime.so; \
+  fi
+
+FROM scratch AS artifact
+COPY --from=optimizer /opt/edge-runtime/bin/ /usr/local/bin/
+COPY --from=optimizer /opt/edge-runtime/lib/ /usr/local/lib/

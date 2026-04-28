@@ -1,0 +1,9 @@
+ARG BASE_IMAGE=gcr.io/distroless/nodejs20-debian13:nonroot
+FROM ${BASE_IMAGE}
+ARG ARTIFACT_ROOT
+WORKDIR /usr/src/app
+ENV PG_META_PORT=8080
+COPY ${ARTIFACT_ROOT}/ /
+EXPOSE 8080
+ENTRYPOINT ["/nodejs/bin/node"]
+CMD ["dist/server/server.js"]

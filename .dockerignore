@@ -1,0 +1,9 @@
+.git
+.DS_Store
+**/.DS_Store
+artifacts/*/*/*/*.tar
+artifacts/*/*/*/*.tar.gz
+artifacts/*/*/*/*.tar.zst
+artifacts/*/*/*/manifest.json
+tmp
+tmp/

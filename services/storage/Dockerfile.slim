@@ -1,0 +1,9 @@
+ARG BASE_IMAGE=gcr.io/distroless/nodejs24-debian13:nonroot
+FROM ${BASE_IMAGE}
+ARG ARTIFACT_ROOT
+WORKDIR /app
+ENV NODE_ENV=production
+COPY ${ARTIFACT_ROOT}/ /
+EXPOSE 5000
+ENTRYPOINT ["/nodejs/bin/node"]
+CMD ["dist/start/server.js"]
