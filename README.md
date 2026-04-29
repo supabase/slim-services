@@ -8,8 +8,8 @@ This repo asks a simple question:
 > files it actually needs?
 
 The answer, for the current Linux ARM64 pass, is promising: the full set of
-services drops from **1753.4 MiB** of upstream ARM64 images to **455.7 MiB** of
-current slim images, a reduction of **1297.7 MiB / 74.0%**.
+services drops from **1777.1 MiB** of upstream ARM64 images to **470.4 MiB** of
+current slim images, a reduction of **1306.7 MiB / 73.5%**.
 
 ## Project Goals
 
@@ -51,10 +51,11 @@ The approach is intentionally service-by-service:
 | Studio | `2026.04.27-sha-4afbe9c` | `294.2 MiB` | `128.4 MiB` | `56.4%` | Distroless Node 22 Debian 13 | [report](services/studio/REPORT.md) |
 | Edge Runtime | `v1.73.15` | `360.6 MiB` | `60.8 MiB` | `83.1%` | Distroless base Debian 13 | [report](services/edge-runtime/REPORT.md) |
 | Analytics | `v1.39.2` | `257.0 MiB` | `89.4 MiB` | `65.2%` | Distroless cc Debian 13 | [report](services/analytics/REPORT.md) |
-| Realtime | `v2.87.0` | `122.8 MiB` | `24.0 MiB` | `80.5%` | Distroless cc Debian 13 | [report](services/realtime/REPORT.md) |
+| Realtime | `v2.87.0` | `122.8 MiB` | `28.5 MiB` | `76.8%` | Distroless cc Debian 13 | [report](services/realtime/REPORT.md) |
 | Pooler | `v2.9.2` | `287.1 MiB`* | `24.3 MiB` | `91.5%`* | Distroless cc Debian 13 | [report](services/pooler/REPORT.md) |
 | PgMeta | `v0.96.4` | `94.3 MiB` | `52.1 MiB` | `44.8%` | Distroless Node 20 Debian 13 | [report](services/pgmeta/REPORT.md) |
 | Storage | `v1.55.3` | `211.4 MiB` | `55.5 MiB` | `73.7%` | Distroless Node 24 Debian 13 | [report](services/storage/REPORT.md) |
+| Auth | `v2.189.0` | `23.7 MiB` | `10.2 MiB` | `57.0%` | `scratch` | [report](services/auth/REPORT.md) |
 
 `*` Pooler upstream comparison uses `supabase/supavisor:2.7.4`, because
 `supabase/supavisor:2.9.2` was not published on Docker Hub during this pass.
@@ -186,14 +187,18 @@ scripts/measure-artifact.sh <artifact-rootfs> [archive] [image-tag]
   pruning and ONNX runtime cleanup.
 - [Analytics](services/analytics/REPORT.md): adopted native stripping,
   sourcemap-gzip pruning, curl removal, and base-library dedupe.
-- [Realtime](services/realtime/REPORT.md): adopted local/CI launcher and
-  base-library dedupe; Alpine experiment rejected.
+- [Realtime](services/realtime/REPORT.md): adopted production-ready launcher
+  aligned with upstream PR #1837 and base-library dedupe; Alpine experiment
+  rejected.
 - [Pooler](services/pooler/REPORT.md): adopted POSIX launcher, native stripping,
   and base-library dedupe.
 - [PgMeta](services/pgmeta/REPORT.md): Rolldown and Sentryless experiments
   worked but were too small to adopt.
 - [Storage](services/storage/REPORT.md): adopted Rolldown emitted-JS bundle with
   minification and no dependency shims.
+- [Auth](services/auth/REPORT.md): static Go executable runs from `scratch`;
+  phase 2 repeats phase 1 because further binary-level experiments are not
+  worth carrying.
 
 ## Design Principles
 

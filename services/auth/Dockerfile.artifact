@@ -1,0 +1,35 @@
+# syntax=docker/dockerfile:1.7
+ARG SOURCE_DIR=sources/auth
+ARG SERVICE_VERSION=dev
+
+FROM --platform=$BUILDPLATFORM golang:1.25.8-alpine3.23 AS builder
+ARG SOURCE_DIR
+ARG SERVICE_VERSION
+ARG TARGETOS
+ARG TARGETARCH
+ENV CGO_ENABLED=0 \
+    GOOS=${TARGETOS:-linux} \
+    GOARCH=${TARGETARCH:-arm64}
+WORKDIR /src
+COPY ${SOURCE_DIR}/go.mod ${SOURCE_DIR}/go.sum ./
+RUN go mod download && go mod verify
+COPY ${SOURCE_DIR}/ ./
+RUN go build \
+  -trimpath \
+  -buildvcs=false \
+  -ldflags "-s -w -X github.com/supabase/auth/internal/utilities.Version=${SERVICE_VERSION}" \
+  -o /out/auth \
+  .
+
+FROM alpine:3.23 AS rootfs
+RUN apk add --no-cache ca-certificates \
+  && mkdir -p /rootfs/usr/local/bin /rootfs/etc/ssl/certs /rootfs/etc \
+  && cp /etc/ssl/certs/ca-certificates.crt /rootfs/etc/ssl/certs/ca-certificates.crt \
+  && printf 'root:x:0:0:root:/root:/sbin/nologin\nsupabase:x:1000:1000:supabase:/nonexistent:/sbin/nologin\n' > /rootfs/etc/passwd \
+  && printf 'root:x:0:\nsupabase:x:1000:\n' > /rootfs/etc/group
+COPY --from=builder /out/auth /rootfs/usr/local/bin/auth
+RUN ln -s auth /rootfs/usr/local/bin/gotrue \
+  && chmod 0755 /rootfs/usr/local/bin/auth
+
+FROM scratch AS artifact
+COPY --from=rootfs /rootfs/ /

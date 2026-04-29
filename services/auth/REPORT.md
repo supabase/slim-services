@@ -1,0 +1,71 @@
+# Auth Slim Image Report
+
+Self-contained report for the Auth Linux ARM64 slim-image work.
+
+Last updated: 2026-04-29
+
+## Summary
+
+Auth keeps its phase 1 slim image as the current best image. The service builds
+as a static Go executable with embedded migrations, so the first working
+artifact runs from `scratch` with only the binary, the `gotrue` compatibility
+symlink, CA certificates, and minimal user metadata.
+
+## Measurements
+
+| Metric | Size |
+|---|---:|
+| Upstream ARM64 image, `supabase/gotrue:v2.189.0` | `23.7 MiB` compressed |
+| Phase 1 slim image, `local/auth:slim-v2.189.0-arm64` | `10.2 MiB` compressed |
+| Current phase 2 slim image, `local/auth:slim-v2.189.0-arm64` | `10.2 MiB` compressed |
+| Current reduction vs upstream | `13.5 MiB / 57.0%` |
+| Current artifact archive | `10.3 MiB` |
+| Current rootfs | `28.3 MiB` |
+| Current local image virtual size | `28.1 MiB` |
+| Upstream local image virtual size | `48.9 MiB` |
+
+## Build Contract
+
+- Current backend: source submodule build.
+- Source ref: `v2.189.0`.
+- Upstream image: `supabase/gotrue:v2.189.0`.
+- Runtime base: `scratch`.
+- Entrypoint: `/usr/local/bin/auth`.
+- Smoke test: `/health` returns `200` against a temporary Postgres.
+- `sources/auth` is read-only.
+
+## Phase 1 Packaging
+
+- Builds the upstream Go service with `CGO_ENABLED=0`.
+- Uses `-trimpath`, `-buildvcs=false`, and stripped linker flags.
+- Copies `/usr/local/bin/auth` into the artifact and keeps `/usr/local/bin/gotrue`
+  as a compatibility symlink.
+- Copies the CA certificate bundle for outbound OAuth/OIDC/SMTP/TLS use cases.
+- Does not copy the upstream `migrations/` directory because migrations are
+  embedded in the executable in `v2.189.0`.
+- Runs the final image as UID/GID `1000:1000` from `scratch`.
+
+## Phase 2 Decision
+
+Not adopted. Phase 1 already runs from `scratch` and the rootfs is only the
+static executable, `gotrue` symlink, CA bundle, and minimal user metadata. Any
+phase 2 work would be binary-level experimentation with limited expected gain,
+so the current phase 2 numbers repeat the phase 1 numbers.
+
+## Validation
+
+- Added `sources/auth` at `v2.189.0`.
+- Built source artifact from `sources/auth@v2.189.0`.
+- Built final image as `local/auth:slim-v2.189.0-arm64`.
+- Verified the binary is a stripped, statically linked Linux ARM64 executable.
+- Artifact-mode smoke passed.
+- Final image smoke passed with `/health` against a temporary Postgres.
+- Smoke creates the `auth` schema before startup because Auth migrations expect
+  the schema to already exist.
+- `sources/auth` remained clean.
+
+## Decision
+
+Adopted. Auth is already compact upstream, but the `scratch` image still saves
+`13.5 MiB` compressed while keeping the production executable and embedded
+migrations intact. No separate phase 2 optimization is worth carrying for now.

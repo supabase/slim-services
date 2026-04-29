@@ -4,7 +4,7 @@ Global summary for the Linux ARM64 slim-image experiment. Service-specific
 details now live next to each service recipe under `services/<service>/REPORT.md`
 so each owning team can read a self-contained report.
 
-Last updated: 2026-04-28
+Last updated: 2026-04-29
 
 ## Measurement Notes
 
@@ -26,11 +26,11 @@ Last updated: 2026-04-28
 
 | Metric | Compressed size |
 |---|---:|
-| Upstream ARM64 images total | `1753.4 MiB` |
-| Phase 1 slim images total | `532.2 MiB` |
-| Current best slim images total | `455.7 MiB` |
-| Current total reduction vs upstream | `1297.7 MiB / 74.0%` |
-| Current total reduction vs phase 1 | `76.5 MiB / 14.4%` |
+| Upstream ARM64 images total | `1777.1 MiB` |
+| Phase 1 slim images total | `542.4 MiB` |
+| Current best slim images total | `470.4 MiB` |
+| Current total reduction vs upstream | `1306.7 MiB / 73.5%` |
+| Current total reduction vs phase 1 | `72.0 MiB / 13.3%` |
 
 ## Service Summary
 
@@ -40,10 +40,11 @@ Last updated: 2026-04-28
 | `studio` | `2026.04.27-sha-4afbe9c` | `294.2 MiB` | `128.4 MiB` | `56.4%` | `nodejs22-debian13:nonroot` | Pass | [services/studio/REPORT.md](services/studio/REPORT.md) |
 | `edge-runtime` | `v1.73.15` | `360.6 MiB` | `60.8 MiB` | `83.1%` | `base-debian13:nonroot` | Pass | [services/edge-runtime/REPORT.md](services/edge-runtime/REPORT.md) |
 | `analytics` | `v1.39.2` | `257.0 MiB` | `89.4 MiB` | `65.2%` | `cc-debian13:nonroot` | Pass | [services/analytics/REPORT.md](services/analytics/REPORT.md) |
-| `realtime` | `v2.87.0` | `122.8 MiB` | `24.0 MiB` | `80.5%` | `cc-debian13` | Pass | [services/realtime/REPORT.md](services/realtime/REPORT.md) |
+| `realtime` | `v2.87.0` | `122.8 MiB` | `28.5 MiB` | `76.8%` | `cc-debian13` | Pass | [services/realtime/REPORT.md](services/realtime/REPORT.md) |
 | `pooler` | `v2.9.2` | `287.1 MiB`* | `24.3 MiB` | `91.5%`* | `cc-debian13` | Pass | [services/pooler/REPORT.md](services/pooler/REPORT.md) |
 | `pgmeta` | `v0.96.4` | `94.3 MiB` | `52.1 MiB` | `44.8%` | `nodejs20-debian13:nonroot` | Pass | [services/pgmeta/REPORT.md](services/pgmeta/REPORT.md) |
 | `storage` | `v1.55.3` | `211.4 MiB` | `55.5 MiB` | `73.7%` | `nodejs24-debian13:nonroot` | Pass | [services/storage/REPORT.md](services/storage/REPORT.md) |
+| `auth` | `v2.189.0` | `23.7 MiB` | `10.2 MiB` | `57.0%` | `scratch` | Pass | [services/auth/REPORT.md](services/auth/REPORT.md) |
 
 `*` Pooler note: Docker Hub does not currently publish
 `supabase/supavisor:2.9.2`. The upstream comparison uses the latest published
@@ -58,10 +59,11 @@ percentage is directional rather than exact.
 | `studio` | Not adopted. | Candidate local-dev profile can save `10.9 MiB`, but only if we accept disabling/degrading Sharp image optimization. |
 | `edge-runtime` | Adopted. | Nix/native artifact pruning reduced compressed size by `24.8 MiB`. |
 | `analytics` | Adopted. | Native stripping, sourcemap-gzip pruning, curl removal, and base-library dedupe reduced compressed size by `17.9 MiB`. |
-| `realtime` | Adopted. | Custom local/CI launcher plus base-library dedupe reduced compressed size by `9.7 MiB`. |
+| `realtime` | Adopted. | Production-ready launcher aligned with `supabase/realtime#1837` plus base-library dedupe reduced compressed size by `5.2 MiB`; the earlier `24.0 MiB` local/CI-only launcher was rejected as over-slimmed. |
 | `pooler` | Adopted. | POSIX launcher, native stripping, and base-library dedupe reduced compressed size by `2.5 MiB`. |
 | `pgmeta` | Not adopted. | Rolldown and Sentryless experiments saved only `2.4 MiB`, below the maintenance threshold. |
 | `storage` | Adopted. | Rolldown emitted-JS bundle with minification reduced compressed size by `21.6 MiB`. |
+| `auth` | Not adopted. | Static Go executable already runs from `scratch`; phase 2 repeats phase 1 because further binary-level experiments are not worth carrying. |
 
 ## Cross-Service Lessons
 

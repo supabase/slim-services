@@ -22,3 +22,6 @@
 [submodule "sources/pgmeta"]
 	path = sources/pgmeta
 	url = https://github.com/supabase/postgres-meta
+[submodule "sources/auth"]
+	path = sources/auth
+	url = https://github.com/supabase/auth
