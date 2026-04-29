@@ -30,11 +30,12 @@ RUN cd assets && npm install && cd .. && mix assets.deploy
 RUN mix compile
 COPY ${SOURCE_DIR}/config/runtime.exs config/
 COPY ${SOURCE_DIR}/rel rel
+COPY services/realtime/overlay/rel/env.sh.eex rel/env.sh.eex
 RUN mix release
 
 FROM ${RUNNER_IMAGE} AS runtime-deps
 RUN apt-get update -y && apt-get install -y --no-install-recommends \
-    busybox ca-certificates file libncurses5 libstdc++6 openssl tini util-linux \
+    busybox ca-certificates curl file libncurses5 libstdc++6 openssl tini util-linux \
   && update-ca-certificates \
   && rm -rf /var/lib/apt/lists/*
 RUN mkdir -p /rootfs/app /rootfs/usr/bin /rootfs/etc/ssl/certs
@@ -42,8 +43,8 @@ COPY --from=builder /app/_build/prod/rel/realtime /rootfs/app/
 COPY services/realtime/overlay/run.sh /rootfs/app/run.sh
 RUN cp /bin/busybox /rootfs/usr/bin/busybox \
   && ln -sf busybox /rootfs/usr/bin/sh \
-  && for applet in awk basename cat chmod cut date dd df dirname grep hostname mkdir od readlink rm sed sleep tr uname wc; do ln -sf busybox "/rootfs/usr/bin/${applet}"; done \
-  && for bin in env setpriv tini; do cp "$(command -v "${bin}")" "/rootfs/usr/bin/${bin}"; done \
+  && for applet in awk base64 basename cat chmod cut date dd df dirname grep head hostname mkdir mv od readlink rm sed sleep tr uname wc; do ln -sf busybox "/rootfs/usr/bin/${applet}"; done \
+  && for bin in curl env openssl setpriv tini; do cp "$(command -v "${bin}")" "/rootfs/usr/bin/${bin}"; done \
   && cp /etc/ssl/certs/ca-certificates.crt /rootfs/etc/ssl/certs/ca-certificates.crt \
   && printf 'root:x:0:0:root:/root:/usr/sbin/nologin\nnobody:x:65534:65534:nobody:/nonexistent:/usr/sbin/nologin\n' > /rootfs/etc/passwd \
   && printf 'root:x:0:\nnogroup:x:65534:\n' > /rootfs/etc/group \

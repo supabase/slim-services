@@ -1,3 +1,4 @@
 artifacts/
 tmp/
 .DS_Store
+.supabase/
