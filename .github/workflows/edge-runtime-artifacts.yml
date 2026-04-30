@@ -26,12 +26,12 @@ jobs:
         include:
           - target_os: linux
             arch: arm64
-            runner: ubuntu-24.04-arm
+            runner: blacksmith-8vcpu-ubuntu-2404-arm
             docker_platform: linux/arm64
             docker_image: true
           - target_os: linux
             arch: amd64
-            runner: ubuntu-24.04
+            runner: blacksmith-8vcpu-ubuntu-2404
             docker_platform: linux/amd64
             docker_image: true
           - target_os: darwin
