@@ -48,40 +48,22 @@ and publishes a multi-platform version tag:
 Archive filenames include service, version, and platform, for example:
 `edge-runtime-v1.73.15-linux-arm64.tar.zst`.
 
-The workflow installs Nix with `DeterminateSystems/nix-installer-action` and
-writes CI-built misses to GitHub Actions' Nix cache:
+The workflow installs Nix with `nixbuild/nix-quick-install-action` and caches
+the Nix store with `nix-community/cache-nix-action`:
 
-- `DeterminateSystems/magic-nix-cache-action` runs after Nix setup. It uses
-  GitHub Actions' cache as our private repo cache for store paths that CI has
-  to build itself, so later workflow runs can substitute them. Its default
-  upstream cache is `https://cache.nixos.org`, so paths fetched from the public
-  NixOS cache are not redundantly stored in GitHub Actions cache.
+- `nixbuild/nix-quick-install-action` installs single-user Nix on the runner.
+- `nix-community/cache-nix-action` restores and saves `/nix` using a cache key
+  scoped to the runner OS, target OS, target architecture, Edge Runtime
+  `flake.lock`, and our repo-owned Edge Runtime Nix overlay/recipe files.
 - `DeterminateSystems/flake-checker-action` checks
   `sources/edge-runtime/flake.lock` so we get early visibility into stale or
   unhealthy flake inputs.
 
-With this setup, Nix can read from `cache.nixos.org` and the GitHub-backed
-Magic Nix Cache. Store paths missing from those caches are built locally by the
-runner and then become available through the GitHub-backed cache on subsequent
-workflow runs.
-
-The workflow passes an explicit `nix-fast-build` command template into the Nix
-backend:
-
-```bash
-nix --extra-experimental-features "nix-command flakes" run \
-  "github:Mic92/nix-fast-build/1.5.0" -- \
-  --flake "$NIX_INSTALLABLE" \
-  --systems "$NIX_SYSTEM" \
-  --out-link "$NIX_OUT_LINK" \
-  --no-nom \
-  --skip-cached
-```
-
-The backend fills in `NIX_INSTALLABLE`, `NIX_SYSTEM`, and `NIX_OUT_LINK` after
-exporting the clean source tree and applying overlays. `--no-nom` keeps CI logs
-compact, and `--skip-cached` avoids rebuilding outputs that are already present
-in configured binary caches.
+With this setup, CI uses Nix's default public binary cache plus the GitHub
+Actions cache. Store paths missing from those caches are built locally by the
+runner and retained by the GitHub Actions cache for later runs. The workflow
+intentionally uses the backend's plain `nix build` path for now so cache
+behavior is easier to inspect.
 
 The script performs:
 

@@ -51,9 +51,6 @@ fi
 NIX_SYSTEM="$DEFAULT_NIX_SYSTEM"
 NIX_RUNNER="${NIX_RUNNER:-auto}"
 NIX_BUILD_MODE="${NIX_BUILD_MODE:-flake}"
-NIX_FAST_BUILD="${NIX_FAST_BUILD:-0}"
-NIX_FAST_BUILD_REF="${NIX_FAST_BUILD_REF:-1.5.0}"
-NIX_FAST_BUILD_ARGS="${NIX_FAST_BUILD_ARGS:---no-nom --skip-cached}"
 NIX_BUILD_COMMAND_TEMPLATE="${NIX_BUILD_COMMAND_TEMPLATE:-}"
 NIX_PACKAGE_OVERLAY="${NIX_PACKAGE_OVERLAY:-}"
 NIX_PACKAGE_OVERLAY_DEST="${NIX_PACKAGE_OVERLAY_DEST:-}"
@@ -156,15 +153,6 @@ case "$resolved_nix_runner" in
             export NIX_OUT_LINK="$out_link"
             log "using explicit Nix build command template"
             bash -lc "$NIX_BUILD_COMMAND_TEMPLATE"
-          elif [[ "$NIX_FAST_BUILD" == "1" ]]; then
-            log "using nix-fast-build $NIX_FAST_BUILD_REF with args: $NIX_FAST_BUILD_ARGS"
-            # shellcheck disable=SC2086
-            nix --extra-experimental-features "nix-command flakes" run \
-              "github:Mic92/nix-fast-build/$NIX_FAST_BUILD_REF" -- \
-              --flake "$nix_installable" \
-              --systems "$NIX_SYSTEM" \
-              --out-link "$out_link" \
-              $NIX_FAST_BUILD_ARGS
           else
             nix --extra-experimental-features "nix-command flakes" build \
               "$nix_installable" \
@@ -289,9 +277,6 @@ manifest = {
     "nix_flake_for_build": "$nix_flake_for_build",
     "nix_attr": "$NIX_ATTR",
     "nix_build_mode": "$NIX_BUILD_MODE",
-    "nix_fast_build": "$NIX_FAST_BUILD" == "1",
-    "nix_fast_build_ref": "$NIX_FAST_BUILD_REF",
-    "nix_fast_build_args": "$NIX_FAST_BUILD_ARGS",
     "nix_build_command_template": "$NIX_BUILD_COMMAND_TEMPLATE",
     "nix_output_kind": "${NIX_OUTPUT_KIND:-copy-paths}",
     "nix_system": "$NIX_SYSTEM",
