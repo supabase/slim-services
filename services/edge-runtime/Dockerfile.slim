@@ -1,7 +1,8 @@
 ARG BASE_IMAGE=gcr.io/distroless/base-debian13:nonroot
 FROM ${BASE_IMAGE}
 ARG ARTIFACT_ROOT
-ENV LD_LIBRARY_PATH=/usr/local/lib
-ENV ORT_DYLIB_PATH=/usr/local/lib/libonnxruntime.so
-COPY ${ARTIFACT_ROOT}/ /
-ENTRYPOINT ["/usr/local/bin/edge-runtime"]
+ENV LD_LIBRARY_PATH=/lib
+ENV ORT_DYLIB_PATH=/lib/libonnxruntime.so
+COPY ${ARTIFACT_ROOT}/bin/ /usr/bin/
+COPY ${ARTIFACT_ROOT}/lib/ /lib/
+ENTRYPOINT ["/bin/.edge-runtime-wrapped"]

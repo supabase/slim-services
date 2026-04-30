@@ -29,28 +29,57 @@ load_recipe "$service"
 rel_rootfs="$(relative_to_root "$artifact_rootfs")"
 dockerfile="$(service_dir "$service")/Dockerfile.slim"
 [[ -f "$dockerfile" ]] || fail "Dockerfile not found: $dockerfile"
+manifest="$(dirname "$artifact_rootfs")/manifest.json"
+if [[ -z "${PLATFORM:-}" && -f "$manifest" ]]; then
+  PLATFORM="$(python3 - "$manifest" <<'PY'
+import json
+import sys
+with open(sys.argv[1], "r", encoding="utf-8") as fh:
+    print(json.load(fh).get("platform") or "")
+PY
+)"
+fi
+if [[ -z "${PLATFORM:-}" ]]; then
+  PLATFORM="$(docker_platform "$(target_os)" "$(target_arch)")"
+fi
+platform_os="${PLATFORM%%/*}"
+platform_arch="${PLATFORM#*/}"
+PLATFORM="$(docker_platform "$platform_os" "$platform_arch")"
 
-log "building $tag from $rel_rootfs on $BASE_IMAGE"
+log "building $tag from $rel_rootfs on $BASE_IMAGE for $PLATFORM"
 docker_builder="${DOCKER_BUILDER:-$(docker context show 2>/dev/null || echo default)}"
+output_args=()
+if [[ "${DOCKER_PUSH:-0}" == "1" ]]; then
+  output_args+=(--push)
+elif [[ "${DOCKER_LOAD:-1}" == "1" ]]; then
+  output_args+=(--load)
+fi
 docker buildx build \
   --builder "$docker_builder" \
+  --platform "$PLATFORM" \
   -f "$dockerfile" \
   --build-arg "ARTIFACT_ROOT=$rel_rootfs" \
   --build-arg "BASE_IMAGE=$BASE_IMAGE" \
   -t "$tag" \
+  "${output_args[@]}" \
   "$ROOT_DIR"
 
-"$ROOT_DIR/scripts/measure-artifact.sh" "$artifact_rootfs" "" "$tag"
+if [[ "${DOCKER_PUSH:-0}" == "1" && "${DOCKER_LOAD:-0}" != "1" ]]; then
+  "$ROOT_DIR/scripts/measure-artifact.sh" "$artifact_rootfs"
+else
+  "$ROOT_DIR/scripts/measure-artifact.sh" "$artifact_rootfs" "" "$tag"
+fi
 
-manifest="$(dirname "$artifact_rootfs")/manifest.json"
-if [[ -f "$manifest" ]]; then
-  image_bytes="$(docker image inspect "$tag" --format '{{.Size}}')"
+if [[ "${UPDATE_MANIFEST:-1}" == "1" && -f "$manifest" ]]; then
+  if ! image_bytes="$(docker image inspect "$tag" --format '{{.Size}}' 2>/dev/null)"; then
+    image_bytes=""
+  fi
   python3 - "$manifest" "$tag" "$image_bytes" <<'PY'
 import json
 import sys
 
 manifest_path, image_tag, image_bytes_raw = sys.argv[1], sys.argv[2], sys.argv[3]
-image_bytes = int(image_bytes_raw)
+image_bytes = int(image_bytes_raw) if image_bytes_raw else None
 
 with open(manifest_path, "r", encoding="utf-8") as fh:
     data = json.load(fh)
@@ -59,7 +88,7 @@ data.setdefault("image", {})
 data["image"].update({
     "tag": image_tag,
     "bytes": image_bytes,
-    "mib": round(image_bytes / 1024 / 1024, 1),
+    "mib": round(image_bytes / 1024 / 1024, 1) if image_bytes is not None else None,
 })
 
 with open(manifest_path, "w", encoding="utf-8") as fh:

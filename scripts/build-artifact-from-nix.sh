@@ -9,8 +9,8 @@ usage() {
   cat <<'EOF'
 Usage: scripts/build-artifact-from-nix.sh SERVICE [VERSION]
 
-Build SERVICE from a configured Nix flake/package and export selected runtime
-paths into the common artifact layout.
+Build SERVICE from a configured Nix flake/package and export runtime files
+into the common artifact layout.
 EOF
 }
 
@@ -20,16 +20,20 @@ EOF
 require_cmd git
 require_cmd tar
 require_cmd python3
+PATH="/nix/var/nix/profiles/default/bin:$HOME/.nix-profile/bin:$HOME/.cargo/bin:/opt/homebrew/bin:$PATH"
 
 service="$1"
 VERSION="${2:-${VERSION:-dev}}"
-ARCH="${ARCH:-$(host_arch)}"
-PLATFORM="${PLATFORM:-linux/$ARCH}"
-case "$ARCH" in
-  arm64) DEFAULT_NIX_SYSTEM="aarch64-linux" ;;
-  amd64) DEFAULT_NIX_SYSTEM="x86_64-linux" ;;
-  *) DEFAULT_NIX_SYSTEM="${ARCH}-linux" ;;
-esac
+TARGET_OS="$(target_os)"
+ARCH="$(target_arch)"
+if [[ -n "${PLATFORM:-}" ]]; then
+  PLATFORM="$PLATFORM"
+elif [[ "$TARGET_OS" == "linux" ]]; then
+  PLATFORM="$(docker_platform "$TARGET_OS" "$ARCH")"
+else
+  PLATFORM="$TARGET_OS/$ARCH"
+fi
+DEFAULT_NIX_SYSTEM="$(nix_system_for "$TARGET_OS" "$ARCH")"
 
 load_recipe "$service"
 
@@ -41,12 +45,21 @@ CMD_JSON="${CMD_JSON:-[]}"
 UPSTREAM_IMAGE="${UPSTREAM_IMAGE:-${SOURCE_IMAGE:-}}"
 NIX_FLAKE="${NIX_FLAKE:?recipe must define NIX_FLAKE}"
 NIX_ATTR="${NIX_ATTR:?recipe must define NIX_ATTR}"
-NIX_SYSTEM="${NIX_SYSTEM:-$DEFAULT_NIX_SYSTEM}"
+if [[ -n "${NIX_SYSTEM:-}" && "$NIX_SYSTEM" != "$DEFAULT_NIX_SYSTEM" ]]; then
+  fail "NIX_SYSTEM=$NIX_SYSTEM does not match target $TARGET_OS/$ARCH ($DEFAULT_NIX_SYSTEM)"
+fi
+NIX_SYSTEM="$DEFAULT_NIX_SYSTEM"
 NIX_RUNNER="${NIX_RUNNER:-auto}"
 NIX_BUILD_MODE="${NIX_BUILD_MODE:-flake}"
+NIX_FAST_BUILD="${NIX_FAST_BUILD:-0}"
+NIX_FAST_BUILD_REF="${NIX_FAST_BUILD_REF:-1.5.0}"
+NIX_FAST_BUILD_ARGS="${NIX_FAST_BUILD_ARGS:---no-nom --skip-cached}"
+NIX_BUILD_COMMAND_TEMPLATE="${NIX_BUILD_COMMAND_TEMPLATE:-}"
+NIX_PACKAGE_OVERLAY="${NIX_PACKAGE_OVERLAY:-}"
+NIX_PACKAGE_OVERLAY_DEST="${NIX_PACKAGE_OVERLAY_DEST:-}"
 
 source_abs="$ROOT_DIR/$SOURCE_DIR"
-artifact_dir="$ROOT_DIR/artifacts/$service/$VERSION/linux-$ARCH"
+artifact_dir="$ROOT_DIR/artifacts/$service/$VERSION/$(artifact_platform_dir "$TARGET_OS" "$ARCH")"
 rootfs="$artifact_dir/rootfs"
 manifest="$artifact_dir/manifest.json"
 out_link="$artifact_dir/nix-result"
@@ -68,23 +81,7 @@ rm -rf "$rootfs"
 mkdir -p "$rootfs" "$artifact_dir"
 rm -f "$out_link"
 
-case "$NIX_BUILD_MODE" in
-  flake)
-    if [[ "$NIX_ATTR" == packages.* || "$NIX_ATTR" == legacyPackages.* ]]; then
-      nix_installable="${NIX_FLAKE}#${NIX_ATTR}"
-    else
-      nix_installable="${NIX_FLAKE}#packages.${NIX_SYSTEM}.${NIX_ATTR}"
-    fi
-    ;;
-  nix-build)
-    nix_installable="${NIX_FLAKE} -A ${NIX_ATTR}"
-    ;;
-  *)
-    fail "unknown NIX_BUILD_MODE for $service: $NIX_BUILD_MODE"
-    ;;
-esac
-
-if ! declare -p NIX_COPY_PATHS >/dev/null 2>&1; then
+if ! declare -p NIX_COPY_PATHS >/dev/null 2>&1 && [[ "${NIX_OUTPUT_KIND:-copy-paths}" != "rootfs" ]]; then
   fail "recipe must define NIX_COPY_PATHS for Nix backend"
 fi
 
@@ -94,7 +91,9 @@ if command -v nix >/dev/null 2>&1; then
 fi
 
 if [[ "$NIX_RUNNER" == "auto" ]]; then
-  if [[ -n "$host_nix_system" && "$host_nix_system" == "$NIX_SYSTEM" ]]; then
+  if [[ "$TARGET_OS" != "linux" ]]; then
+    resolved_nix_runner="local"
+  elif [[ -n "$host_nix_system" && "$host_nix_system" == "$NIX_SYSTEM" ]]; then
     resolved_nix_runner="local"
   else
     resolved_nix_runner="docker"
@@ -102,6 +101,46 @@ if [[ "$NIX_RUNNER" == "auto" ]]; then
 else
   resolved_nix_runner="$NIX_RUNNER"
 fi
+
+if [[ "$resolved_nix_runner" == "local" && -n "$host_nix_system" && "$host_nix_system" != "$NIX_SYSTEM" ]]; then
+  fail "local Nix runner is $host_nix_system, but target is $NIX_SYSTEM. Use a native runner for $TARGET_OS/$ARCH."
+fi
+
+nix_flake_for_build="$NIX_FLAKE"
+build_dir=""
+if [[ "$resolved_nix_runner" == "local" && -n "$NIX_PACKAGE_OVERLAY" ]]; then
+  overlay_abs="$ROOT_DIR/$NIX_PACKAGE_OVERLAY"
+  [[ -f "$overlay_abs" ]] || fail "Nix package overlay not found: $NIX_PACKAGE_OVERLAY"
+  NIX_PACKAGE_OVERLAY_DEST="${NIX_PACKAGE_OVERLAY_DEST:-nix/$(basename "$NIX_PACKAGE_OVERLAY")}"
+  build_dir="$(mktemp -d "${TMPDIR:-/tmp}/slim-images-$service-$TARGET_OS-$ARCH.XXXXXX")"
+  build_dir="$(cd "$build_dir" && pwd -P)"
+  build_src="$build_dir/src"
+  mkdir -p "$build_src"
+
+  log "exporting $SOURCE_DIR@$actual_ref to temporary Nix build tree"
+  git -C "$source_abs" archive HEAD | tar -C "$build_src" -xf -
+
+  log "applying Nix package overlay $NIX_PACKAGE_OVERLAY -> $NIX_PACKAGE_OVERLAY_DEST"
+  mkdir -p "$(dirname "$build_src/$NIX_PACKAGE_OVERLAY_DEST")"
+  cp "$overlay_abs" "$build_src/$NIX_PACKAGE_OVERLAY_DEST"
+  nix_flake_for_build="$build_src"
+fi
+
+case "$NIX_BUILD_MODE" in
+  flake)
+    if [[ "$NIX_ATTR" == packages.* || "$NIX_ATTR" == legacyPackages.* ]]; then
+      nix_installable="${nix_flake_for_build}#${NIX_ATTR}"
+    else
+      nix_installable="${nix_flake_for_build}#packages.${NIX_SYSTEM}.${NIX_ATTR}"
+    fi
+    ;;
+  nix-build)
+    nix_installable="${nix_flake_for_build} -A ${NIX_ATTR}"
+    ;;
+  *)
+    fail "unknown NIX_BUILD_MODE for $service: $NIX_BUILD_MODE"
+    ;;
+esac
 
 case "$resolved_nix_runner" in
   local)
@@ -111,39 +150,61 @@ case "$resolved_nix_runner" in
       flake)
         (
           cd "$ROOT_DIR"
-          nix --extra-experimental-features "nix-command flakes" build \
-            "$nix_installable" \
-            --out-link "$out_link"
+          if [[ -n "$NIX_BUILD_COMMAND_TEMPLATE" ]]; then
+            export NIX_INSTALLABLE="$nix_installable"
+            export NIX_SYSTEM="$NIX_SYSTEM"
+            export NIX_OUT_LINK="$out_link"
+            log "using explicit Nix build command template"
+            bash -lc "$NIX_BUILD_COMMAND_TEMPLATE"
+          elif [[ "$NIX_FAST_BUILD" == "1" ]]; then
+            log "using nix-fast-build $NIX_FAST_BUILD_REF with args: $NIX_FAST_BUILD_ARGS"
+            # shellcheck disable=SC2086
+            nix --extra-experimental-features "nix-command flakes" run \
+              "github:Mic92/nix-fast-build/$NIX_FAST_BUILD_REF" -- \
+              --flake "$nix_installable" \
+              --systems "$NIX_SYSTEM" \
+              --out-link "$out_link" \
+              $NIX_FAST_BUILD_ARGS
+          else
+            nix --extra-experimental-features "nix-command flakes" build \
+              "$nix_installable" \
+              --out-link "$out_link"
+          fi
         )
         ;;
       nix-build)
         (
           cd "$ROOT_DIR"
-          nix-build "$NIX_FLAKE" -A "$NIX_ATTR" --out-link "$out_link"
+          nix-build "$nix_flake_for_build" -A "$NIX_ATTR" --out-link "$out_link"
         )
         ;;
     esac
 
-    copy_nix_path() {
-      local spec="$1"
-      local src_path dst_path src dst
-      if [[ "$spec" == *:* ]]; then
-        src_path="${spec%%:*}"
-        dst_path="${spec#*:}"
-      else
-        src_path="$spec"
-        dst_path="$spec"
-      fi
-      src="$out_link${src_path}"
-      dst="$rootfs${dst_path}"
-      [[ -e "$src" ]] || fail "Nix output path not found: $src_path in $out_link"
-      mkdir -p "$(dirname "$dst")"
-      cp -RL "$src" "$dst"
-    }
+    if [[ "${NIX_OUTPUT_KIND:-copy-paths}" == "rootfs" ]]; then
+      log "copying full Nix rootfs output from $out_link"
+      tar -C "$out_link" -cf - . | tar -C "$rootfs" -xf -
+    else
+      copy_nix_path() {
+        local spec="$1"
+        local src_path dst_path src dst
+        if [[ "$spec" == *:* ]]; then
+          src_path="${spec%%:*}"
+          dst_path="${spec#*:}"
+        else
+          src_path="$spec"
+          dst_path="$spec"
+        fi
+        src="$out_link${src_path}"
+        dst="$rootfs${dst_path}"
+        [[ -e "$src" ]] || fail "Nix output path not found: $src_path in $out_link"
+        mkdir -p "$(dirname "$dst")"
+        cp -RL "$src" "$dst"
+      }
 
-    for path in "${NIX_COPY_PATHS[@]}"; do
-      copy_nix_path "$path"
-    done
+      for path in "${NIX_COPY_PATHS[@]}"; do
+        copy_nix_path "$path"
+      done
+    fi
 
     chmod -R u+w "$rootfs"
 
@@ -155,6 +216,7 @@ case "$resolved_nix_runner" in
     fi
     ;;
   docker)
+    [[ "$TARGET_OS" == "linux" ]] || fail "Docker-hosted Nix builds are only supported for linux targets"
     require_cmd docker
     dockerfile="$ROOT_DIR/services/$service/Dockerfile.artifact"
     [[ -f "$dockerfile" ]] || fail "Nix Docker runner requires $dockerfile"
@@ -169,6 +231,7 @@ case "$resolved_nix_runner" in
       --build-arg "SOURCE_DIR=$SOURCE_DIR" \
       --build-arg "SERVICE_VERSION=$VERSION" \
       --build-arg "NIX_ATTR=$NIX_ATTR" \
+      --build-arg "NIX_SYSTEM=$NIX_SYSTEM" \
       --build-arg "NIX_EXPRESSION=${NIX_EXPRESSION:-default.nix}" \
       "$ROOT_DIR"
 
@@ -187,14 +250,27 @@ case "$resolved_nix_runner" in
 esac
 
 "$ROOT_DIR/scripts/prune-runtime-tree.sh" "$rootfs"
-archive="$(archive_with_best_available_compressor "$rootfs" "$artifact_dir/$service")"
+archive=""
+if [[ "${ARTIFACT_ARCHIVE_ON_BUILD:-1}" == "1" ]]; then
+  archive="$(archive_with_best_available_compressor "$rootfs" "$artifact_dir/$service")"
+else
+  rm -f "$artifact_dir/$service.tar" "$artifact_dir/$service.tar.gz" "$artifact_dir/$service.tar.zst"
+fi
 
 rootfs_kib="$(du -sk "$rootfs" | awk '{print $1}')"
-archive_bytes="$(wc -c < "$archive" | tr -d ' ')"
+archive_bytes=""
+if [[ -n "$archive" ]]; then
+  archive_bytes="$(wc -c < "$archive" | tr -d ' ')"
+fi
 
-python3 - "$manifest" <<PY
+python3 - "$manifest" "$archive" "$archive_bytes" <<PY
 import json
 import os
+import sys
+
+_, manifest_path, archive_path, archive_bytes_raw = sys.argv
+archive_name = os.path.basename(archive_path) if archive_path else None
+archive_bytes = int(archive_bytes_raw) if archive_bytes_raw else None
 
 manifest = {
     "service": "$service",
@@ -210,13 +286,22 @@ manifest = {
     "cmd": json.loads("""$CMD_JSON"""),
     "build_backend": "nix",
     "nix_flake": "$NIX_FLAKE",
+    "nix_flake_for_build": "$nix_flake_for_build",
     "nix_attr": "$NIX_ATTR",
     "nix_build_mode": "$NIX_BUILD_MODE",
+    "nix_fast_build": "$NIX_FAST_BUILD" == "1",
+    "nix_fast_build_ref": "$NIX_FAST_BUILD_REF",
+    "nix_fast_build_args": "$NIX_FAST_BUILD_ARGS",
+    "nix_build_command_template": "$NIX_BUILD_COMMAND_TEMPLATE",
+    "nix_output_kind": "${NIX_OUTPUT_KIND:-copy-paths}",
     "nix_system": "$NIX_SYSTEM",
     "nix_installable": "$nix_installable",
     "nix_runner": "$resolved_nix_runner",
     "host_nix_system": "$host_nix_system",
+    "nix_package_overlay": "$NIX_PACKAGE_OVERLAY",
+    "nix_package_overlay_dest": "$NIX_PACKAGE_OVERLAY_DEST",
     "nix_copy_paths": ${NIX_COPY_PATHS_JSON:-[]},
+    "archive_on_build": "${ARTIFACT_ARCHIVE_ON_BUILD:-1}" == "1",
     "excluded_file_classes": [
         "sourcemaps",
         "debug-symbols",
@@ -227,16 +312,16 @@ manifest = {
         "Next tracing manifests"
     ],
     "smoke_command": "scripts/smoke.sh $service --artifact $rootfs",
-    "archive": os.path.basename("$archive"),
+    "archive": archive_name,
     "size": {
         "rootfs_bytes": int($rootfs_kib) * 1024,
         "rootfs_mib": round((int($rootfs_kib) * 1024) / 1024 / 1024, 1),
-        "archive_bytes": int($archive_bytes),
-        "archive_mib": round(int($archive_bytes) / 1024 / 1024, 1)
+        "archive_bytes": archive_bytes,
+        "archive_mib": round(archive_bytes / 1024 / 1024, 1) if archive_bytes is not None else None
     }
 }
 
-with open("$manifest", "w", encoding="utf-8") as fh:
+with open(manifest_path, "w", encoding="utf-8") as fh:
     json.dump(manifest, fh, indent=2)
     fh.write("\\n")
 PY

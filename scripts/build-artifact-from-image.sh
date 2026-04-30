@@ -24,8 +24,9 @@ require_cmd python3
 
 service="$1"
 VERSION="${2:-${VERSION:-dev}}"
-ARCH="${ARCH:-$(host_arch)}"
-PLATFORM="${PLATFORM:-linux/$ARCH}"
+TARGET_OS="$(target_os)"
+ARCH="$(target_arch)"
+PLATFORM="${PLATFORM:-$(docker_platform "$TARGET_OS" "$ARCH")}"
 
 load_recipe "$service"
 
@@ -34,7 +35,7 @@ BASE_IMAGE="${BASE_IMAGE:?recipe must define BASE_IMAGE}"
 ENTRYPOINT_JSON="${ENTRYPOINT_JSON:?recipe must define ENTRYPOINT_JSON}"
 CMD_JSON="${CMD_JSON:-[]}"
 
-artifact_dir="$ROOT_DIR/artifacts/$service/$VERSION/linux-$ARCH"
+artifact_dir="$ROOT_DIR/artifacts/$service/$VERSION/$(artifact_platform_dir "$TARGET_OS" "$ARCH")"
 rootfs="$artifact_dir/rootfs"
 manifest="$artifact_dir/manifest.json"
 

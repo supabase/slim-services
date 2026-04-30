@@ -62,6 +62,10 @@ The approach is intentionally service-by-service:
 
 See [SLIM_IMAGES_REPORT.md](SLIM_IMAGES_REPORT.md) for the global summary.
 Each service report is self-contained for distribution to the owning team.
+For Nix-backed native services, see
+[NIX_PORTABLE_ARTIFACT_PLAYBOOK.md](NIX_PORTABLE_ARTIFACT_PLAYBOOK.md) for the
+reusable artifact-to-image pattern learned from Edge Runtime.
+For CI target naming and commands, see [CI_MATRIX.md](CI_MATRIX.md).
 
 ## Repository Layout
 
@@ -70,7 +74,7 @@ Each service report is self-contained for distribution to the owning team.
 ├── scripts/                  Shared artifact, image, measure, and smoke helpers
 ├── services/<service>/        Per-service recipes, Dockerfiles, smoke tests, reports
 ├── sources/<service>/         Upstream source repositories as pinned submodules
-├── artifacts/                 Generated rootfs/archive outputs, gitignored
+├── artifacts/                 Generated rootfs outputs and optional archives, gitignored
 └── SLIM_IMAGES_REPORT.md      Global summary and cross-service lessons
 ```
 
@@ -83,11 +87,15 @@ or shared scripts in this repo.
 Every backend writes the same layout:
 
 ```text
-artifacts/<service>/<version>/linux-<arch>/
+artifacts/<service>/<version>/<platform>-<arch>/
 ├── rootfs/
-├── <service>.tar.gz
+├── <service>.tar.zst          Optional distribution archive
 └── manifest.json
 ```
+
+The expanded `rootfs/` is the canonical artifact for local smoke tests,
+inspection, and Docker image assembly. Compressed archives are derived
+distribution products and may be generated separately from an existing rootfs.
 
 The manifest records source ref, selected base image, entrypoint, smoke command,
 artifact size, and image size when measured.
@@ -99,13 +107,27 @@ Each service has a `services/<service>/recipe.env` file. The dispatcher reads
 
 - `docker-source`: build from the pinned source submodule with
   `services/<service>/Dockerfile.artifact`.
-- `nix`: build from a configured Nix flake/package and copy declared runtime
-  outputs into the artifact rootfs.
+- `nix`: build from a configured Nix flake/package and export either the full
+  portable rootfs or declared runtime paths into the artifact rootfs.
 - `image`: extract selected paths from a published image as a fallback or
   comparison path.
 
 The final `Dockerfile.slim` files are artifact-only: they copy a prepared
 `rootfs/` into the smallest proven runtime base.
+
+Portable archive builds share two hardening steps. For Nix-backed portable
+artifacts, these checks should run inside the Nix package when practical; the
+scripts remain available as shared helpers and external verification.
+
+- `scripts/portable-darwin-fixup.sh` completes macOS dylib closures, rewrites
+  Nix store install names, removes Nix store rpaths, strips local Mach-O
+  symbols, and ad-hoc signs the result.
+- `scripts/audit-portable-artifact.sh` fails artifacts that still have
+  unresolved runtime dependencies or absolute Nix store references.
+
+Archives prefer `zstd -19` and are produced by `scripts/archive-artifact.sh`
+when a distributable bundle is needed. The script uses Nix's `zstd` package
+automatically when `zstd` is not on PATH.
 
 ## Quick Start
 
@@ -125,7 +147,7 @@ git submodule update --init --recursive
 Build one service artifact:
 
 ```bash
-scripts/build-artifact.sh storage v1.55.3
+TARGET_OS=linux ARCH=arm64 scripts/build-artifact.sh storage v1.55.3
 ```
 
 Build a slim image from that artifact:
@@ -147,6 +169,12 @@ Or smoke an artifact rootfs directly, which first builds a temporary image:
 
 ```bash
 scripts/smoke.sh storage --artifact artifacts/storage/v1.55.3/linux-arm64/rootfs
+```
+
+Run the full CI-style build for one service and matrix cell:
+
+```bash
+TARGET_OS=linux ARCH=arm64 scripts/ci-build-service.sh edge-runtime v1.73.15
 ```
 
 ## Common Commands
@@ -176,6 +204,12 @@ Measure rootfs/archive/image sizes:
 scripts/measure-artifact.sh <artifact-rootfs> [archive] [image-tag]
 ```
 
+Create a distribution archive from an existing rootfs:
+
+```bash
+scripts/archive-artifact.sh <artifact-rootfs> [archive-prefix]
+```
+
 ## Service Reports
 
 - [PostgREST](services/postgrest/REPORT.md): stable ARM64 dynamic bundle in
@@ -203,6 +237,7 @@ scripts/measure-artifact.sh <artifact-rootfs> [archive] [image-tag]
 ## Design Principles
 
 - Upstream submodules stay read-only.
+- Service-specific Nix changes live in this repo, not in `sources/`.
 - Prefer `scratch` when the artifact proves it can run there.
 - Prefer Distroless Debian 13 for glibc services.
 - Avoid Alpine unless musl is validated and wins.
