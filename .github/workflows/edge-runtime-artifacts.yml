@@ -44,19 +44,29 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          submodules: recursive
-          fetch-depth: 0
+          fetch-depth: 1
+
+      - name: Checkout Edge Runtime source
+        run: |
+          set -euo pipefail
+          version="${{ inputs.version }}"
+          git submodule update --init --depth 1 sources/edge-runtime || {
+            git submodule update --init --no-fetch sources/edge-runtime
+            git -C sources/edge-runtime fetch --depth 1 origin "$version"
+            git -C sources/edge-runtime checkout --detach FETCH_HEAD
+          }
 
       - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@v22
+        uses: nixbuild/nix-quick-install-action@v34
 
-      - name: Enable GitHub-backed Nix cache
-        uses: DeterminateSystems/magic-nix-cache-action@v13
-
-      - name: Check flake health
-        uses: DeterminateSystems/flake-checker-action@v12
+      - name: Restore/save Nix store cache
+        uses: nix-community/cache-nix-action@v7
         with:
-          flake-lock-path: sources/edge-runtime/flake.lock
+          primary-key: nix-${{ runner.os }}-${{ matrix.target_os }}-${{ matrix.arch }}-${{ hashFiles('sources/edge-runtime/flake.lock', 'services/edge-runtime/nix/**/*.nix', 'services/edge-runtime/recipe.env') }}
+          restore-prefixes-first-match: |
+            nix-${{ runner.os }}-${{ matrix.target_os }}-${{ matrix.arch }}-
+          gc-max-store-size-linux: 8G
+          gc-max-store-size-macos: 8G
 
       - name: Set up Docker Buildx
         if: matrix.docker_image
@@ -97,14 +107,6 @@ jobs:
           ARCH: ${{ matrix.arch }}
           IMAGE_TAG: ${{ steps.vars.outputs.local_image_tag }}
           ARTIFACT_ARCHIVE_PREFIX: ${{ steps.vars.outputs.archive_prefix }}
-          NIX_BUILD_COMMAND_TEMPLATE: |
-            nix --extra-experimental-features "nix-command flakes" run \
-              "github:Mic92/nix-fast-build/1.5.0" -- \
-              --flake "$NIX_INSTALLABLE" \
-              --systems "$NIX_SYSTEM" \
-              --out-link "$NIX_OUT_LINK" \
-              --no-nom \
-              --skip-cached
         run: |
           set -euo pipefail
           scripts/ci-build-service.sh edge-runtime "${{ steps.vars.outputs.version }}"
