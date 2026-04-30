@@ -65,6 +65,13 @@ runner and retained by the GitHub Actions cache for later runs. The workflow
 intentionally uses the backend's plain `nix build` path for now so cache
 behavior is easier to inspect.
 
+GitHub Actions cache requires the repository to have a default branch. If
+`cache-nix-action` logs `Default branch not found for repository`, cache restore
+and save will not work even for a cache that was expected to be scoped to the
+current feature branch. Create and configure the repository default branch
+first, then rerun the workflow once to populate the cache and a second time to
+confirm it restores.
+
 The script performs:
 
 1. artifact build;

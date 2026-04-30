@@ -26,12 +26,12 @@ jobs:
         include:
           - target_os: linux
             arch: arm64
-            runner: ubuntu-24.04-arm
+            runner: large-linux-arm
             docker_platform: linux/arm64
             docker_image: true
           - target_os: linux
             arch: amd64
-            runner: ubuntu-24.04
+            runner: large-linux-x86
             docker_platform: linux/amd64
             docker_image: true
           - target_os: darwin
@@ -50,11 +50,11 @@ jobs:
         run: |
           set -euo pipefail
           version="${{ inputs.version }}"
-          git submodule update --init --depth 1 sources/edge-runtime || {
-            git submodule update --init --no-fetch sources/edge-runtime
-            git -C sources/edge-runtime fetch --depth 1 origin "$version"
+          git submodule update --init --depth 1 sources/edge-runtime
+          git -C sources/edge-runtime fetch --force --depth 1 origin "refs/tags/${version}:refs/tags/${version}" || \
+            git -C sources/edge-runtime fetch --force --depth 1 origin "$version"
+          git -C sources/edge-runtime checkout --detach "$version" 2>/dev/null || \
             git -C sources/edge-runtime checkout --detach FETCH_HEAD
-          }
 
       - name: Install Nix
         uses: nixbuild/nix-quick-install-action@v34
@@ -107,6 +107,8 @@ jobs:
           ARCH: ${{ matrix.arch }}
           IMAGE_TAG: ${{ steps.vars.outputs.local_image_tag }}
           ARTIFACT_ARCHIVE_PREFIX: ${{ steps.vars.outputs.archive_prefix }}
+          SOURCE_REF: ${{ steps.vars.outputs.version }}
+          GIT_V_TAG: ${{ steps.vars.outputs.version }}
         run: |
           set -euo pipefail
           scripts/ci-build-service.sh edge-runtime "${{ steps.vars.outputs.version }}"
@@ -141,7 +143,7 @@ jobs:
             "${{ matrix.docker_platform }}" \
             "${{ steps.vars.outputs.image_repository }}" \
             "${{ steps.push.outputs.digest }}" \
-            "${{ steps.vars.outputs.artifact_dir }}/image-digest.json"
+            "${{ steps.vars.outputs.artifact_dir }}/image-digest-${{ matrix.arch }}.json"
 
       - name: Upload portable archive
         uses: actions/upload-artifact@v4
@@ -156,7 +158,7 @@ jobs:
         with:
           name: edge-runtime-image-digest-${{ matrix.arch }}
           if-no-files-found: error
-          path: ${{ steps.vars.outputs.artifact_dir }}/image-digest.json
+          path: ${{ steps.vars.outputs.artifact_dir }}/image-digest-${{ matrix.arch }}.json
 
   publish-image:
     name: publish edge-runtime multi-platform image
@@ -188,7 +190,7 @@ jobs:
           image_repository="$(printf '%s' "$IMAGE_REPOSITORY" | tr '[:upper:]' '[:lower:]')"
           image_tag="${image_repository}:${{ inputs.version }}"
 
-          mapfile -t refs < <(python3 -c 'import glob, json; [print(f"{d[\"repository\"]}@{d[\"digest\"]}") for d in [json.load(open(path)) for path in sorted(glob.glob("image-digests/*.json"))]]')
+          mapfile -t refs < <(python3 -c 'import glob, json; [print(d["repository"] + "@" + d["digest"]) for d in [json.load(open(path)) for path in sorted(glob.glob("image-digests/*.json"))]]')
 
           if [[ "${#refs[@]}" -ne 2 ]]; then
             printf 'expected 2 platform image digests, got %s\n' "${#refs[@]}" >&2
