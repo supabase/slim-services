@@ -190,7 +190,7 @@ jobs:
           image_repository="$(printf '%s' "$IMAGE_REPOSITORY" | tr '[:upper:]' '[:lower:]')"
           image_tag="${image_repository}:${{ inputs.version }}"
 
-          mapfile -t refs < <(python3 -c 'import glob, json; [print(f"{d[\"repository\"]}@{d[\"digest\"]}") for d in [json.load(open(path)) for path in sorted(glob.glob("image-digests/*.json"))]]')
+          mapfile -t refs < <(python3 -c 'import glob, json; [print(d["repository"] + "@" + d["digest"]) for d in [json.load(open(path)) for path in sorted(glob.glob("image-digests/*.json"))]]')
 
           if [[ "${#refs[@]}" -ne 2 ]]; then
             printf 'expected 2 platform image digests, got %s\n' "${#refs[@]}" >&2
