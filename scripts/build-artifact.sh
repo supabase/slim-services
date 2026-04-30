@@ -13,6 +13,10 @@ Build SERVICE with the backend selected by services/SERVICE/recipe.env:
 - ARTIFACT_BACKEND=nix
 - ARTIFACT_BACKEND=docker-source
 - ARTIFACT_BACKEND=image
+
+Target selection:
+  TARGET_OS=linux|darwin  defaults to the host OS
+  ARCH=arm64|amd64        defaults to the host architecture
 EOF
 }
 
@@ -24,14 +28,27 @@ shift
 
 load_recipe "$service"
 
+TARGET_OS="$(target_os)"
+ARCH="$(target_arch)"
+export TARGET_OS ARCH
+
+case "$TARGET_OS" in
+  linux|darwin) ;;
+  *)
+    fail "unsupported artifact target OS for $service: $TARGET_OS"
+    ;;
+esac
+
 case "${ARTIFACT_BACKEND:-docker-source}" in
   nix)
     exec "$ROOT_DIR/scripts/build-artifact-from-nix.sh" "$service" "$@"
     ;;
   docker-source)
+    [[ "$TARGET_OS" == "linux" ]] || fail "docker-source artifacts are only supported for linux targets"
     exec "$ROOT_DIR/scripts/build-artifact-from-source.sh" "$service" "$@"
     ;;
   image)
+    [[ "$TARGET_OS" == "linux" ]] || fail "image extraction artifacts are only supported for linux targets"
     exec "$ROOT_DIR/scripts/build-artifact-from-image.sh" "$service" "$@"
     ;;
   *)

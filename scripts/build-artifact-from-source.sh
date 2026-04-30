@@ -13,9 +13,9 @@ Build SERVICE from its sources/SERVICE git submodule using
 services/SERVICE/Dockerfile.artifact or ARTIFACT_DOCKERFILE from the recipe,
 then write the common artifact layout:
 
-  artifacts/<service>/<version>/linux-<arch>/rootfs/
-  artifacts/<service>/<version>/linux-<arch>/<service>.tar.zst
-  artifacts/<service>/<version>/linux-<arch>/manifest.json
+  artifacts/<service>/<version>/<target-os>-<arch>/rootfs/
+  artifacts/<service>/<version>/<target-os>-<arch>/<service>.tar.zst
+  artifacts/<service>/<version>/<target-os>-<arch>/manifest.json
 EOF
 }
 
@@ -29,8 +29,9 @@ require_cmd python3
 
 service="$1"
 VERSION="${2:-${VERSION:-dev}}"
-ARCH="${ARCH:-$(host_arch)}"
-PLATFORM="${PLATFORM:-linux/$ARCH}"
+TARGET_OS="$(target_os)"
+ARCH="$(target_arch)"
+PLATFORM="${PLATFORM:-$(docker_platform "$TARGET_OS" "$ARCH")}"
 
 load_recipe "$service"
 
@@ -44,7 +45,7 @@ UPSTREAM_IMAGE="${UPSTREAM_IMAGE:-${SOURCE_IMAGE:-}}"
 source_abs="$ROOT_DIR/$SOURCE_DIR"
 artifact_dockerfile="${ARTIFACT_DOCKERFILE:-Dockerfile.artifact}"
 dockerfile="$ROOT_DIR/services/$service/$artifact_dockerfile"
-artifact_dir="$ROOT_DIR/artifacts/$service/$VERSION/linux-$ARCH"
+artifact_dir="$ROOT_DIR/artifacts/$service/$VERSION/$(artifact_platform_dir "$TARGET_OS" "$ARCH")"
 rootfs="$artifact_dir/rootfs"
 manifest="$artifact_dir/manifest.json"
 

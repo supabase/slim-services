@@ -65,10 +65,107 @@ host_arch() {
   esac
 }
 
+host_os() {
+  case "$(uname -s)" in
+    Darwin) printf 'darwin' ;;
+    Linux) printf 'linux' ;;
+    *) uname -s | tr '[:upper:]' '[:lower:]' ;;
+  esac
+}
+
+normalize_os() {
+  case "$1" in
+    darwin|macos|macOS|Darwin) printf 'darwin' ;;
+    linux|Linux) printf 'linux' ;;
+    *) printf '%s' "$1" | tr '[:upper:]' '[:lower:]' ;;
+  esac
+}
+
+normalize_arch() {
+  case "$1" in
+    arm64|aarch64) printf 'arm64' ;;
+    amd64|x86_64) printf 'amd64' ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
+target_os() {
+  normalize_os "${TARGET_OS:-${OS:-$(host_os)}}"
+}
+
+target_arch() {
+  normalize_arch "${ARCH:-$(host_arch)}"
+}
+
+artifact_platform_dir() {
+  local os="$1"
+  local arch="$2"
+  printf '%s-%s' "$(normalize_os "$os")" "$(normalize_arch "$arch")"
+}
+
+docker_platform() {
+  local os="$1"
+  local arch="$2"
+  os="$(normalize_os "$os")"
+  arch="$(normalize_arch "$arch")"
+  [[ "$os" == "linux" ]] || fail "Docker images are only produced for linux targets, got: $os/$arch"
+  printf 'linux/%s' "$arch"
+}
+
+nix_system_for() {
+  local os="$1"
+  local arch="$2"
+  os="$(normalize_os "$os")"
+  arch="$(normalize_arch "$arch")"
+
+  case "$os/$arch" in
+    linux/arm64) printf 'aarch64-linux' ;;
+    linux/amd64) printf 'x86_64-linux' ;;
+    darwin/arm64) printf 'aarch64-darwin' ;;
+    darwin/amd64) fail "darwin/amd64 artifacts are out of scope for now" ;;
+    *) fail "unsupported Nix system target: $os/$arch" ;;
+  esac
+}
+
+artifact_rootfs_path() {
+  local service="$1"
+  local version="$2"
+  local os="${3:-$(target_os)}"
+  local arch="${4:-$(target_arch)}"
+  printf '%s/artifacts/%s/%s/%s/rootfs' "$ROOT_DIR" "$service" "$version" "$(artifact_platform_dir "$os" "$arch")"
+}
+
+host_matches_target() {
+  local os="$1"
+  local arch="$2"
+  [[ "$(normalize_os "$os")" == "$(host_os)" && "$(normalize_arch "$arch")" == "$(host_arch)" ]]
+}
+
 archive_with_best_available_compressor() {
   local rootfs="$1"
   local archive_prefix="$2"
   local archive
+  rm -f "${archive_prefix}.tar" "${archive_prefix}.tar.gz" "${archive_prefix}.tar.zst"
+
+  local nix_cmd=""
+  if command -v nix >/dev/null 2>&1; then
+    nix_cmd="$(command -v nix)"
+  elif [[ -x /nix/var/nix/profiles/default/bin/nix ]]; then
+    nix_cmd="/nix/var/nix/profiles/default/bin/nix"
+  elif [[ -x "$HOME/.nix-profile/bin/nix" ]]; then
+    nix_cmd="$HOME/.nix-profile/bin/nix"
+  fi
+
+  if ! command -v zstd >/dev/null 2>&1 && [[ -n "$nix_cmd" ]] && [[ "${SLIM_USE_NIX_ZSTD:-1}" == "1" ]]; then
+    local zstd_out
+    while IFS= read -r zstd_out; do
+      if [[ -n "$zstd_out" && -x "$zstd_out/bin/zstd" ]]; then
+        PATH="$zstd_out/bin:$PATH"
+        break
+      fi
+    done < <("$nix_cmd" --extra-experimental-features "nix-command flakes" build --no-link --print-out-paths nixpkgs#zstd 2>/dev/null || true)
+  fi
+
   if command -v zstd >/dev/null 2>&1; then
     archive="${archive_prefix}.tar.zst"
     tar -C "$rootfs" -cf - . | zstd -q -19 -o "$archive"
