@@ -11,6 +11,9 @@ POSTGRES_CONTAINER="${POSTGRES_CONTAINER:-slim-smoke-postgres-$RUN_ID}"
 created_containers=()
 host_service_pids=()
 network_created=0
+host_pg_dir=""
+host_pg_bin=""
+host_pg_port=""
 
 cleanup_smoke() {
   set +e
@@ -21,6 +24,10 @@ cleanup_smoke() {
       wait "$pid" >/dev/null 2>&1 || true
     fi
   done
+  if [[ -n "${host_pg_dir:-}" ]]; then
+    "$host_pg_bin/pg_ctl" -D "$host_pg_dir/data" stop -m immediate >/dev/null 2>&1 || true
+    rm -rf "$host_pg_dir"
+  fi
   for container in "${created_containers[@]:-}"; do
     docker rm -f "$container" >/dev/null 2>&1 || true
   done
@@ -84,10 +91,72 @@ wait_for_postgres() {
   done
 }
 
+# Run psql against the harness postgres in either mode (docker container or
+# host process). Usage: harness_psql DB [psql args...]; SQL via -c or stdin.
+harness_psql() {
+  local db="$1"
+  shift
+  if [[ -n "${host_pg_bin:-}" ]]; then
+    "$host_pg_bin/psql" -v ON_ERROR_STOP=1 -h 127.0.0.1 -p "$host_pg_port" -U postgres -d "$db" "$@"
+  else
+    docker exec -i "$POSTGRES_CONTAINER" psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -U postgres -d "$db" "$@"
+  fi
+}
+
+# Host-reachable TCP port of the harness postgres, for host-process smokes.
+postgres_port() {
+  if [[ -n "${host_pg_port:-}" ]]; then
+    printf '%s' "$host_pg_port"
+  else
+    host_port "$POSTGRES_CONTAINER" 5432
+  fi
+}
+
+# Docker-free harness postgres for hosts without Docker (macOS CI runners):
+# initdb + pg_ctl from the pinned nixpkgs, trust auth on 127.0.0.1.
+start_host_postgres() {
+  [[ -n "$host_pg_dir" ]] && return 0
+  require_cmd python3
+  # shellcheck source=scripts/nixpkgs-pin.sh
+  source "$ROOT_DIR/scripts/nixpkgs-pin.sh"
+
+  log "starting harness postgres as a host process (SLIM_SMOKE_HOST_POSTGRES=1)"
+  local pg_store
+  pg_store="$(nixpkgs_build_attr postgresql_16)"
+  host_pg_bin="$pg_store/bin"
+  host_pg_dir="$(mktemp -d "${TMPDIR:-/tmp}/slim-smoke-pg.XXXXXX")"
+  host_pg_port="$(python3 - <<'PY'
+import socket
+
+with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+    sock.bind(("127.0.0.1", 0))
+    print(sock.getsockname()[1])
+PY
+)"
+
+  "$host_pg_bin/initdb" -D "$host_pg_dir/data" -U postgres --auth=trust >/dev/null
+  "$host_pg_bin/pg_ctl" -D "$host_pg_dir/data" -l "$host_pg_dir/postgres.log" \
+    -o "-p $host_pg_port -c listen_addresses=127.0.0.1 -k $host_pg_dir" \
+    start >/dev/null
+
+  local start
+  start="$(date +%s)"
+  while ! "$host_pg_bin/pg_isready" -h 127.0.0.1 -p "$host_pg_port" -U postgres >/dev/null 2>&1; do
+    if (( "$(date +%s)" - start >= 60 )); then
+      cat "$host_pg_dir/postgres.log" >&2 || true
+      fail "host harness postgres did not become ready"
+    fi
+    sleep 1
+  done
+}
+
 start_postgres() {
   local db="${1:-postgres}"
-  ensure_network
-  if ! docker inspect "$POSTGRES_CONTAINER" >/dev/null 2>&1; then
+
+  if [[ "${SLIM_SMOKE_HOST_POSTGRES:-0}" == "1" ]]; then
+    start_host_postgres
+  elif ! docker inspect "$POSTGRES_CONTAINER" >/dev/null 2>&1; then
+    ensure_network
     # 127.0.0.1:: publishes a random host port so host-process smokes can
     # reach the harness postgres; container smokes keep using the network.
     run_container \
@@ -101,8 +170,8 @@ start_postgres() {
     wait_for_postgres 90
   fi
 
-  docker exec "$POSTGRES_CONTAINER" sh -lc "psql -h 127.0.0.1 -U postgres <<'SQL'
-DO \$\$
+  harness_psql postgres >/dev/null <<'SQL'
+DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
     CREATE ROLE anon NOLOGIN NOINHERIT;
@@ -117,16 +186,16 @@ BEGIN
     CREATE ROLE authenticator NOINHERIT LOGIN;
   END IF;
 END
-\$\$;
+$$;
 GRANT anon TO authenticator;
 GRANT authenticated TO authenticator;
 GRANT service_role TO authenticator;
 GRANT postgres TO authenticator;
-SQL" >/dev/null
+SQL
 
-  docker exec "$POSTGRES_CONTAINER" sh -lc \
-    "psql -h 127.0.0.1 -U postgres -tAc \"SELECT 1 FROM pg_database WHERE datname='${db}'\" | grep -q 1 || createdb -h 127.0.0.1 -U postgres ${db}" \
-    >/dev/null
+  if ! harness_psql postgres -tAc "SELECT 1 FROM pg_database WHERE datname='${db}'" | grep -q 1; then
+    harness_psql postgres -c "CREATE DATABASE ${db}" >/dev/null
+  fi
 }
 
 wait_for_http_code() {

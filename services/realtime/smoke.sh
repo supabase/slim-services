@@ -4,7 +4,6 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=scripts/smoke-lib.sh
 source "$ROOT_DIR/scripts/smoke-lib.sh"
 
-require_cmd docker
 require_cmd curl
 require_cmd openssl
 
@@ -16,6 +15,9 @@ if [[ -n "$image" && -n "$artifact_rootfs" ]]; then
 fi
 if [[ -z "$image" && -z "$artifact_rootfs" ]]; then
   fail "set IMAGE to smoke a Docker image, or ARTIFACT_ROOTFS to smoke an extracted artifact"
+fi
+if [[ -n "$image" || "${SLIM_SMOKE_HOST_POSTGRES:-0}" != "1" ]]; then
+  require_cmd docker
 fi
 
 if [[ -n "$artifact_rootfs" ]]; then
@@ -34,7 +36,7 @@ if [[ -n "$artifact_rootfs" ]]; then
   [[ -x "$realtime_bin" ]] || fail "realtime artifact launcher not found or not executable: $realtime_bin"
 
   start_postgres realtime_smoke
-  pg_port="$(host_port "$POSTGRES_CONTAINER" 5432)"
+  pg_port="$(postgres_port)"
 
   api_secret='realtime-api-secret-with-at-least-32-characters'
   metrics_secret='realtime-metrics-secret-with-at-least-32'

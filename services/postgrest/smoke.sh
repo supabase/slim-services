@@ -4,7 +4,6 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=scripts/smoke-lib.sh
 source "$ROOT_DIR/scripts/smoke-lib.sh"
 
-require_cmd docker
 require_cmd curl
 
 image="${IMAGE:-}"
@@ -15,6 +14,9 @@ if [[ -n "$image" && -n "$artifact_rootfs" ]]; then
 fi
 if [[ -z "$image" && -z "$artifact_rootfs" ]]; then
   fail "set IMAGE to smoke a Docker image, or ARTIFACT_ROOTFS to smoke an extracted artifact"
+fi
+if [[ -n "$image" || "${SLIM_SMOKE_HOST_POSTGRES:-0}" != "1" ]]; then
+  require_cmd docker
 fi
 
 start_postgres postgrest_smoke
@@ -31,7 +33,7 @@ if [[ -n "$artifact_rootfs" ]]; then
   postgrest_bin="$artifact_rootfs/bin/postgrest"
   [[ -x "$postgrest_bin" ]] || fail "postgrest artifact binary not found or not executable: $postgrest_bin"
 
-  pg_port="$(host_port "$POSTGRES_CONTAINER" 5432)"
+  pg_port="$(postgres_port)"
   port="$(python3 - <<'PY'
 import socket
 

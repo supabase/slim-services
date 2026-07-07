@@ -4,7 +4,6 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=scripts/smoke-lib.sh
 source "$ROOT_DIR/scripts/smoke-lib.sh"
 
-require_cmd docker
 require_cmd curl
 
 image="${IMAGE:-}"
@@ -16,6 +15,9 @@ fi
 if [[ -z "$image" && -z "$artifact_rootfs" ]]; then
   fail "set IMAGE to smoke a Docker image, or ARTIFACT_ROOTFS to smoke an extracted artifact"
 fi
+if [[ -n "$image" || "${SLIM_SMOKE_HOST_POSTGRES:-0}" != "1" ]]; then
+  require_cmd docker
+fi
 
 cleanup_auth_smoke() {
   rm -f "${auth_log:-}"
@@ -26,9 +28,7 @@ trap cleanup_auth_smoke EXIT
 jwt_secret='auth-jwt-secret-with-at-least-32-characters'
 
 start_postgres auth_smoke
-docker exec "$POSTGRES_CONTAINER" sh -lc \
-  "psql -h 127.0.0.1 -U postgres -d auth_smoke -c 'CREATE SCHEMA IF NOT EXISTS auth'" \
-  >/dev/null
+harness_psql auth_smoke -c 'CREATE SCHEMA IF NOT EXISTS auth' >/dev/null
 
 if [[ -n "$image" ]]; then
   ensure_image "$image"
@@ -68,7 +68,7 @@ else
   log "checking auth executable"
   "$auth_bin" version >/dev/null
 
-  pg_port="$(host_port "$POSTGRES_CONTAINER" 5432)"
+  pg_port="$(postgres_port)"
   port="$(python3 - <<'PY'
 import socket
 

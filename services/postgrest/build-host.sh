@@ -13,6 +13,8 @@ set -euo pipefail
 
 # shellcheck source=scripts/lib.sh
 source "$ROOT_DIR/scripts/lib.sh"
+# shellcheck source=scripts/nixpkgs-pin.sh
+source "$ROOT_DIR/scripts/nixpkgs-pin.sh"
 
 PATH="/nix/var/nix/profiles/default/bin:$HOME/.nix-profile/bin:$PATH"
 require_cmd curl
@@ -20,10 +22,6 @@ require_cmd nix-build
 require_cmd otool
 require_cmd install_name_tool
 require_cmd shasum
-
-# Keep this pin in sync with services/realtime/nix/default.nix.
-NIXPKGS_URL="https://github.com/NixOS/nixpkgs/archive/ac62194c3917d5f474c1a844b6fd6da2db95077d.tar.gz"
-NIXPKGS_SHA256="0v6bd1xk8a2aal83karlvc853x44dg1n4nk08jg3dajqyy0s98np"
 
 case "$TARGET_OS-$ARCH-$VERSION" in
   darwin-arm64-v14.14)
@@ -49,12 +47,7 @@ tar -C "$workdir" -xJf "$workdir/postgrest.tar.xz"
 install -m 0755 "$workdir/postgrest" "$ROOTFS/bin/postgrest"
 
 log "bundling libpq from pinned nixpkgs"
-libpq_store="$(nix-build --no-out-link -E "
-  with import (fetchTarball {
-    url = \"$NIXPKGS_URL\";
-    sha256 = \"$NIXPKGS_SHA256\";
-  }) { }; libpq
-")"
+libpq_store="$(nixpkgs_build_attr libpq)"
 cp -L "$libpq_store"/lib/libpq.5*.dylib "$ROOTFS/lib/libpq.5.dylib"
 chmod u+w "$ROOTFS/lib/libpq.5.dylib"
 
