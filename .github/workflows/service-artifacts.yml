@@ -55,9 +55,12 @@ jobs:
           import json
           import os
 
+          # Same runner labels as edge-runtime-artifacts.yml: the repo is
+          # internal, so GitHub's free ubuntu-*-arm label (public repos only)
+          # is unavailable — the org's large runners provide arm64 Linux.
           runners = {
-              "linux-arm64": "ubuntu-24.04-arm",
-              "linux-amd64": "ubuntu-24.04",
+              "linux-arm64": "large-linux-arm",
+              "linux-amd64": "large-linux-x86",
               "darwin-arm64": "macos-14",
           }
 
