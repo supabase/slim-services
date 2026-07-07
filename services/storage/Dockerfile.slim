@@ -1,9 +1,13 @@
+# syntax=docker/dockerfile:1.7
+# Derived image: distroless Node base + the portable artifact's app/ tree
+# (the bin/storage host wrapper is unused in Docker — the base image provides
+# the runtime).
 ARG BASE_IMAGE=gcr.io/distroless/nodejs24-debian13:nonroot
 FROM ${BASE_IMAGE}
 ARG ARTIFACT_ROOT
 WORKDIR /app
 ENV NODE_ENV=production
-COPY ${ARTIFACT_ROOT}/ /
+COPY ${ARTIFACT_ROOT}/app/ /app/
 EXPOSE 5000
 ENTRYPOINT ["/nodejs/bin/node"]
 CMD ["dist/start/server.js"]

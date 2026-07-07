@@ -60,15 +60,17 @@ times targets (`linux-arm64` on `ubuntu-24.04-arm`, `linux-amd64` on
 `scripts/ci-build-service.sh` and uploading the archive, `SHA256SUMS`, and
 `manifest.json`. macOS runners have no Docker, so darwin smokes run with
 `SLIM_SMOKE_HOST_POSTGRES=1` (harness postgres as a host process from the
-shared nixpkgs pin).
+shared nixpkgs pin). Linux jobs additionally smoke the artifact as a real
+host process (`SLIM_DIRECT_LINUX_ARTIFACT_SMOKE=1`) — the CLI's no-Docker
+mode — on top of the derived-image smoke.
 
-What "self-contained" means per target today:
-
-| Target | Archive contents |
-|---|---|
-| `darwin-arm64` | Host-native contract: relocatable, audit-clean, runs as a plain host process (Node duo needs the shared Node runtime per `runtime_requires`). |
-| `linux-arm64` / `linux-amd64` | The Docker rootfs payloads. auth (static Go) and postgrest (bundled ELF closure) also run directly on glibc hosts; the BEAM and Node payloads expect their distroless base image (host libs / Node runtime). A host-native Linux flavor is scoped as follow-up in `HOST_NATIVE_PLAN.md`. |
-| `darwin-amd64` | Not built — see below. |
+Native-first (HOST_NATIVE_PLAN.md): the archive on every target is the
+host-native artifact — relocatable, audit-clean, runnable straight from the
+extracted archive (only the glibc family assumed on Linux, libSystem on
+macOS; the Node duo resolves the shared Node runtime per `runtime_requires`).
+The Docker image for Linux targets is derived from that same rootfs by
+`Dockerfile.slim` (base + artifact + entry wiring). `darwin-amd64` is not
+built — see below.
 
 The workflow installs Nix with `nixbuild/nix-quick-install-action` and caches
 the Nix store with `nix-community/cache-nix-action`:

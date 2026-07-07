@@ -14,6 +14,11 @@ source "$ROOT_DIR/scripts/lib.sh"
 # shellcheck source=scripts/nixpkgs-pin.sh
 source "$ROOT_DIR/scripts/nixpkgs-pin.sh"
 
+# npm resolves platform-specific packages for the machine it runs on; Node
+# artifacts must be built on a host matching the target.
+[[ "$TARGET_OS" == "$(host_os)" ]] || \
+  fail "pgmeta host builds cannot cross-compile: target is $TARGET_OS, host is $(host_os)"
+
 require_cmd tar
 
 # Same Node major as the Docker builder (node:20).

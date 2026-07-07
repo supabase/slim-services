@@ -16,6 +16,11 @@ source "$ROOT_DIR/scripts/lib.sh"
 # shellcheck source=scripts/nixpkgs-pin.sh
 source "$ROOT_DIR/scripts/nixpkgs-pin.sh"
 
+# npm resolves platform-specific packages (fs-xattr builds natively) for the
+# machine it runs on; storage artifacts must be built on a matching host.
+[[ "$TARGET_OS" == "$(host_os)" ]] || \
+  fail "storage host builds cannot cross-compile: target is $TARGET_OS, host is $(host_os)"
+
 require_cmd tar
 require_cmd python3
 
