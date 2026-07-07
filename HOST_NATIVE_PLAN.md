@@ -242,9 +242,20 @@ Status 2026-07-07:
 - CLI-side integration (process-compose wiring, download/verify UX, port
   allocation) — separate repo (`supabase/cli`); this repo's deliverables end
   at "archive + manifest + smoke that proves it runs on the host".
-- linux host-native packaging beyond what the artifacts already provide —
-  typical glibc hosts can run the linux artifacts; formalize only if the CLI
-  targets Docker-less Linux.
+- linux host-native packaging beyond what the artifacts already provide.
+  Nuance (2026-07-07): "typical glibc hosts can run the linux artifacts" is
+  true only for auth (static) and postgrest (bundled ELF closure). The BEAM
+  and Node linux archives are Docker rootfs payloads that expect their
+  distroless base (openssl/libstdc++/zlib for BEAM, the Node runtime for
+  storage/pgmeta). If the CLI targets Docker-less Linux, the follow-up is
+  mechanical: reuse the existing `services/<service>/nix` packages for
+  `aarch64-linux`/`x86_64-linux` with the Linux half of the playbook
+  (patchelf `$ORIGIN` rpaths + system-loader interpreter, as
+  edge-runtime.nix already does) and run the Node `build-host.sh` scripts on
+  Linux runners. The one design decision to make first: those host-native
+  Linux artifacts must NOT replace the docker-source artifacts the Docker
+  images are built from, so they need a distinct flavor in the artifact
+  layout (e.g. `linux-arm64-portable/`) and in archive names.
 
 ## Suggested execution order for the implementing session
 

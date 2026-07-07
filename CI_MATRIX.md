@@ -20,7 +20,11 @@ artifacts/<service>/<version>/linux-amd64/<service>.tar.zst
 artifacts/<service>/<version>/darwin-arm64/<service>.tar.zst
 ```
 
-`darwin/amd64` is intentionally out of scope for now.
+`darwin/amd64` is intentionally out of scope for now: GitHub-hosted Intel
+macOS runners are gone from the free tier (`macos-14`+ are arm64-only; Intel
+survives only as paid `-large` runners), so there is no runner to build or —
+more importantly — validate Intel artifacts on. Revisit only if Intel-Mac
+demand shows up, with paid large runners or self-hosted Intel hardware.
 
 Docker images are produced only for Linux targets. The GitHub Actions workflow
 publishes a multi-platform GHCR manifest under the version tag:
@@ -47,6 +51,24 @@ and publishes a multi-platform version tag:
 `ghcr.io/supabase/slim-services/edge-runtime:<version>`.
 Archive filenames include service, version, and platform, for example:
 `edge-runtime-v1.73.15-linux-arm64.tar.zst`.
+
+Every other promoted service builds through
+`.github/workflows/service-artifacts.yml`: a `workflow_dispatch` matrix of
+services (auth, postgrest, realtime, pooler, analytics, storage, pgmeta)
+times targets (`linux-arm64` on `ubuntu-24.04-arm`, `linux-amd64` on
+`ubuntu-24.04`, `darwin-arm64` on `macos-14`), each running
+`scripts/ci-build-service.sh` and uploading the archive, `SHA256SUMS`, and
+`manifest.json`. macOS runners have no Docker, so darwin smokes run with
+`SLIM_SMOKE_HOST_POSTGRES=1` (harness postgres as a host process from the
+shared nixpkgs pin).
+
+What "self-contained" means per target today:
+
+| Target | Archive contents |
+|---|---|
+| `darwin-arm64` | Host-native contract: relocatable, audit-clean, runs as a plain host process (Node duo needs the shared Node runtime per `runtime_requires`). |
+| `linux-arm64` / `linux-amd64` | The Docker rootfs payloads. auth (static Go) and postgrest (bundled ELF closure) also run directly on glibc hosts; the BEAM and Node payloads expect their distroless base image (host libs / Node runtime). A host-native Linux flavor is scoped as follow-up in `HOST_NATIVE_PLAN.md`. |
+| `darwin-amd64` | Not built — see below. |
 
 The workflow installs Nix with `nixbuild/nix-quick-install-action` and caches
 the Nix store with `nix-community/cache-nix-action`:

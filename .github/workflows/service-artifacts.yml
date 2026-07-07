@@ -1,0 +1,163 @@
+name: Service artifacts
+
+# Builds, smokes, and uploads per-service archives for every supported CI
+# target (CI_MATRIX.md):
+#
+#   linux-arm64 / linux-amd64  — the Docker-artifact pipeline on native
+#                                runners: artifact build, final image build +
+#                                smoke, archive + SHA256SUMS. The archives are
+#                                the Docker rootfs payloads; auth (static Go)
+#                                and postgrest (bundled ELF closure) also run
+#                                directly on glibc hosts.
+#   darwin-arm64               — host-native contract (HOST_NATIVE_PLAN.md):
+#                                Nix/host builds, portable audit, host-process
+#                                smoke with a Docker-free harness postgres
+#                                (macOS runners have no Docker).
+#
+# darwin-amd64 is intentionally absent: GitHub-hosted Intel macOS runners are
+# retired from the free tier (macos-14+ are arm64-only; Intel exists only as
+# paid `-large` runners), and CI_MATRIX.md keeps that target out of scope.
+#
+# Edge Runtime keeps its own workflow (edge-runtime-artifacts.yml), which
+# additionally publishes the multi-platform GHCR image.
+
+"on":
+  workflow_dispatch:
+    inputs:
+      services:
+        description: Space-separated services to build (default = all promoted).
+        required: false
+        default: auth postgrest realtime pooler analytics storage pgmeta
+      targets:
+        description: Space-separated targets (linux-arm64 linux-amd64 darwin-arm64).
+        required: false
+        default: linux-arm64 linux-amd64 darwin-arm64
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    name: expand build matrix
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.expand.outputs.matrix }}
+    steps:
+      - name: Expand services x targets
+        id: expand
+        shell: bash
+        env:
+          SERVICES: ${{ inputs.services }}
+          TARGETS: ${{ inputs.targets }}
+        run: |
+          set -euo pipefail
+          matrix_json="$(python3 - <<'PY'
+          import json
+          import os
+
+          runners = {
+              "linux-arm64": "ubuntu-24.04-arm",
+              "linux-amd64": "ubuntu-24.04",
+              "darwin-arm64": "macos-14",
+          }
+
+          include = []
+          for service in os.environ["SERVICES"].split():
+              for target in os.environ["TARGETS"].split():
+                  if target not in runners:
+                      raise SystemExit(f"unsupported target: {target}")
+                  target_os, arch = target.split("-", 1)
+                  include.append({
+                      "service": service,
+                      "target_os": target_os,
+                      "arch": arch,
+                      "platform_dir": target,
+                      "runner": runners[target],
+                  })
+          print(json.dumps({"include": include}))
+          PY
+          )"
+          printf 'matrix=%s\n' "$matrix_json" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: ${{ matrix.service }} ${{ matrix.target_os }}/${{ matrix.arch }}
+    needs: plan
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Checkout service source
+        run: |
+          set -euo pipefail
+          git submodule update --init --depth 1 "sources/${{ matrix.service }}"
+
+      # Nix drives the darwin builds (BEAM/Node packages, harness postgres,
+      # libpq bundling); the linux Docker pipeline does not need it.
+      - name: Install Nix
+        if: matrix.target_os == 'darwin'
+        uses: nixbuild/nix-quick-install-action@v34
+
+      - name: Restore/save Nix store cache
+        if: matrix.target_os == 'darwin'
+        uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-host-native-${{ matrix.service }}-${{ hashFiles(format('services/{0}/recipe.env', matrix.service), format('services/{0}/nix/**', matrix.service), format('services/{0}/build-host.sh', matrix.service), 'scripts/nixpkgs-pin.sh') }}
+          restore-prefixes-first-match: |
+            nix-host-native-${{ matrix.service }}-
+          gc-max-store-size-macos: 8G
+
+      - name: Set up Docker Buildx
+        if: matrix.target_os == 'linux'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Set up Go
+        if: matrix.service == 'auth' && matrix.target_os == 'darwin'
+        uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - name: Prepare target variables
+        id: vars
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(TARGET_OS="${{ matrix.target_os }}" ARCH="${{ matrix.arch }}" bash -c '
+            source scripts/lib.sh
+            load_recipe "${{ matrix.service }}" >/dev/null 2>&1
+            printf "%s" "$SOURCE_REF"
+          ')"
+          artifact_dir="artifacts/${{ matrix.service }}/${version}/${{ matrix.platform_dir }}"
+          {
+            printf 'version=%s\n' "$version"
+            printf 'artifact_dir=%s\n' "$artifact_dir"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build, audit, smoke, and package
+        shell: bash
+        env:
+          TARGET_OS: ${{ matrix.target_os }}
+          ARCH: ${{ matrix.arch }}
+          # macOS runners have no Docker; run the harness postgres as a host
+          # process from the pinned nixpkgs. No effect on linux runners.
+          SLIM_SMOKE_HOST_POSTGRES: ${{ matrix.target_os == 'darwin' && '1' || '0' }}
+        run: |
+          set -euo pipefail
+          scripts/ci-build-service.sh "${{ matrix.service }}" "${{ steps.vars.outputs.version }}"
+
+      - name: Upload archive + checksums + manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.service }}-${{ steps.vars.outputs.version }}-${{ matrix.platform_dir }}
+          if-no-files-found: error
+          path: |
+            ${{ steps.vars.outputs.artifact_dir }}/*.tar.zst
+            ${{ steps.vars.outputs.artifact_dir }}/SHA256SUMS
+            ${{ steps.vars.outputs.artifact_dir }}/manifest.json
