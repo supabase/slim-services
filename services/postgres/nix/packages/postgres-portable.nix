@@ -14,15 +14,37 @@ let
     text = builtins.toJSON {
       variant = "cli";
       psql-version = psql_17_cli.bin.version;
+      # slim-services overlay: the full PG17 extension set (see postgres.nix).
       extensions = [
-        "vector"
-        "supautils"
-        "pg_graphql"
-        "pgsodium"
-        "supabase_vault"
-        "pg_net"
-        "pg_cron"
+        "rum"
+        "pgroonga"
+        "index_advisor"
+        "wal2json"
+        "pgmq"
+        "pg_repack"
         "safeupdate"
+        "plpgsql_check"
+        "pgjwt"
+        "pgaudit"
+        "postgis"
+        "pgrouting"
+        "pgtap"
+        "pg_cron"
+        "http"
+        "plan_filter"
+        "pg_net"
+        "pg_hashids"
+        "pgsodium"
+        "pg_graphql"
+        "pg_stat_monitor"
+        "pg_jsonschema"
+        "pg_partman"
+        "vector"
+        "supabase_vault"
+        "hypopg"
+        "pg_tle"
+        "wrappers"
+        "supautils"
       ];
       receipt-version = "1";
     };

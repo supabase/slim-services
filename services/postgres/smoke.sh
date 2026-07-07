@@ -72,10 +72,13 @@ PY
     sleep 1
   done
 
-  # pgsodium/supabase_vault additionally need the pgsodium getkey script from
-  # the CLI config bundle; exercising them belongs to the CLI's own smoke.
-  log "creating the portable extension set (contrib + pgvector + pg_net + pg_cron)"
-  for ext in pgcrypto pg_stat_statements vector pg_net pg_cron; do
+  # The artifact ships the full PG17 extension set; create the preload-free
+  # subset here. pgsodium/supabase_vault additionally need the pgsodium
+  # getkey script from the CLI config bundle (exercised by the image smoke,
+  # whose entrypoint wires it); pgaudit/pg_stat_monitor/pg_tle need a
+  # shared_preload_libraries opt-in.
+  log "creating the portable extension set (preload-free subset)"
+  for ext in pgcrypto pgjwt pg_stat_statements vector pg_net pg_cron hypopg index_advisor pg_jsonschema pg_hashids http rum pgtap pgmq pg_partman pg_repack plpgsql_check postgis pgrouting pgroonga wrappers; do
     psql_host "CREATE EXTENSION IF NOT EXISTS $ext CASCADE" >/dev/null \
       || { cat "$pg_data_dir/postgres.log" >&2; fail "CREATE EXTENSION $ext failed"; }
   done
@@ -124,15 +127,19 @@ log "checking local-dev config profile is active"
 [[ "$(psql_admin "SHOW jit")" == "off" ]] || fail "expected jit=off"
 [[ "$(psql_admin "SHOW wal_level")" == "logical" ]] || fail "expected wal_level=logical"
 
-# The derived image ships the curated CLI extension set + pgvector (the
-# native-first divergence from upstream's full flavour, recorded in
-# HOST_NATIVE_PLAN.md), plus the contrib modules postgres itself bundles.
-# supautils and safeupdate are preload-only libraries with no extension to
-# create; pgsodium/supabase_vault exercise the getkey wiring set up by the
-# bundle's init script.
-log "creating the curated extension set"
+# The derived image ships the full PG17 extension set (everything the
+# upstream image supports; timescaledb/plv8 do not support PG17), installed
+# but NOT enabled — only the minimal shared_preload_libraries set is on by
+# default, keeping the low-footprint profile. This list creates everything
+# that works without extra preloads; pgaudit/pg_stat_monitor/pg_tle require
+# a shared_preload_libraries opt-in (config change + restart) and
+# supautils/safeupdate/plan_filter/wal2json are preload-only or plugin
+# libraries with no extension to create. pgsodium/supabase_vault exercise
+# the getkey wiring set up by the bundle's init script.
+log "creating the supported extension set (including the heavy families)"
 extensions=(
   pgcrypto
+  pgjwt
   '"uuid-ossp"'
   pg_trgm
   hstore
@@ -141,8 +148,25 @@ extensions=(
   pg_net
   pg_cron
   vector
+  hypopg
+  index_advisor
+  pg_jsonschema
+  pg_hashids
+  http
+  rum
   pgsodium
   supabase_vault
+  pgtap
+  pgmq
+  pg_partman
+  pg_repack
+  plpgsql_check
+  postgis
+  postgis_topology
+  address_standardizer
+  pgrouting
+  pgroonga
+  wrappers
 )
 for ext in "${extensions[@]}"; do
   psql_admin "CREATE EXTENSION IF NOT EXISTS $ext CASCADE" >/dev/null \

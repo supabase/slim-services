@@ -132,9 +132,14 @@ committed recipe includes it; CI builds it via upstream's binary cache).
 The portable artifact is now the basis for the Docker image too, on every
 target — an accepted divergence from upstream supabase/postgres bundling:
 
-- The image ships the **curated CLI extension set + pgvector**, not the full
-  31-extension flavour (postgis/pgroonga/timescaledb move behind a one-line
-  overlay change each, when demanded).
+- The artifact and image ship the **full PG17 extension set** — everything
+  the upstream image supports (timescaledb/plv8 are PG17-incompatible
+  upstream). Installed is not enabled: only the minimal
+  `shared_preload_libraries` set (pg_stat_statements, pg_cron, pg_net,
+  pgsodium, supabase_vault, supautils) is on by default, so the measured
+  footprint is unchanged; pgaudit/pg_stat_monitor/pg_tle need a preload
+  opt-in to CREATE. Disk grows accordingly (~30 -> ~250-300 MiB archive
+  expected).
 - `Dockerfile.artifact` is a nixos/nix flake builder producing the same
   portable rootfs as darwin (`--accept-flake-config` uses upstream's binary
   cache); the old docker-image prune (`prune.sh`, `slim-entrypoint.sh`) is
@@ -149,9 +154,10 @@ target — an accepted divergence from upstream supabase/postgres bundling:
   supabase migrations against a temporary socket-only server, and starts
   postgres — all as uid 65532 (no gosu/root phase, unlike the upstream
   image).
-- The image smoke now checks the curated set (including a pgsodium/vault
-  round-trip through the getkey wiring and a pgvector nearest-neighbour
-  query).
+- The image smoke checks the broad preload-free set (29 creates including
+  postgis/pgroonga/wrappers, a pgsodium/vault round-trip through the getkey
+  wiring, and a pgvector nearest-neighbour query); the host smoke creates
+  the same subset minus the getkey-dependent pair.
 
 Verification happens in CI (`service-artifacts.yml`) per the directive —
 no local build for this step; the portable artifact underneath is the one

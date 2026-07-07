@@ -63,19 +63,13 @@
       dbExtensions17 = orioleFilteredExtensions;
 
       # CLI extensions - minimal set for Supabase CLI with migration support
-      # slim-services overlay (HOST_NATIVE_PLAN.md): the CLI extension set
-      # plus pgvector — the documented parity gap in the CLI's host-native
-      # postgres distribution.
-      cliExtensions = [
-        ../ext/pgvector.nix
-        ../ext/supautils.nix
-        ../ext/pg_graphql
-        ../ext/pgsodium.nix
-        ../ext/vault.nix
-        ../ext/pg_net.nix
-        ../ext/pg_cron
-        ../ext/pg-safeupdate.nix
-      ];
+      # slim-services overlay (HOST_NATIVE_PLAN.md): the portable artifact
+      # ships the FULL PG17 extension set — everything the upstream Docker
+      # image supports (ourExtensions minus timescaledb/plv8, which do not
+      # support PG17). Extensions on disk cost nothing at runtime: only the
+      # minimal shared_preload_libraries set is enabled by default, so the
+      # low-footprint profile is unaffected.
+      cliExtensions = dbExtensions17;
 
       getPostgresqlPackage =
         version: latestOnly:

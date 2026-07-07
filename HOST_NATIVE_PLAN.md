@@ -253,20 +253,21 @@ Status 2026-07-07:
   extension set — closing the documented parity gap. Host smoke: initdb +
   pg_ctl + extension creation + a pgvector nearest-neighbour round-trip, no
   Docker anywhere. Scoping decisions:
-  - Extension set: the CLI's curated set + pgvector (not the full
-    31-extension flavour) — the heavy families (postgis, pgroonga,
-    timescaledb) stay Docker-image-only until demanded; growing the set is a
-    one-line overlay change per extension.
+  - Extension set (updated 2026-07-07, user decision): the FULL PG17 set —
+    everything the upstream Docker image supports (timescaledb/plv8 are
+    PG17-incompatible upstream). Extensions are installed but not enabled;
+    only the minimal `shared_preload_libraries` set is on by default, so
+    disk grows (~30 -> ~250-300 MiB archive) but runtime footprint does not.
+    pgaudit/pg_stat_monitor/pg_tle require a preload opt-in to CREATE.
   - **Update 2026-07-07 (user directive): no exceptions.** The portable
     artifact is the basis for the postgres Docker image too, on every
     target — diverging from upstream supabase/postgres bundling: the image
-    ships the curated CLI extension set + pgvector instead of the full
-    31-extension flavour, runs unprivileged on distroless base, and boots
+    ships the full PG17 extension set (installed, minimal preload — see the
+    extension-set decision above), runs unprivileged on distroless base, and boots
     through the bundle's own supabase-postgres-init.sh plus repo-owned
     docker wiring (services/postgres/overlay/entry.sh: network/pg_hba
     settings, low-footprint profile, supabase migrations). The docker-image
-    prune backend is gone. Growing the extension set is a one-line overlay
-    change per extension.
+    prune backend is gone.
 - CLI-side integration (process-compose wiring, download/verify UX, port
   allocation) — separate repo (`supabase/cli`); this repo's deliverables end
   at "archive + manifest + smoke that proves it runs on the host".

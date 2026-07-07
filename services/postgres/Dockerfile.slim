@@ -4,9 +4,9 @@
 # bundles every non-glibc library with $ORIGIN rpaths, so the glibc-only
 # base is enough. Runs unprivileged (uid 65532) — no gosu/root phase.
 #
-# Divergence from upstream supabase/postgres bundling (user directive): the
-# image ships the curated CLI extension set + pgvector, not the full
-# 31-extension flavour.
+# The artifact ships the full PG17 extension set (installed, not enabled:
+# only the minimal shared_preload_libraries set is on by default, so the
+# low-footprint profile is unaffected).
 ARG BASE_IMAGE=gcr.io/distroless/base-debian13:nonroot
 
 FROM debian:trixie-slim AS tools

@@ -80,11 +80,12 @@ sampled by each service's smoke test (`docker stats`, recorded per build in
 <!-- generated:results:end -->
 
 Postgres is native-first like everything else: the image is derived from the
-portable artifact and ships the curated CLI extension set + pgvector
-(diverging from the upstream image's full 31-extension flavour — the
-recorded trade-off in [HOST_NATIVE_PLAN.md](HOST_NATIVE_PLAN.md)); heavy
-extension families (postgis, pgroonga, timescaledb) can be added to the
-overlay's extension list when demanded.
+portable artifact, which ships every extension the upstream PG17 image
+supports (timescaledb/plv8 are PG17-incompatible upstream). Extensions are
+installed but not enabled — only the minimal `shared_preload_libraries` set
+is on by default, so the footprint numbers are unaffected; the few
+preload-gated extensions (pgaudit, pg_stat_monitor, pg_tle) take a config
+opt-in.
 
 ### Host-Native Artifacts
 
