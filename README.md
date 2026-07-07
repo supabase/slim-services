@@ -79,9 +79,12 @@ sampled by each service's smoke test (`docker stats`, recorded per build in
 `*` Upstream comparison uses `UPSTREAM_COMPARE_IMAGE` from the recipe (the exact tag is not published on Docker Hub), so the percentage is directional.
 <!-- generated:results:end -->
 
-Postgres keeps every extension the upstream image ships (`supabase/postgres`
-flavour contract), so its disk reduction is limited to Nix build cruft — its
-contribution is the runtime profile below.
+Postgres is native-first like everything else: the image is derived from the
+portable artifact and ships the curated CLI extension set + pgvector
+(diverging from the upstream image's full 31-extension flavour — the
+recorded trade-off in [HOST_NATIVE_PLAN.md](HOST_NATIVE_PLAN.md)); heavy
+extension families (postgis, pgroonga, timescaledb) can be added to the
+overlay's extension list when demanded.
 
 ### Host-Native Artifacts
 

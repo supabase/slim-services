@@ -1,21 +1,38 @@
-ARG BASE_IMAGE=scratch
+# syntax=docker/dockerfile:1.7
+# Derived image: distroless base + the portable postgres artifact + entry
+# wiring (HOST_NATIVE_PLAN.md, native-first — no exceptions). The artifact
+# bundles every non-glibc library with $ORIGIN rpaths, so the glibc-only
+# base is enough. Runs unprivileged (uid 65532) — no gosu/root phase.
+#
+# Divergence from upstream supabase/postgres bundling (user directive): the
+# image ships the curated CLI extension set + pgvector, not the full
+# 31-extension flavour.
+ARG BASE_IMAGE=gcr.io/distroless/base-debian13:nonroot
+
+FROM debian:trixie-slim AS tools
+RUN apt-get update -y && apt-get install -y --no-install-recommends busybox bash ca-certificates \
+  && mkdir -p /out/usr/bin /out/usr/lib /out/etc/ssl/certs /out/usr/local/share/postgres /pgdata-skel/data \
+  && cp /usr/bin/busybox /out/usr/bin/busybox \
+  && for applet in sh basename cat chmod cp cut date dirname env grep gunzip head id mkdir readlink rm sed sleep tr uname wc; do \
+       ln -sf busybox "/out/usr/bin/${applet}"; \
+     done \
+  # The bundle's supabase-postgres-init.sh is bash; bring bash + its one
+  # non-glibc library.
+  && cp /bin/bash /out/usr/bin/bash \
+  && cp -L "$(ldd /bin/bash | awk '/libtinfo/ { print $3 }')" /out/usr/lib/ \
+  && cp /etc/ssl/certs/ca-certificates.crt /out/etc/ssl/certs/ca-certificates.crt \
+  && chmod 0700 /pgdata-skel/data
+
 FROM ${BASE_IMAGE}
 ARG ARTIFACT_ROOT
-COPY ${ARTIFACT_ROOT}/ /
-# Mirror the upstream supabase/postgres runtime environment.
-ENV PATH=/nix/var/nix/profiles/default/bin:/usr/lib/postgresql/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-    PGDATA=/var/lib/postgresql/data \
-    POSTGRES_HOST=/var/run/postgresql \
+COPY --from=tools /out/ /
+COPY --from=tools --chown=65532:65532 /pgdata-skel/ /var/lib/postgresql/
+COPY --chown=65532:65532 ${ARTIFACT_ROOT}/ /opt/postgres/
+COPY services/postgres/overlay/99-local-dev.conf /usr/local/share/postgres/99-local-dev.conf
+COPY services/postgres/overlay/entry.sh /usr/local/bin/entry.sh
+ENV PGDATA=/var/lib/postgresql/data \
     POSTGRES_USER=supabase_admin \
     POSTGRES_DB=postgres \
-    POSTGRES_INITDB_ARGS="--allow-group-access --locale-provider=icu --encoding=UTF-8 --icu-locale=en_US.UTF-8" \
-    LANG=en_US.UTF-8 \
-    LANGUAGE=en_US:en \
-    LC_ALL=en_US.UTF-8 \
-    GRN_PLUGINS_DIR=/usr/lib/groonga/plugins \
-    LOCALE_ARCHIVE=/nix/var/nix/profiles/default/lib/locale/locale-archive
+    PATH=/opt/postgres/bin:/usr/local/bin:/usr/bin:/bin
 EXPOSE 5432
-# Wrapper restores /etc/postgresql* ownership (lost in COPY) then execs the
-# stock entrypoint, which gosu-drops to postgres; root is required at start.
-ENTRYPOINT ["/usr/local/bin/slim-entrypoint.sh"]
-CMD ["postgres", "-D", "/etc/postgresql"]
+ENTRYPOINT ["/usr/bin/sh", "/usr/local/bin/entry.sh"]

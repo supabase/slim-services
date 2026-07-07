@@ -113,8 +113,10 @@ sleep 5
 wait_for_postgres 60 "$container" supabase_admin \
   || fail "postgres not ready after migrations"
 
+# The derived image uses the CLI config templates: local socket + loopback
+# auth is scram-sha-256, so psql needs the password.
 psql_admin() {
-  docker exec "$container" psql -h 127.0.0.1 -U supabase_admin -d postgres -v ON_ERROR_STOP=1 -qAt -c "$1"
+  docker exec -e PGPASSWORD=postgres "$container" psql -h 127.0.0.1 -U supabase_admin -d postgres -v ON_ERROR_STOP=1 -qAt -c "$1"
 }
 
 log "checking local-dev config profile is active"
@@ -122,10 +124,15 @@ log "checking local-dev config profile is active"
 [[ "$(psql_admin "SHOW jit")" == "off" ]] || fail "expected jit=off"
 [[ "$(psql_admin "SHOW wal_level")" == "logical" ]] || fail "expected wal_level=logical"
 
-log "creating the supported extension set (including the heavy families)"
+# The derived image ships the curated CLI extension set + pgvector (the
+# native-first divergence from upstream's full flavour, recorded in
+# HOST_NATIVE_PLAN.md), plus the contrib modules postgres itself bundles.
+# supautils and safeupdate are preload-only libraries with no extension to
+# create; pgsodium/supabase_vault exercise the getkey wiring set up by the
+# bundle's init script.
+log "creating the curated extension set"
 extensions=(
   pgcrypto
-  pgjwt
   '"uuid-ossp"'
   pg_trgm
   hstore
@@ -134,27 +141,8 @@ extensions=(
   pg_net
   pg_cron
   vector
-  hypopg
-  index_advisor
-  pg_jsonschema
-  pg_hashids
-  http
-  pgaudit
-  pg_tle
-  rum
   pgsodium
   supabase_vault
-  pgtap
-  pgmq
-  pg_partman
-  pg_repack
-  plpgsql_check
-  postgis
-  postgis_topology
-  address_standardizer
-  pgrouting
-  pgroonga
-  wrappers
 )
 for ext in "${extensions[@]}"; do
   psql_admin "CREATE EXTENSION IF NOT EXISTS $ext CASCADE" >/dev/null \
@@ -166,6 +154,12 @@ log "basic SQL round-trip"
 psql_admin "CREATE TABLE IF NOT EXISTS smoke_check(id serial primary key, v text)" >/dev/null
 psql_admin "INSERT INTO smoke_check(v) VALUES ('ok')" >/dev/null
 [[ "$(psql_admin "SELECT v FROM smoke_check LIMIT 1")" == "ok" ]] || fail "basic SQL round-trip failed"
+
+log "pgvector round-trip"
+psql_admin "CREATE TABLE IF NOT EXISTS smoke_vec(id serial primary key, v vector(3))" >/dev/null
+psql_admin "INSERT INTO smoke_vec(v) VALUES ('[1,2,3]'), ('[4,5,6]')" >/dev/null
+[[ "$(psql_admin "SELECT id FROM smoke_vec ORDER BY v <-> '[1,2,2]' LIMIT 1")" == "1" ]] \
+  || fail "pgvector nearest-neighbour query failed"
 
 # Postgres needs a longer settle than the 10s default: right after initdb +
 # migrations + extension creation, autovacuum/checkpointer are still working

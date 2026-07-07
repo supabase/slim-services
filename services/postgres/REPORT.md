@@ -127,6 +127,32 @@ committed recipe includes it; CI builds it via upstream's binary cache).
 | Steady-state RSS (host process, idle, 60s settle) | `34.0 MiB` |
 | Idle CPU | `0.0 %` |
 
-The Linux Docker image keeps the full-flavour prune of the upstream image
-(all 31 extensions) — the documented native-first exception; a curated
-portable artifact must not regress it.
+### Native-first, no exceptions (2026-07, user directive)
+
+The portable artifact is now the basis for the Docker image too, on every
+target — an accepted divergence from upstream supabase/postgres bundling:
+
+- The image ships the **curated CLI extension set + pgvector**, not the full
+  31-extension flavour (postgis/pgroonga/timescaledb move behind a one-line
+  overlay change each, when demanded).
+- `Dockerfile.artifact` is a nixos/nix flake builder producing the same
+  portable rootfs as darwin (`--accept-flake-config` uses upstream's binary
+  cache); the old docker-image prune (`prune.sh`, `slim-entrypoint.sh`) is
+  gone.
+- `Dockerfile.slim` derives the image: distroless `base-debian13:nonroot` +
+  busybox/bash tools stage + the bundle at `/opt/postgres` + repo-owned
+  `entry.sh`. First boot delegates to the bundle's own
+  `supabase-postgres-init.sh` (initdb, CLI config templates with pgsodium
+  getkey wired, password), then appends the docker network settings
+  (`listen_addresses='*'`, port 5432, `wal_level=logical`, a network
+  scram pg_hba rule) and the low-footprint profile, runs the bundled
+  supabase migrations against a temporary socket-only server, and starts
+  postgres — all as uid 65532 (no gosu/root phase, unlike the upstream
+  image).
+- The image smoke now checks the curated set (including a pgsodium/vault
+  round-trip through the getkey wiring and a pgvector nearest-neighbour
+  query).
+
+Verification happens in CI (`service-artifacts.yml`) per the directive —
+no local build for this step; the portable artifact underneath is the one
+already verified above.
