@@ -151,3 +151,17 @@ Logflare-specific packaging:
 | rootfs | `137.2 MiB` |
 | Steady-state RSS (host process, idle) | `207.6 MiB` |
 | Idle CPU | `0.2 %` |
+
+### Native-first convergence (2026-07)
+
+Same convergence as realtime/pooler: Linux artifacts from the Nix package,
+image derived via `Dockerfile.slim` (`entry.sh`: migrate → `start --sname
+logflare`, replacing upstream run.sh minus its cloud secrets/startup hooks).
+Pin correction: shipped libraries must match the runtime glibc floor —
+nixos-unstable's glibc 2.42 symbols broke the distroless (2.41) image, so
+everything builds from the shared 25.05 pin (Elixir 1.18.4; mix.exs allows
+`~> 1.4`) with only the Rust toolchain from unstable (rustler 0.37 needs
+rustc ≥ 1.91). rustler_precompiled NIF tarballs are pinned per target
+(darwin-arm64, linux-arm64, linux-amd64). linux-arm64 verified: derived
+image smoke green — RSS 479.7 MiB (was 546.7) and 58.4 MiB gzip (was 89.7,
+no npm assets + tighter pruning). disksup disabled via `vm.args`.

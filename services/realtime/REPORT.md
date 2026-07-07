@@ -168,3 +168,17 @@ artifact builder unchanged):
 Host RSS runs higher than the container number (~163 MiB): same release, but
 the host BEAM sizes its allocators for the machine rather than a cgroup.
 Tuning beyond the existing `+S 1:1` profile is follow-up work.
+
+### Native-first convergence (2026-07)
+
+The Nix package now builds the Linux artifacts too (patchelf `$ORIGIN`
+rpaths + system loader; in-derivation ldd audit), and `Dockerfile.slim`
+derives the image from that rootfs (distroless `base-debian13:nonroot` +
+busybox/tini/CA stage + `entry.sh`: migrate → optional seeds → server). The
+docker-source builder is gone; the old run.sh cloud bootstrap (Fly/ECS cert
+generation) is not part of the local/CI image. linux-arm64 verified: derived
+image smoke green (RSS 162.8 MiB ≈ before; 26.6 MiB gzip, was 28.4) and the
+archive runs as a bare host process on a store-less Debian (healthcheck 200).
+Found in the process: nixpkgs compiles an absolute Nix-store bash path into
+OTP's `disksup.beam` — disksup is disabled via `vm.args` in the portable
+packaging (see NIX_PORTABLE_ARTIFACT_PLAYBOOK.md).

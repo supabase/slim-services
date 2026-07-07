@@ -112,3 +112,13 @@ host Go toolchain (`CGO_ENABLED=0 GOOS=darwin GOARCH=arm64`, same flags as
 | rootfs | `33.5 MiB` |
 | Steady-state RSS (host process, idle) | `29.3 MiB` |
 | Idle CPU | `0.0 %` |
+
+### Native-first convergence (2026-07)
+
+`build-host.sh` now builds the Linux artifacts too (Go cross-compiles from
+any host), so every target shares the `bin/auth` layout, and
+`Dockerfile.slim` derives the scratch image from the artifact (an alpine
+stage supplies the CA bundle, passwd/group, and the `gotrue` symlink;
+entrypoint unchanged). The docker-source builder is gone. linux-arm64
+verified: derived image smoke green (`/health` 200, RSS 8.0 MiB, 11.4 MiB
+gzip ≈ before); linux-amd64 artifact builds a static x86-64 ELF.

@@ -142,3 +142,10 @@ wrapper resolves the runtime (`SUPABASE_NODE` → `../../node/bin/node` →
 | rootfs | `48.2 MiB` |
 | Steady-state RSS (host process, idle) | `125.6 MiB` |
 | Idle CPU | `0.27 %` |
+
+### Native-first convergence (2026-07)
+
+Same as storage: `build-host.sh` builds the Linux artifacts on Linux hosts,
+`Dockerfile.slim` derives the image from the artifact's `app/` tree on the
+distroless Node base, and the Dockerfile.artifact builder is gone. First
+Linux verification happens in CI (`service-artifacts.yml`), by design.

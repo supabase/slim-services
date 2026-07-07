@@ -140,3 +140,12 @@ shared Node runtime**. The artifact stays a rolldown JS bundle; a thin
 | rootfs | `18.7 MiB` |
 | Steady-state RSS (host process, idle) | `187.2 MiB` |
 | Idle CPU | `0.0 %` |
+
+### Native-first convergence (2026-07)
+
+`build-host.sh` builds the Linux artifacts on Linux hosts (a guard refuses
+cross-builds: npm resolves platform packages — fs-xattr — for the machine it
+runs on), and `Dockerfile.slim` derives the image from the artifact's `app/`
+tree on the distroless Node base (the `bin/storage` wrapper is host-only).
+The Dockerfile.artifact builders are gone. First Linux verification happens
+in CI (`service-artifacts.yml`), by design.

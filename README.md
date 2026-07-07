@@ -83,14 +83,18 @@ Postgres keeps every extension the upstream image ships (`supabase/postgres`
 flavour contract), so its disk reduction is limited to Nix build cruft — its
 contribution is the runtime profile below.
 
-### Host-Native Artifacts (darwin-arm64)
+### Host-Native Artifacts
 
-Services on the host-native contract ([HOST_NATIVE_PLAN.md](HOST_NATIVE_PLAN.md))
-also ship a self-contained, relocatable `tar.zst` archive that the CLI can
-download to `~/.supabase/bin/<service>/<version>/` and run without Docker.
-Archives are zstd-compressed; Idle RSS and Idle CPU are sampled from the
-artifact running as a real host process with `runtime.env` applied (`ps`-based,
-recorded in the darwin `manifest.json`). Refresh with
+Every Supabase-owned service ships a self-contained, relocatable `tar.zst`
+archive per target ([HOST_NATIVE_PLAN.md](HOST_NATIVE_PLAN.md)) that the CLI
+can download to `~/.supabase/bin/<service>/<version>/` and run without
+Docker — on macOS and on Linux (only the glibc family is assumed from a
+Linux host; the Node duo resolves the shared Node runtime recorded in the
+manifest's `runtime_requires`). The Linux Docker images are derived from
+these same artifacts. The table below shows the darwin-arm64 numbers; Idle
+RSS and Idle CPU are sampled from the artifact running as a real host
+process with `runtime.env` applied (`ps`-based, recorded in the darwin
+`manifest.json`). Refresh with
 `scripts/update-results-tables.sh --host-native-only` after darwin rebuilds.
 
 <!-- generated:host-native:begin -->
@@ -119,8 +123,9 @@ Memory and CPU are first-class optimization targets, not just disk:
 
 - **Runtime profiles** — each service has a `services/<service>/runtime.env`
   with low-footprint local-dev defaults, baked into the image as ENV and
-  overridable at `docker run -e`. The same KEY=VALUE files are the intended
-  source for host-native (no-Docker) runs later. Highlights:
+  overridable at `docker run -e`. The same KEY=VALUE files are applied as
+  process environment for host-native (no-Docker) runs — the host-process
+  smokes do exactly that, mirroring the CLI. Highlights:
   - BEAM services (realtime, analytics, pooler): one scheduler and no
     scheduler busy-waiting (`+S 1:1 +sbwt none ...`) — idle CPU drops from
     several percent to ≤0.5%.
@@ -132,7 +137,9 @@ Memory and CPU are first-class optimization targets, not just disk:
   - Postgres: a conf overlay (`shared_buffers=32MB`, `jit=off`, slowed idle
     ticks) via the stock `include_dir`; `wal_level=logical` untouched.
 - **Measurement** — every smoke samples steady-state RSS and idle CPU
-  (`record_runtime_metrics` in `scripts/smoke-lib.sh`) and records them under
+  (`record_runtime_metrics` via `docker stats` for containers,
+  `record_host_runtime_metrics` via `ps` over the process tree for host
+  processes — both in `scripts/smoke-lib.sh`) and records them under
   `runtime` in the artifact `manifest.json`, so regressions on these axes are
   visible per build, exactly like size.
 - **The parallel-stacks view** — image layers are shared; RSS multiplies per
@@ -178,24 +185,34 @@ smoke — steady-state runtime metrics (`runtime.runtime_rss_mib`,
 
 ## Build Backends
 
-Each service has a `services/<service>/recipe.env` file. The dispatcher reads
-`ARTIFACT_BACKEND` and chooses one of:
+Native-first ([HOST_NATIVE_PLAN.md](HOST_NATIVE_PLAN.md)): for every
+Supabase-owned service the portable, relocatable artifact is the single
+source of truth on every target, and the Docker image is derived from that
+same rootfs. Each service has a `services/<service>/recipe.env` file; the
+dispatcher reads `ARTIFACT_BACKEND` and chooses one of:
 
-- `docker-source`: build from the pinned source submodule with
-  `services/<service>/Dockerfile.artifact`.
-- `nix`: build from a configured Nix flake/package and export either the full
-  portable rootfs or declared runtime paths into the artifact rootfs.
+- `nix`: build the portable rootfs from the repo-owned Nix package in
+  `services/<service>/nix/` (applied over the read-only submodule via
+  `NIX_PACKAGE_OVERLAY`). Used by the BEAM services (realtime, analytics,
+  pooler) and edge-runtime. On Linux this runs local Nix when the host
+  matches, or the service's `Dockerfile.artifact` nixos/nix builder
+  otherwise (e.g. building Linux artifacts from macOS).
+- `docker-source` with `ARTIFACT_SOURCE_BUILD="host"`: build with
+  `services/<service>/build-host.sh` on the host toolchain — Go
+  cross-compiles (auth) and Node bundles (storage, pgmeta; these must run on
+  a host matching the target because npm resolves platform packages).
 - `docker-image`: run `Dockerfile.artifact` rooted at a published upstream
   image (`FROM $SOURCE_IMAGE`, pinned by `SOURCE_IMAGE_DIGEST`) — used when
-  pruning the published image is the practical path (postgres).
-- `image`: extract selected paths from a published image as a fallback or
-  comparison path.
+  pruning the published image is the practical path (postgres, studio).
+- `image`: extract selected paths from a published image (postgrest — the
+  extraction bundles the full ELF closure, so the result is still portable).
 
-The final `Dockerfile.slim` files are artifact-only: they copy a prepared
-`rootfs/` into the smallest proven runtime base. Images are always assembled
-through `scripts/render-dockerfile.sh`, which appends the `runtime.env`
-profile as ENV — never build `Dockerfile.slim` directly or the runtime
-profile is silently skipped.
+The final `Dockerfile.slim` files derive the image from the artifact: they
+copy the prepared `rootfs/` into the smallest proven runtime base and add
+only entry wiring (busybox/tini/CA-bundle stages where a shell entrypoint is
+needed). Images are always assembled through `scripts/render-dockerfile.sh`,
+which appends the `runtime.env` profile as ENV — never build
+`Dockerfile.slim` directly or the runtime profile is silently skipped.
 
 Portable archive builds share two hardening steps. For Nix-backed portable
 artifacts, these checks should run inside the Nix package when practical; the
@@ -226,37 +243,49 @@ Or, after a normal clone:
 git submodule update --init --recursive
 ```
 
-Build one service artifact:
+Build one service artifact (host-native for your machine):
 
 ```bash
-TARGET_OS=linux ARCH=arm64 scripts/build-artifact.sh storage v1.62.6
+TARGET_OS=darwin ARCH=arm64 scripts/build-artifact.sh auth v2.192.0
+TARGET_OS=linux ARCH=arm64 scripts/build-artifact.sh realtime v2.112.6
 ```
 
-Build a slim image from that artifact:
+Build the derived slim image from a Linux artifact:
 
 ```bash
 scripts/build-image-from-artifact.sh \
-  storage \
-  artifacts/storage/v1.62.6/linux-arm64/rootfs \
-  local/storage:slim-v1.62.6-arm64
+  realtime \
+  artifacts/realtime/v2.112.6/linux-arm64/rootfs \
+  local/realtime:slim-v2.112.6-arm64
 ```
 
-Run the service smoke test:
+Run the service smoke test against the image:
 
 ```bash
-scripts/smoke.sh storage --image local/storage:slim-v1.62.6-arm64
+scripts/smoke.sh realtime --image local/realtime:slim-v2.112.6-arm64
 ```
 
-Or smoke an artifact rootfs directly, which first builds a temporary image:
+Or smoke an artifact rootfs. On a matching darwin host this runs the service
+as a real host process (no Docker for the service); Linux artifacts smoke
+through a temporary image by default, or as a host process on a matching
+Linux host with `SLIM_DIRECT_LINUX_ARTIFACT_SMOKE=1`:
 
 ```bash
-scripts/smoke.sh storage --artifact artifacts/storage/v1.62.6/linux-arm64/rootfs
+scripts/smoke.sh auth --artifact artifacts/auth/v2.192.0/darwin-arm64/rootfs
+SLIM_DIRECT_LINUX_ARTIFACT_SMOKE=1 \
+  scripts/smoke.sh realtime --artifact artifacts/realtime/v2.112.6/linux-arm64/rootfs
 ```
 
-Run the full CI-style build for one service and matrix cell:
+Hosts without Docker (e.g. macOS CI runners) can run the harness postgres as
+a host process too: `SLIM_SMOKE_HOST_POSTGRES=1`.
+
+Run the full CI-style build for one service and matrix cell (build, portable
+audit, smoke, archive + SHA256SUMS; Linux additionally derives and smokes the
+Docker image):
 
 ```bash
-TARGET_OS=linux ARCH=arm64 scripts/ci-build-service.sh edge-runtime v1.74.2
+TARGET_OS=darwin ARCH=arm64 scripts/ci-build-service.sh edge-runtime v1.74.2
+TARGET_OS=linux ARCH=arm64 scripts/ci-build-service.sh realtime v2.112.6
 ```
 
 ## Common Commands
@@ -334,10 +363,16 @@ scripts/archive-artifact.sh <artifact-rootfs> [archive-prefix]
 
 ## Status
 
-Three optimization passes are complete: base-image/artifact slimming (pass 1),
-service-specific pruning (pass 2), and the runtime-footprint pass (pass 3 —
-latest versions, postgres onboarding, `runtime.env` profiles, and RSS/CPU
-measurement in every smoke). The next phase is CI rollout: turn the per-service
-builds and smoke tests into repeatable CI jobs (only edge-runtime has a
-workflow today), plus the CLI-side follow-ups tracked in
-[SLIM_IMAGES_REPORT.md](SLIM_IMAGES_REPORT.md) § Remaining Work.
+Four passes are complete: base-image/artifact slimming (pass 1),
+service-specific pruning (pass 2), the runtime-footprint pass (pass 3 —
+latest versions, postgres onboarding, `runtime.env` profiles, RSS/CPU
+measurement in every smoke), and the host-native pass (pass 4 —
+[HOST_NATIVE_PLAN.md](HOST_NATIVE_PLAN.md)): every Supabase-owned service
+ships a self-contained, relocatable archive for `darwin-arm64` and
+`linux-arm64`/`linux-amd64`, runnable with no Docker, with the Docker images
+derived from those same artifacts. CI builds all of it via
+`.github/workflows/service-artifacts.yml` (plus edge-runtime's own
+workflow); the first full CI pass across all cells and the CLI-side
+integration (download/verify, process-compose wiring) are the next steps,
+tracked in [SLIM_IMAGES_REPORT.md](SLIM_IMAGES_REPORT.md) § Remaining Work
+and the plan's Phase 5 notes.

@@ -132,3 +132,16 @@ lives at `native/Cargo.lock`). Same portable-BEAM packaging as realtime
 | rootfs | `52.4 MiB` |
 | Steady-state RSS (host process, idle) | `214.0 MiB` |
 | Idle CPU | `0.0 %` |
+
+### Native-first convergence (2026-07)
+
+Same convergence as realtime: the Nix package builds the Linux artifacts
+(pg_query's bindgen needs `rustPlatform.bindgenHook` on Linux), and
+`Dockerfile.slim` derives the image from the rootfs (`entry.sh`: RLIMIT hook
+→ migrate → server; replaces limits.sh + docker-source). linux-arm64
+verified: derived image smoke green (authenticated `/api/health` 204, RSS
+159.0 MiB ≈ before; 39.0 MiB gzip vs 24.3 — the artifact now carries
+openssl/libstdc++/ncurses itself instead of leaning on distroless-cc, the
+cost of one rootfs serving native and Docker), and the archive runs as a
+bare host process on a store-less Debian. disksup disabled via `vm.args`
+(see realtime's note).
