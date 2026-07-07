@@ -43,7 +43,7 @@ let
     lockFile = ../native/Cargo.lock;
   };
 
-  release = mixRelease {
+  release = mixRelease ({
     inherit pname version src;
     mixEnv = "prod";
 
@@ -54,11 +54,15 @@ let
       mixEnv = "prod";
     };
 
+    # bindgenHook wires libclang + the C standard header search paths that
+    # pg_query's bindgen needs on Linux (darwin finds them through the system
+    # toolchain; the hook is Linux-only so the darwin derivation is
+    # unaffected).
     nativeBuildInputs = [
       pkgs.cargo
       pkgs.rustc
       pkgs.protobuf
-    ];
+    ] ++ lib.optionals pkgs.stdenv.isLinux [ pkgs.rustPlatform.bindgenHook ];
 
     # Point cargo at the vendored dependency tree for the pgparser workspace.
     # The vendor copy must be writable: pg_query's build script writes its
@@ -76,7 +80,7 @@ let
     '';
 
     removeCookie = false;
-  };
+  });
 in
 {
   supavisor = pkgs.stdenv.mkDerivation {
@@ -85,7 +89,10 @@ in
     dontUnpack = true;
     dontPatchShebangs = true;
     dontStrip = true;
-    nativeBuildInputs = [ pkgs.python3 pkgs.file ];
+    nativeBuildInputs = [
+      pkgs.python3
+      pkgs.file
+    ] ++ lib.optionals pkgs.stdenv.isLinux [ pkgs.patchelf ];
 
     buildPhase = ''
       rootfs="$out"
@@ -112,6 +119,17 @@ in
         mv -f "$wrapped" "$rootfs/bin/$name"
         chmod 0755 "$rootfs/bin/$name"
       done
+
+      # nixpkgs patches OTP's disksup to spawn its port shell via an absolute
+      # Nix store bash path (compiled into disksup.beam, invisible to the
+      # binary audits). That path does not exist off the build machine, so
+      # disksup crash-loops and takes os_mon down. memsup/cpu_sup use the
+      # release's own priv/bin ports and keep working; disk metrics are not
+      # needed for local dev.
+      for vmargs in "$rootfs"/releases/*/vm.args; do
+        [ -f "$vmargs" ] || continue
+        printf '\n## Portable artifact: disksup would spawn a Nix store bash (see nix package)\n-os_mon start_disksup false\n' >> "$vmargs"
+      done
     '';
 
     postFixup = ''
@@ -122,6 +140,101 @@ in
       grep -rl '^#![ ]*/nix/store' "$rootfs" 2>/dev/null | while read -r script; do
         sed -i -E '1s|^#![ ]*/nix/store/[^ /]*/bin/([a-z0-9]+)( .*)?$|#!/bin/\1\2|' "$script"
       done
+    '' + lib.optionalString pkgs.stdenv.isLinux ''
+      # Linux half of the portable playbook: bundle every non-glibc shared
+      # library into dylib/, point every ELF at it with $ORIGIN-relative
+      # rpaths and at the host's dynamic loader, then audit with ldd.
+      rootfs="$out"
+      dylib_dir="$rootfs/dylib"
+      mkdir -p "$dylib_dir"
+
+      case "$(uname -m)" in
+        aarch64) interp="/lib/ld-linux-aarch64.so.1" ;;
+        x86_64) interp="/lib64/ld-linux-x86-64.so.2" ;;
+        *) echo "unsupported linux arch $(uname -m)" >&2; exit 1 ;;
+      esac
+
+      is_elf() {
+        file "$1" 2>/dev/null | grep -q "ELF"
+      }
+
+      elf_files() {
+        find "$rootfs" -type f \( -perm -0100 -o -name "*.so" -o -name "*.so.*" \) 2>/dev/null \
+          | while read -r file_path; do
+              if is_elf "$file_path"; then
+                echo "$file_path"
+              fi
+            done
+      }
+
+      # The glibc family resolves from the host (contract item 3).
+      should_exclude() {
+        case "$1" in
+          libc.so*|libc-*.so*|ld-linux*.so*|libdl.so*|libpthread.so*|libm.so*|libresolv.so*|librt.so*)
+            return 0 ;;
+          *)
+            return 1 ;;
+        esac
+      }
+
+      nix_store_deps() {
+        ldd "$1" 2>/dev/null | awk '/=> \/nix\/store/ { print $3 } $1 ~ "^/nix/store" { print $1 }'
+      }
+
+      # 1. Complete the closure before any patching (ldd still resolves the
+      # original Nix rpaths at this point).
+      for iteration in 1 2 3 4 5 6 7 8; do
+        copied=0
+        for elf in $(elf_files) "$dylib_dir"/*; do
+          [ -f "$elf" ] || continue
+          for dep in $(nix_store_deps "$elf"); do
+            dep_name="$(basename "$dep")"
+            should_exclude "$dep_name" && continue
+            if [ ! -e "$dylib_dir/$dep_name" ] && [ -e "$dep" ]; then
+              cp -L "$dep" "$dylib_dir/$dep_name"
+              chmod u+w "$dylib_dir/$dep_name"
+              copied=1
+            fi
+          done
+        done
+        [ "$copied" = "0" ] && break
+      done
+
+      # 2. Patch: system loader for executables, $ORIGIN-relative rpath to
+      # dylib/ for everything, then strip.
+      for elf in $(elf_files); do
+        rel="$(python3 -c "import os,sys; print(os.path.relpath(sys.argv[1], os.path.dirname(sys.argv[2])))" "$dylib_dir" "$elf")"
+        if patchelf --print-interpreter "$elf" >/dev/null 2>&1; then
+          patchelf --set-interpreter "$interp" "$elf" 2>/dev/null || true
+        fi
+        patchelf --set-rpath "\$ORIGIN/$rel" "$elf" 2>/dev/null || true
+        strip --strip-unneeded "$elf" 2>/dev/null || true
+      done
+
+      # 3. Audit: no unresolved deps, no Nix store references (the loader
+      # itself and the glibc family are expected from the host and resolve
+      # to the build sandbox's glibc here).
+      echo "Auditing Linux portable output"
+      unresolved="$(
+        for elf in $(elf_files); do
+          ldd "$elf" 2>/dev/null | awk -v file="$elf" -v rootfs="$rootfs" '
+            /not found/ { print file " -> " $0; next }
+            /=> \// { path = $3 }
+            path ~ "^/nix/store/" && index(path, rootfs "/") != 1 {
+              name = path
+              sub(/^.*\//, "", name)
+              if (name !~ /^(ld-linux.*|libc\.so.*|libc-.*\.so.*|libdl\.so.*|libpthread\.so.*|libm\.so.*|libresolv\.so.*|librt\.so.*)$/) {
+                print file " -> " path
+              }
+              path = ""
+            }
+          '
+        done
+      )"
+      if [ -n "$unresolved" ]; then
+        echo "$unresolved" >&2
+        exit 1
+      fi
     '' + lib.optionalString pkgs.stdenv.isDarwin ''
       rootfs="$out"
       dylib_dir="$rootfs/dylib"
