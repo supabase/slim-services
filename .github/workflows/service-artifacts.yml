@@ -27,7 +27,7 @@ name: Service artifacts
       services:
         description: Space-separated services to build (default = all promoted).
         required: false
-        default: auth postgrest realtime pooler analytics storage pgmeta
+        default: auth postgrest realtime pooler analytics storage pgmeta postgres
       targets:
         description: Space-separated targets (linux-arm64 linux-amd64 darwin-arm64).
         required: false
@@ -156,8 +156,11 @@ jobs:
 
       # The image smoke above covers the Docker flavor; this covers the CLI's
       # no-Docker mode with the same artifact running as a host process.
+      # postgres is excluded: its Linux artifact is the full-flavour Docker
+      # payload (HOST_NATIVE_PLAN.md exception), so a direct smoke would just
+      # rebuild the same temp image a second time.
       - name: Smoke artifact as a host process (linux)
-        if: matrix.target_os == 'linux'
+        if: matrix.target_os == 'linux' && matrix.service != 'postgres'
         shell: bash
         env:
           SLIM_DIRECT_LINUX_ARTIFACT_SMOKE: "1"

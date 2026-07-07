@@ -4,8 +4,96 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=scripts/smoke-lib.sh
 source "$ROOT_DIR/scripts/smoke-lib.sh"
 
+image="${IMAGE:-}"
+artifact_rootfs="${ARTIFACT_ROOTFS:-}"
+
+if [[ -n "$image" && -n "$artifact_rootfs" ]]; then
+  fail "set only one of IMAGE or ARTIFACT_ROOTFS"
+fi
+if [[ -z "$image" && -z "$artifact_rootfs" ]]; then
+  fail "set IMAGE to smoke a Docker image, or ARTIFACT_ROOTFS to smoke an extracted artifact"
+fi
+
+if [[ -n "$artifact_rootfs" ]]; then
+  # Host-process smoke for the portable postgres (upstream's
+  # psql_17_cli_portable + pgvector via the slim-services overlay): initdb,
+  # pg_ctl start, extension round-trip — no Docker anywhere.
+  require_cmd python3
+
+  pg_data_dir=""
+  cleanup_postgres_smoke() {
+    if [[ -n "$pg_data_dir" && -x "$artifact_rootfs/bin/pg_ctl" ]]; then
+      "$artifact_rootfs/bin/pg_ctl" -D "$pg_data_dir/data" stop -m immediate >/dev/null 2>&1 || true
+    fi
+    rm -rf "$pg_data_dir"
+    cleanup_smoke
+  }
+  trap cleanup_postgres_smoke EXIT
+
+  for bin in postgres initdb pg_ctl psql; do
+    [[ -x "$artifact_rootfs/bin/$bin" ]] || fail "postgres artifact binary missing: bin/$bin"
+  done
+
+  pg_data_dir="$(mktemp -d "${TMPDIR:-/tmp}/postgres-smoke.XXXXXX")"
+  port="$(python3 - <<'PY'
+import socket
+
+with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+    sock.bind(("127.0.0.1", 0))
+    print(sock.getsockname()[1])
+PY
+)"
+
+  log "initdb (portable artifact)"
+  "$artifact_rootfs/bin/initdb" -D "$pg_data_dir/data" -U supabase_admin --auth=trust \
+    >"$pg_data_dir/initdb.log" 2>&1 \
+    || { cat "$pg_data_dir/initdb.log" >&2; fail "initdb failed"; }
+
+  log "starting postgres host process on port $port"
+  # pg_cron/pg_net/pg_stat_statements need preloading (the CLI applies its
+  # own config template with the same preload set).
+  "$artifact_rootfs/bin/pg_ctl" -D "$pg_data_dir/data" -l "$pg_data_dir/postgres.log" \
+    -o "-p $port -c listen_addresses=127.0.0.1 -k $pg_data_dir -c shared_preload_libraries=pg_stat_statements,pg_cron,pg_net -c cron.database_name=postgres" \
+    start >/dev/null \
+    || { cat "$pg_data_dir/postgres.log" >&2; fail "pg_ctl start failed"; }
+  postgres_pid="$(head -1 "$pg_data_dir/data/postmaster.pid")"
+
+  psql_host() {
+    "$artifact_rootfs/bin/psql" -h 127.0.0.1 -p "$port" -U supabase_admin -d postgres \
+      -v ON_ERROR_STOP=1 -qAt -c "$1"
+  }
+
+  start="$(date +%s)"
+  while ! psql_host "SELECT 1" >/dev/null 2>&1; do
+    if (( "$(date +%s)" - start >= 60 )); then
+      cat "$pg_data_dir/postgres.log" >&2
+      fail "portable postgres did not become ready"
+    fi
+    sleep 1
+  done
+
+  # pgsodium/supabase_vault additionally need the pgsodium getkey script from
+  # the CLI config bundle; exercising them belongs to the CLI's own smoke.
+  log "creating the portable extension set (contrib + pgvector + pg_net + pg_cron)"
+  for ext in pgcrypto pg_stat_statements vector pg_net pg_cron; do
+    psql_host "CREATE EXTENSION IF NOT EXISTS $ext CASCADE" >/dev/null \
+      || { cat "$pg_data_dir/postgres.log" >&2; fail "CREATE EXTENSION $ext failed"; }
+  done
+
+  log "pgvector round-trip"
+  psql_host "CREATE TABLE IF NOT EXISTS smoke_vec(id serial primary key, v vector(3))" >/dev/null
+  psql_host "INSERT INTO smoke_vec(v) VALUES ('[1,2,3]'), ('[4,5,6]')" >/dev/null
+  nearest="$(psql_host "SELECT id FROM smoke_vec ORDER BY v <-> '[1,2,2]' LIMIT 1")"
+  [[ "$nearest" == "1" ]] || fail "pgvector nearest-neighbour query returned $nearest, expected 1"
+
+  # Postgres needs a longer settle than the 10s default (autovacuum /
+  # checkpointer churn right after initdb + extension creation).
+  SLIM_RUNTIME_SETTLE="${SLIM_RUNTIME_SETTLE:-60}" record_host_runtime_metrics "$postgres_pid"
+  log "postgres smoke passed"
+  exit 0
+fi
+
 require_cmd docker
-image="${IMAGE:?set IMAGE to the image tag to smoke test}"
 ensure_image "$image"
 
 container="postgres-smoke-$RUN_ID"

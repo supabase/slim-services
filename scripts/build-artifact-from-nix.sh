@@ -245,6 +245,23 @@ case "$resolved_nix_runner" in
     ;;
 esac
 
+# The Nix sandbox signs with the sigtool shim, which produces invalid
+# signatures on some special Mach-O layouts (e.g. reexport stubs like
+# libiconv.dylib) — macOS SIGKILLs anything that loads such a file. Repair
+# with the host's real codesign; the darwin audit fails the build if any
+# invalid signature survives.
+if [[ "$TARGET_OS" == "darwin" ]]; then
+  log "verifying/repairing Mach-O code signatures with host codesign"
+  find "$rootfs" -type f | while IFS= read -r macho; do
+    file "$macho" 2>/dev/null | grep -q 'Mach-O' || continue
+    if ! /usr/bin/codesign --verify "$macho" >/dev/null 2>&1; then
+      chmod u+w "$macho" 2>/dev/null || true
+      /usr/bin/codesign --force --sign - "$macho" 2>/dev/null \
+        && log "re-signed: ${macho#"$rootfs"/}"
+    fi
+  done
+fi
+
 "$ROOT_DIR/scripts/prune-runtime-tree.sh" "$rootfs"
 archive=""
 if [[ "${ARTIFACT_ARCHIVE_ON_BUILD:-1}" == "1" ]]; then
@@ -262,6 +279,9 @@ fi
 portable="$(portable_flag)"
 assumed_host_libs_json="$(portable_host_libs_json)"
 
+# The build command template may contain quotes; pass it via the environment
+# rather than interpolating it into the python source.
+NIX_BUILD_COMMAND_TEMPLATE_ENV="$NIX_BUILD_COMMAND_TEMPLATE" \
 python3 - "$manifest" "$archive" "$archive_bytes" <<PY
 import json
 import os
@@ -288,7 +308,7 @@ manifest = {
     "nix_flake_for_build": "$nix_flake_for_build",
     "nix_attr": "$NIX_ATTR",
     "nix_build_mode": "$NIX_BUILD_MODE",
-    "nix_build_command_template": "$NIX_BUILD_COMMAND_TEMPLATE",
+    "nix_build_command_template": os.environ.get("NIX_BUILD_COMMAND_TEMPLATE_ENV", ""),
     "nix_output_kind": "${NIX_OUTPUT_KIND:-copy-paths}",
     "nix_system": "$NIX_SYSTEM",
     "nix_installable": "$nix_installable",

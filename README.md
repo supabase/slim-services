@@ -100,6 +100,7 @@ process with `runtime.env` applied (`ps`-based, recorded in the darwin
 <!-- generated:host-native:begin -->
 | Service | Version | Archive | rootfs | Idle RSS | Idle CPU | Portable | Report |
 |---|---:|---:|---:|---:|---:|---|---|
+| Postgres | `17.6.1.143` | `30.4 MiB` | `110.2 MiB` | `34.0 MiB` | `0.00%` | yes | [report](services/postgres/REPORT.md) |
 | PostgREST | `v14.14` | `12.6 MiB` | `83.5 MiB` | `80.1 MiB` | `0.00%` | yes | [report](services/postgrest/REPORT.md) |
 | Auth | `v2.192.0` | `9.4 MiB` | `33.5 MiB` | `29.3 MiB` | `0.00%` | yes | [report](services/auth/REPORT.md) |
 | Realtime | `v2.112.6` | `11.9 MiB` | `40.8 MiB` | `113.0 MiB` | `0.07%` | yes | [report](services/realtime/REPORT.md) |

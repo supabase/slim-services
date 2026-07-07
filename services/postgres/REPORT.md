@@ -81,3 +81,52 @@ measured `99.0 MiB` compressed / `431 MiB` rootfs — rejected because the local
 image must support every extension a user may enable. If a "core" variant is
 ever wanted alongside the full flavour, that deny list is in git history
 (`b54916b`).
+
+## Host-Native darwin-arm64 Artifact (2026-07)
+
+Reversal of the plan's original non-goal (user directive): this repo now owns
+the self-contained postgres too. `sources/postgres` is pinned to the same tag
+as the Docker image, and the artifact is upstream's own relocatable package —
+`psql_17_cli_portable` from `nix/packages/postgres-portable.nix`, the exact
+build the Supabase CLI ships — with a repo-owned overlay
+(`services/postgres/nix/packages/`) making two changes:
+
+- **pgvector added to the CLI extension set** (the documented parity gap in
+  the CLI's postgres distribution).
+- Stale `/nix/store` LC_RPATH entries scrubbed from the copied ICU dylibs
+  (upstream rewrites install names but not rpaths; our portable audit
+  rejects them).
+
+Two upstream packaging bugs surfaced and are guarded against in shared
+tooling now:
+
+- `lib/libiconv.dylib` (a reexport stub) ships with an **invalid code
+  signature** — macOS SIGKILLs any process loading it via
+  `DYLD_LIBRARY_PATH`. `build-artifact-from-nix.sh` repairs invalid
+  signatures with the host `codesign` after the rootfs copy, and
+  `audit-portable-artifact.sh --darwin` now verifies every Mach-O signature,
+  failing the build otherwise. The CLI's shipped artifact should be checked
+  for the same class of issue.
+
+Smoke (host process, no Docker anywhere): initdb → pg_ctl with the preload
+set (`pg_stat_statements,pg_cron,pg_net`) → `CREATE EXTENSION` for pgcrypto,
+pg_stat_statements, **vector**, pg_net, pg_cron → a pgvector
+nearest-neighbour round-trip. Re-run from an untarred archive in a scratch
+directory (relocatable). pgsodium/supabase_vault ship in the artifact but
+need the CLI's getkey config to exercise; that belongs to the CLI's smoke.
+
+Local verification note: everything above was verified locally except
+compiling pg_graphql (a pgrx build whose crates.io vendoring is blocked by
+UA filtering on this network — same extension the CLI already ships, and the
+committed recipe includes it; CI builds it via upstream's binary cache).
+
+| Metric | Value |
+|---|---:|
+| Archive (`postgres-17.6.1.143-darwin-arm64.tar.zst`) | `30.4 MiB` |
+| rootfs | `110.2 MiB` |
+| Steady-state RSS (host process, idle, 60s settle) | `34.0 MiB` |
+| Idle CPU | `0.0 %` |
+
+The Linux Docker image keeps the full-flavour prune of the upstream image
+(all 31 extensions) — the documented native-first exception; a curated
+portable artifact must not regress it.

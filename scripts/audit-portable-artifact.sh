@@ -26,10 +26,17 @@ case "$mode" in
   --darwin)
     require_cmd file
     require_cmd otool
+    require_cmd codesign
     unresolved="$(
       find "$rootfs" -type f 2>/dev/null \
         | while IFS= read -r file_path; do
             if file "$file_path" | grep -q 'Mach-O'; then
+              # An invalid signature means macOS SIGKILLs the process that
+              # loads the file — an in-sandbox codesign shim can produce
+              # these on special dylibs (reexport stubs).
+              if ! codesign --verify "$file_path" >/dev/null 2>&1; then
+                printf '%s -> invalid code signature\n' "$file_path"
+              fi
               # /nix/store: build machine leak. /opt/homebrew + /usr/local:
               # package-manager paths not guaranteed on user machines.
               otool -L "$file_path" 2>/dev/null \

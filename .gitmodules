@@ -25,3 +25,6 @@
 [submodule "sources/auth"]
 	path = sources/auth
 	url = https://github.com/supabase/auth
+[submodule "sources/postgres"]
+	path = sources/postgres
+	url = https://github.com/supabase/postgres
