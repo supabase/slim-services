@@ -27,4 +27,5 @@ if ! wait_for_http_code "http://127.0.0.1:$port/" "200" 120 "" "$container"; the
   container_logs "$container"
   fail "postgrest root endpoint did not return 200"
 fi
+record_runtime_metrics "$container"
 log "postgrest smoke passed"
