@@ -193,15 +193,30 @@ Original decision framing:
 
 ## Phase 5 — Distribution hygiene (P2, before anything ships to users)
 
-- **Signing**: `portable-darwin-fixup.sh` ad-hoc signs — enough for local
-  smokes, not for distribution. Scope a Developer ID + notarization step
-  (likely in CI, on the darwin runners; keep it out of local dev loops).
-- **CI**: extend `.github/workflows/` per `CI_MATRIX.md` — darwin-arm64
-  runners build + smoke + upload archives for each promoted service
-  (edge-runtime's workflow is the template; it already uploads
-  `.tar.zst` artifacts).
-- **Checksums**: publish `SHA256SUMS` next to archives so the CLI can verify
-  downloads.
+Status 2026-07-07:
+
+- **CI (done)**: `.github/workflows/host-native-darwin-artifacts.yml` builds,
+  audits, smokes, and uploads the darwin-arm64 archives for every promoted
+  service (auth, postgrest, realtime, pooler, analytics, storage, pgmeta;
+  edge-runtime keeps its own workflow). macOS runners have no Docker, so
+  smokes run with `SLIM_SMOKE_HOST_POSTGRES=1` — the harness postgres runs as
+  a host process from the shared nixpkgs pin (`scripts/nixpkgs-pin.sh`).
+- **Checksums (done)**: `ci-build-service.sh` writes `SHA256SUMS` next to
+  every distribution archive; the workflow uploads it with the archive and
+  manifest.
+- **Signing (scoped, deferred)**: everything is ad-hoc signed
+  (`codesign --sign -`), which arm64 macOS requires and which is sufficient
+  for the CLI's download-and-exec path: `curl`/CLI downloads do not set the
+  `com.apple.quarantine` xattr, so Gatekeeper never assesses these binaries.
+  Developer ID signing + notarization only becomes necessary if artifacts are
+  ever distributed through quarantine-tainting paths (browser downloads,
+  archives opened via Finder). When that happens: import a Developer ID
+  Application cert into the CI keychain (GitHub secret), replace the ad-hoc
+  `codesign` calls in `portable-darwin-fixup.sh`/the Nix packages with the
+  identity + `--options runtime --timestamp`, and add a
+  `notarytool submit --wait` step on the zipped payload per archive
+  (stapling does not apply to plain tar/binaries; Gatekeeper checks the
+  notarization ticket online). Keep all of it out of local dev loops.
 
 ## Non-goals
 

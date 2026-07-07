@@ -113,6 +113,30 @@ archive_prefix="${ARTIFACT_ARCHIVE_PREFIX:-$artifact_dir/$service-$version-$plat
 log "creating distribution archive for $platform_dir"
 "$ROOT_DIR/scripts/archive-artifact.sh" "$rootfs" "$archive_prefix"
 
+# SHA256SUMS next to the archive so distribution consumers (the CLI) can
+# verify downloads.
+python3 - "$archive_prefix" <<'PY'
+import glob
+import hashlib
+import os
+import sys
+
+prefix = sys.argv[1]
+archives = sorted(glob.glob(prefix + ".tar*"))
+if not archives:
+    raise SystemExit(f"no archive found for prefix {prefix}")
+
+out_path = os.path.join(os.path.dirname(prefix), "SHA256SUMS")
+with open(out_path, "w", encoding="utf-8") as out:
+    for archive in archives:
+        digest = hashlib.sha256()
+        with open(archive, "rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 20), b""):
+                digest.update(chunk)
+        out.write(f"{digest.hexdigest()}  {os.path.basename(archive)}\n")
+print(f"[slim] checksums written: {out_path}")
+PY
+
 if [[ "$TARGET_OS" == "linux" ]]; then
   image_tag="${IMAGE_TAG:-local/$service:slim-$version-linux-$ARCH}"
 
