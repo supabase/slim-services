@@ -47,6 +47,13 @@ case "${ARTIFACT_BACKEND:-docker-source}" in
     [[ "$TARGET_OS" == "linux" ]] || fail "docker-source artifacts are only supported for linux targets"
     exec "$ROOT_DIR/scripts/build-artifact-from-source.sh" "$service" "$@"
     ;;
+  docker-image)
+    # Dockerfile.artifact build rooted at an upstream image (FROM SOURCE_IMAGE)
+    # instead of a source submodule; used when pruning a published image is the
+    # practical build path (e.g. the Nix-based supabase/postgres image).
+    [[ "$TARGET_OS" == "linux" ]] || fail "docker-image artifacts are only supported for linux targets"
+    exec "$ROOT_DIR/scripts/build-artifact-from-source.sh" "$service" "$@"
+    ;;
   image)
     [[ "$TARGET_OS" == "linux" ]] || fail "image extraction artifacts are only supported for linux targets"
     exec "$ROOT_DIR/scripts/build-artifact-from-image.sh" "$service" "$@"

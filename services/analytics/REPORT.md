@@ -89,3 +89,28 @@ changes are mechanical packaging changes rather than upstream service changes.
   smoke still keeps it because Analytics ships multiple native NIFs.
 - Broaden smoke coverage before removing larger application modules such as
   BigQuery/API client surfaces.
+
+## Footprint Pass 3 (runtime profile, 2026-07)
+
+- Bumped `sources/analytics` to `v1.46.0` (latest release; CLI pins 1.45.6);
+  Rust toolchain in the artifact build bumped to 1.94.1 to match upstream.
+- Trimmed BEAM release tooling from the artifact (erts `ct_run`/`dialyzer`/
+  `typer`/`erlc`/`escript`/`yielding_c_fun`, `lib/dialyzer-*`, lib
+  `src`/`include`/`c_src` dirs, erts doc/man).
+- Added `runtime.env` baked as image ENV (overridable):
+  `ELIXIR_ERL_OPTIONS=+S 1:1 +SDio 1 +sbwt none +sbwtdcpu none +sbwtdio none`,
+  `DB_POOL_SIZE=2`, `LOGFLARE_PUBSUB_POOL_SIZE=2`.
+
+| Metric | Value |
+|---|---:|
+| Image compressed (`docker save \| gzip -9`) | `89.7 MiB` |
+| Steady-state RSS (idle, single-tenant postgres backend) | `507.2 MiB` |
+| Idle CPU | `0.50 %` |
+
+Finding: even with a single scheduler, shrunk pools, and no busy-wait,
+Logflare's boot-time allocations (Broadway/GenStage pipelines, ETS caches)
+keep idle RSS at ~500 MiB — by far the heaviest service in the local stack
+(~12.5 GiB if run per-stack at 25 parallel stacks). Follow-up for the CLI:
+run analytics as a shared singleton across stacks or default it off; further
+in-repo reduction requires disabling logflare subsystems at boot, which needs
+upstream feature flags.

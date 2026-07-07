@@ -19,7 +19,8 @@ RUN apt-get update -y && apt-get install -y --no-install-recommends \
   && rm -rf /var/lib/apt/lists/*
 RUN mix local.hex --force && mix local.rebar --force
 COPY ${SOURCE_DIR}/mix.exs ${SOURCE_DIR}/mix.lock ./
-COPY ${SOURCE_DIR}/beacon beacon
+# v2.112.x vendors the :forum dependency as a local path dep
+COPY ${SOURCE_DIR}/forum forum
 RUN mix deps.get --only ${MIX_ENV}
 COPY ${SOURCE_DIR}/config/config.exs ${SOURCE_DIR}/config/prod.exs config/
 RUN mix deps.compile
@@ -40,6 +41,9 @@ RUN apt-get update -y && apt-get install -y --no-install-recommends \
   && rm -rf /var/lib/apt/lists/*
 RUN mkdir -p /rootfs/app /rootfs/usr/bin /rootfs/etc/ssl/certs
 COPY --from=builder /app/_build/prod/rel/realtime /rootfs/app/
+# Trim BEAM release tooling that never runs in the final container.
+COPY scripts/prune-beam-release.sh /tmp/prune-beam-release.sh
+RUN sh /tmp/prune-beam-release.sh /rootfs/app
 COPY services/realtime/overlay/run.sh /rootfs/app/run.sh
 RUN cp /bin/busybox /rootfs/usr/bin/busybox \
   && ln -sf busybox /rootfs/usr/bin/sh \

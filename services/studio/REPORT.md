@@ -137,3 +137,23 @@ Endpoint checks for the no-Sharp probe:
   relying on Sharp absence.
 - Consider image recompression for `public/img`, especially `vault.png`.
 - Broaden Studio smoke coverage before route-aware client chunk pruning.
+
+## Footprint Pass 3 (runtime profile, 2026-07)
+
+- Bumped `sources/studio` to `20290c71` (`supabase/studio:2026.06.29-sha-20290c7`,
+  the CLI-pinned image; studio releases are cut from monorepo commits, not tags).
+- Added `runtime.env` baked as image ENV (overridable):
+  `NODE_OPTIONS=--max-old-space-size=192 --max-semi-space-size=2`,
+  `NEXT_TELEMETRY_DISABLED=1`.
+- The Sharp local-dev profile remains not adopted (unchanged decision); studio
+  is the top CLI-level candidate for a shared singleton across parallel stacks.
+
+| Metric | Value |
+|---|---:|
+| Image compressed (`docker save \| gzip -9`) | `136.3 MiB` |
+| Steady-state RSS (idle, after /api/platform/profile) | `201.4 MiB` |
+| Idle CPU | `0.00 %` |
+
+Note: the compressed image grew from `128.4 MiB` (2026.04.27) because upstream
+studio itself grew over two months of releases; the slim techniques are
+unchanged (Next.js standalone output on distroless nodejs22).

@@ -88,3 +88,19 @@ source untouched.
 - Trim BEAM release extras.
 - Decide whether the artifact can run nonroot after wrapper/env cleanup.
 - Explore a build path that moves off Bullseye/OpenSSL 1.1.
+
+## Footprint Pass 3 (runtime profile, 2026-07)
+
+- Bumped `sources/pooler` to `v2.9.10` (latest release; CLI pins 2.9.7).
+- Added `runtime.env` baked as image ENV (overridable):
+  `ELIXIR_ERL_OPTIONS=+S 1:1 +SDio 1 +sbwt none +sbwtdcpu none +sbwtdio none`.
+  The pooler is opt-in for local dev; raise scheduler count for load testing.
+- Smoke now records steady-state runtime metrics into `manifest.json`.
+- OpenSSL 1.1/Bullseye carry-over and the upstream Nix flake backend remain
+  open follow-ups (unchanged this pass).
+
+| Metric | Value |
+|---|---:|
+| Image compressed (`docker save \| gzip -9`) | `24.3 MiB` |
+| Steady-state RSS (idle, after /api/health) | `154.9 MiB` |
+| Idle CPU | `0.07 %` |

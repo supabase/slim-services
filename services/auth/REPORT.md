@@ -69,3 +69,20 @@ so the current phase 2 numbers repeat the phase 1 numbers.
 Adopted. Auth is already compact upstream, but the `scratch` image still saves
 `13.5 MiB` compressed while keeping the production executable and embedded
 migrations intact. No separate phase 2 optimization is worth carrying for now.
+
+## Footprint Pass 3 (runtime profile, 2026-07)
+
+- Bumped `sources/auth` to `v2.192.0` (CLI-pinned release); builder image bumped
+  to `golang:1.25.11-alpine3.23` (go.mod toolchain floor) and the artifact build
+  now copies `internal/forks/` before `go mod download` (local `godotenv` fork
+  replace directive introduced in v2.190.0).
+- Added `runtime.env` low-footprint local-dev defaults, baked as image ENV and
+  overridable at `docker run -e`: `GOMEMLIMIT=64MiB`, `GOGC=50`, `GOMAXPROCS=2`,
+  `GOTRUE_DB_MAX_POOL_SIZE=2` (client pool holds server-side postgres backends).
+- Smoke now records steady-state runtime metrics into `manifest.json`.
+
+| Metric | Value |
+|---|---:|
+| Image compressed (`docker save \| gzip -9`) | `11.2 MiB` |
+| Steady-state RSS (idle, after /health) | `24.8 MiB` |
+| Idle CPU | `0.58 %` |

@@ -92,6 +92,7 @@ if [[ -n "$image" ]]; then
 
   port="$(host_port "$container_name" 9000)"
   assert_smoke_body "http://127.0.0.1:$port/smoke" 90 "$container_name"
+  record_runtime_metrics "$container_name"
 else
   require_cmd python3
 

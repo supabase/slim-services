@@ -4,7 +4,7 @@ Global summary for the Linux ARM64 slim-image experiment. Service-specific
 details now live next to each service recipe under `services/<service>/REPORT.md`
 so each owning team can read a self-contained report.
 
-Last updated: 2026-04-29
+Last updated: 2026-07-07
 
 ## Measurement Notes
 
@@ -13,7 +13,8 @@ Last updated: 2026-04-29
   upstream ARM64 manifest, measured with `docker buildx imagetools inspect
   --raw`.
 - Slim image sizes are local gzip-compressed Docker archives, measured with
-  `docker save IMAGE | gzip -9`.
+  `docker save IMAGE | gzip -9` (pigz -9 when available; same format and
+  near-identical sizes, parallel compression).
 - Phase 1 means the first working slim pass: base-image replacement plus
   runtime artifact extraction/source build and dependency tracking.
 - Phase 2 means accepted service-specific optimization after smoke testing.
@@ -22,34 +23,58 @@ Last updated: 2026-04-29
 - Smoke tests are intentionally small runtime viability checks, not full
   correctness suites.
 
-## Global Result
+## Global Result (Footprint Pass 3, 2026-07)
+
+Pass 3 bumped every service to its latest release, onboarded `postgres` (the
+largest image in the stack), and added a runtime dimension: steady-state RSS
+and idle CPU are now measured during every smoke and recorded in each
+`manifest.json`, and every service ships a `runtime.env` low-footprint
+local-dev profile baked as overridable image ENV.
 
 | Metric | Compressed size |
 |---|---:|
-| Upstream ARM64 images total | `1777.1 MiB` |
-| Phase 1 slim images total | `542.4 MiB` |
-| Current best slim images total | `470.4 MiB` |
-| Current total reduction vs upstream | `1306.7 MiB / 73.5%` |
-| Current total reduction vs phase 1 | `72.0 MiB / 13.3%` |
+| Upstream ARM64 images total (10 services, current versions) | `2166.9 MiB` |
+| Current slim images total | `765.6 MiB` |
+| Current total reduction vs upstream | `1401.3 MiB / 64.7%` |
+
+Postgres keeps EVERY extension the upstream image ships (`supabase/postgres`
+flavour contract — users can `CREATE EXTENSION` anything locally), so its disk
+reduction is limited to Nix build cruft. Its contribution to the 25× goal is
+the runtime profile, not disk.
 
 ## Service Summary
 
-| Service | Version | Upstream ARM64 compressed | Current slim compressed | Reduction vs upstream | Runtime base | Smoke | Service report |
-|---|---:|---:|---:|---:|---|---|---|
-| `postgrest` | `v14.10` | `126.0 MiB` | `21.2 MiB` | `83.2%` | `scratch` | Pass | [services/postgrest/REPORT.md](services/postgrest/REPORT.md) |
-| `studio` | `2026.04.27-sha-4afbe9c` | `294.2 MiB` | `128.4 MiB` | `56.4%` | `nodejs22-debian13:nonroot` | Pass | [services/studio/REPORT.md](services/studio/REPORT.md) |
-| `edge-runtime` | `v1.73.15` | `360.6 MiB` | `60.8 MiB` | `83.1%` | `base-debian13:nonroot` | Pass | [services/edge-runtime/REPORT.md](services/edge-runtime/REPORT.md) |
-| `analytics` | `v1.39.2` | `257.0 MiB` | `89.4 MiB` | `65.2%` | `cc-debian13:nonroot` | Pass | [services/analytics/REPORT.md](services/analytics/REPORT.md) |
-| `realtime` | `v2.87.0` | `122.8 MiB` | `28.5 MiB` | `76.8%` | `cc-debian13` | Pass | [services/realtime/REPORT.md](services/realtime/REPORT.md) |
-| `pooler` | `v2.9.2` | `287.1 MiB`* | `24.3 MiB` | `91.5%`* | `cc-debian13` | Pass | [services/pooler/REPORT.md](services/pooler/REPORT.md) |
-| `pgmeta` | `v0.96.4` | `94.3 MiB` | `52.1 MiB` | `44.8%` | `nodejs20-debian13:nonroot` | Pass | [services/pgmeta/REPORT.md](services/pgmeta/REPORT.md) |
-| `storage` | `v1.55.3` | `211.4 MiB` | `55.5 MiB` | `73.7%` | `nodejs24-debian13:nonroot` | Pass | [services/storage/REPORT.md](services/storage/REPORT.md) |
-| `auth` | `v2.189.0` | `23.7 MiB` | `10.2 MiB` | `57.0%` | `scratch` | Pass | [services/auth/REPORT.md](services/auth/REPORT.md) |
+| Service | Version | Upstream ARM64 compressed | Slim compressed | Reduction | Idle RSS | Idle CPU | Service report |
+|---|---:|---:|---:|---:|---:|---:|---|
+| `postgres` | `17.6.1.143` (all extensions) | `349.8 MiB` | `293.9 MiB` | `15.8%` | `67.5 MiB` | `0.01%` | [services/postgres/REPORT.md](services/postgres/REPORT.md) |
+| `postgrest` | `v14.14` | `145.3 MiB` | `20.3 MiB` | `86.0%` | `29.4 MiB` | `0.13%` | [services/postgrest/REPORT.md](services/postgrest/REPORT.md) |
+| `studio` | `2026.06.29-sha-20290c7` | `304.7 MiB` | `136.3 MiB` | `55.3%` | `201.4 MiB` | `0.00%` | [services/studio/REPORT.md](services/studio/REPORT.md) |
+| `edge-runtime` | `v1.74.2` (no-AI) | `360.6 MiB` | `52.7 MiB` | `85.4%` | `15.1 MiB` | `0.02%` | [services/edge-runtime/REPORT.md](services/edge-runtime/REPORT.md) |
+| `analytics` | `v1.46.0` | `258.9 MiB` | `89.7 MiB` | `65.4%` | `507.2 MiB` | `0.50%` | [services/analytics/REPORT.md](services/analytics/REPORT.md) |
+| `realtime` | `v2.112.6` | `114.7 MiB` | `28.4 MiB` | `75.2%` | `163.2 MiB` | `0.13%` | [services/realtime/REPORT.md](services/realtime/REPORT.md) |
+| `pooler` | `v2.9.10` | `289.4 MiB`* | `24.3 MiB` | `91.6%`* | `154.9 MiB` | `0.07%` | [services/pooler/REPORT.md](services/pooler/REPORT.md) |
+| `pgmeta` | `v0.96.6` | `94.2 MiB` | `52.7 MiB` | `44.1%` | `79.4 MiB` | `0.70%` | [services/pgmeta/REPORT.md](services/pgmeta/REPORT.md) |
+| `storage` | `v1.62.6` | `223.5 MiB` | `55.6 MiB` | `75.1%` | `211.5 MiB` | `0.19%` | [services/storage/REPORT.md](services/storage/REPORT.md) |
+| `auth` | `v2.192.0` | `25.8 MiB` | `11.2 MiB` | `56.6%` | `24.8 MiB` | `0.58%` | [services/auth/REPORT.md](services/auth/REPORT.md) |
 
-`*` Pooler note: Docker Hub does not currently publish
-`supabase/supavisor:2.9.2`. The upstream comparison uses the latest published
-Docker Hub tag found during this pass, `supabase/supavisor:2.7.4`, so the
-percentage is directional rather than exact.
+`*` Pooler note: Docker Hub publishes up to `supabase/supavisor:2.9.7`; the
+upstream comparison uses that tag, so the percentage is directional.
+
+## Runtime Footprint (the 25-parallel-stacks view)
+
+RSS multiplies per stack; image size does not (layers are stored once).
+Measured steady-state RSS with the pass-3 runtime profiles:
+
+- Core stack (postgres + auth + postgrest): `121.7 MiB` per stack —
+  ~`3.0 GiB` for 25 parallel stacks.
+- Adding realtime (+163) and storage (+212) per stack stays viable
+  (~`12.5 GiB` at 25 stacks).
+- **Decision (2026-07): `analytics` (`507 MiB`) and `studio` (`201 MiB`) are
+  disabled by default in the minimal local stack.** Their slim images exist
+  for when they are enabled; sharing one instance across stacks is the
+  follow-up for the enabled case.
+- The BEAM scheduler profile (`+S 1:1 +sbwt none ...`) eliminated idle
+  busy-wait CPU across realtime/analytics/pooler (all ≤ 0.5% idle).
 
 ## Phase 2 Status
 
@@ -85,9 +110,16 @@ percentage is directional rather than exact.
 ## Remaining Work
 
 1. Add CI jobs that build each current slim artifact/image and run the matching
-   smoke test.
-2. Broaden smoke coverage before adopting local-dev profiles that remove
-   feature surfaces.
+   smoke test (only edge-runtime has a workflow today; postgres and the
+   docker-image backend need one too).
+2. CLI-level follow-ups surfaced by the runtime measurements: run `analytics`
+   and `studio` as shared singletons (or default-off) for parallel stacks;
+   wire memory limits through `container.HostConfig.Resources`.
 3. Revisit PostgREST once a stable upstream static ARM64 artifact is published.
-4. Decide whether Studio should have a narrower local-development contract.
-5. Keep each `services/<service>/REPORT.md` current when service recipes change.
+4. Longer-idle CPU sample for postgres (measured 10s after migrations; add a
+   per-service settle override to the measurement pipeline).
+5. Storage module-level pruning of AWS/Smithy/Iceberg surfaces — the object
+   round-trip smoke added in pass 3 is the safety net it was waiting for.
+6. Further analytics RSS reduction requires upstream boot-time feature flags
+   (Broadway/ETS allocations dominate its ~500 MiB idle footprint).
+7. Keep each `services/<service>/REPORT.md` current when service recipes change.

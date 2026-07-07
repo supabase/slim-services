@@ -2,7 +2,7 @@
 ARG SOURCE_DIR=sources/auth
 ARG SERVICE_VERSION=dev
 
-FROM --platform=$BUILDPLATFORM golang:1.25.8-alpine3.23 AS builder
+FROM --platform=$BUILDPLATFORM golang:1.25.11-alpine3.23 AS builder
 ARG SOURCE_DIR
 ARG SERVICE_VERSION
 ARG TARGETOS
@@ -12,6 +12,8 @@ ENV CGO_ENABLED=0 \
     GOARCH=${TARGETARCH:-arm64}
 WORKDIR /src
 COPY ${SOURCE_DIR}/go.mod ${SOURCE_DIR}/go.sum ./
+# v2.190.0+ replaces github.com/joho/godotenv with a local fork
+COPY ${SOURCE_DIR}/internal/forks ./internal/forks
 RUN go mod download && go mod verify
 COPY ${SOURCE_DIR}/ ./
 RUN go build \

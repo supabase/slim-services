@@ -93,3 +93,25 @@ accepted path avoids dependency shims or upstream source edits.
   surfaces for optional local-development paths.
 - Consider separate local-dev and full-runtime artifact profiles only after
   broader smoke coverage exists.
+
+## Footprint Pass 3 (runtime profile, 2026-07)
+
+- Bumped `sources/storage` to `v1.62.6` (latest release; CLI pins v1.61.9).
+  Upstream removed the `patches/` directory; the rolldown artifact build no
+  longer copies it.
+- Broadened smoke beyond `/status`: bucket creation + object upload + object
+  download round-trip against the file backend (`STORAGE_BACKEND=file`); the
+  smoke grants `service_role` access to the migrated `storage` schema. This is
+  the prerequisite coverage for any future module-level pruning of the AWS/
+  Smithy/Iceberg dependency surfaces (still a follow-up).
+- Added `runtime.env` baked as image ENV (overridable):
+  `NODE_OPTIONS=--max-old-space-size=128 --max-semi-space-size=2`,
+  `DATABASE_MAX_CONNECTIONS=2` (upstream default 20 — each held connection is
+  a server-side postgres backend), `IMAGE_TRANSFORMATION_ENABLED=false`
+  (imgproxy is not part of the slim local profile).
+
+| Metric | Value |
+|---|---:|
+| Image compressed (`docker save \| gzip -9`) | `55.6 MiB` |
+| Steady-state RSS (after object round-trip) | `211.5 MiB` |
+| Idle CPU | `0.19 %` |

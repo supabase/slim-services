@@ -5,13 +5,23 @@
 # read-only. It is copied over nix/edge-runtime.nix in a temporary source export
 # before running nix build for portable artifacts.
 #
-# It tracks the upstream v1.73.15 package with portability fixes:
+# It tracks the upstream v1.74.2 package (nix/ unchanged since v1.73.15) with
+# portability fixes:
 # - build-time ONNX Runtime discovery for Cargo build scripts;
 # - preserved ONNX dylib symlinks;
 # - ORT_DYLIB_PATH in the portable wrapper;
+#
 # - transitive shared-library closure completion;
 # - Nix store install-name/rpath cleanup;
 # - platform-specific binary stripping and audit.
+#
+# Local-dev profile: the portable rootfs EXCLUDES the ONNX Runtime + OpenBLAS
+# dylibs (~42 MiB, plus their resident cost) because Supabase.ai inference is
+# rarely used in local development. The binary loads ONNX lazily through
+# ORT_DYLIB_PATH, so AI calls fail with a clear dlopen error while everything
+# else works. Build with `withAi = true` (or use the upstream image) for the
+# full AI-capable profile.
+  withAi ? false,
   lib,
   stdenv,
   rustPlatform,
@@ -168,9 +178,11 @@ buildPhase = ''
     copy_dep "$dep"
   done
 
-  # Copy onnxruntime
+  ${lib.optionalString withAi ''
+  # Copy onnxruntime (AI profile only; OpenBLAS follows as its dependency)
   lib_pattern=$(get_lib_pattern)
   cp -P ${onnxruntime}/lib/libonnxruntime$lib_pattern "$rootfs/lib/" 2>/dev/null || true
+  ''}
 
   # Iterative crawl until no new deps appear
   for iteration in {1..5}; do

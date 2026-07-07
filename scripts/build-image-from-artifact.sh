@@ -27,8 +27,6 @@ load_recipe "$service"
 [[ -d "$artifact_rootfs" ]] || fail "artifact rootfs not found: $artifact_rootfs"
 
 rel_rootfs="$(relative_to_root "$artifact_rootfs")"
-dockerfile="$(service_dir "$service")/Dockerfile.slim"
-[[ -f "$dockerfile" ]] || fail "Dockerfile not found: $dockerfile"
 manifest="$(dirname "$artifact_rootfs")/manifest.json"
 if [[ -z "${PLATFORM:-}" && -f "$manifest" ]]; then
   PLATFORM="$(python3 - "$manifest" <<'PY'
@@ -46,6 +44,15 @@ platform_os="${PLATFORM%%/*}"
 platform_arch="${PLATFORM#*/}"
 PLATFORM="$(docker_platform "$platform_os" "$platform_arch")"
 
+# Runtime profile contract: services/<service>/runtime.env holds low-footprint
+# local-dev defaults, baked into the image as ENV (overridable at `docker run
+# -e`). render-dockerfile.sh is the single source of truth for the final
+# Dockerfile; CI push paths must use it too.
+if [[ -f "$(service_dir "$service")/runtime.env" ]]; then
+  log "applying runtime profile from services/$service/runtime.env"
+fi
+dockerfile_content="$("$ROOT_DIR/scripts/render-dockerfile.sh" "$service")"
+
 log "building $tag from $rel_rootfs on $BASE_IMAGE for $PLATFORM"
 docker_builder="${DOCKER_BUILDER:-$(docker context show 2>/dev/null || echo default)}"
 output_args=()
@@ -54,10 +61,10 @@ if [[ "${DOCKER_PUSH:-0}" == "1" ]]; then
 elif [[ "${DOCKER_LOAD:-1}" == "1" ]]; then
   output_args+=(--load)
 fi
-docker buildx build \
+printf '%s\n' "$dockerfile_content" | docker buildx build \
   --builder "$docker_builder" \
   --platform "$PLATFORM" \
-  -f "$dockerfile" \
+  -f - \
   --build-arg "ARTIFACT_ROOT=$rel_rootfs" \
   --build-arg "BASE_IMAGE=$BASE_IMAGE" \
   -t "$tag" \

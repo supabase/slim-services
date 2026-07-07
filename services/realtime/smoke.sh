@@ -84,4 +84,5 @@ if ! wait_for_http_code "http://127.0.0.1:$port/healthcheck" "200" 180 "" "$cont
   container_logs "$container"
   fail "realtime /healthcheck did not return 200"
 fi
+record_runtime_metrics "$container"
 log "realtime smoke passed"

@@ -19,4 +19,5 @@ if ! wait_for_http_code "http://127.0.0.1:$port/api/platform/profile" "200" 180 
   container_logs "$container"
   fail "studio /api/platform/profile did not return 200"
 fi
+record_runtime_metrics "$container"
 log "studio smoke passed"

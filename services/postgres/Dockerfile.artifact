@@ -1,0 +1,10 @@
+# syntax=docker/dockerfile:1.7
+ARG SOURCE_IMAGE=supabase/postgres:17.6.1.143
+
+FROM ${SOURCE_IMAGE} AS build
+COPY services/postgres/overlay/ /overlay/
+COPY services/postgres/prune.sh /prune.sh
+RUN bash /prune.sh
+
+FROM scratch AS artifact
+COPY --from=build /rootfs/ /

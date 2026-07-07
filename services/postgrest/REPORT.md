@@ -93,3 +93,18 @@ We also validated upstream PR #4193 artifacts from GitHub Actions:
 - Watch for a stable upstream static ARM64 PostgREST release artifact.
 - Revisit Nix/source static build only if we need to produce the static binary
   ourselves before upstream publishes it.
+
+## Footprint Pass 3 (runtime profile, 2026-07)
+
+- Bumped to `v14.14` (CLI-pinned release); image extraction from
+  `postgrest/postgrest:v14.14` with the same ELF closure bundling.
+- Added `runtime.env` baked as image ENV (overridable): `PGRST_DB_POOL=2` —
+  each pooled connection holds a server-side postgres backend, so the upstream
+  default of 10 costs ~50-150 MiB inside postgres per stack.
+- Smoke now records steady-state runtime metrics into `manifest.json`.
+
+| Metric | Value |
+|---|---:|
+| Image compressed (`docker save \| gzip -9`) | `20.3 MiB` |
+| Steady-state RSS (idle) | `29.4 MiB` |
+| Idle CPU | `0.13 %` |
