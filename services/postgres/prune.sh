@@ -11,15 +11,12 @@ mkdir -p "$ROOTFS/nix/store"
 
 log() { printf '[prune] %s\n' "$*"; }
 
-# Store packages excluded from the local-dev image. Extensions whose .so lives
-# inside the postgresql/plugins store paths are additionally deleted by file
-# pattern below so nothing dangles at runtime.
+# Only Nix tooling and build derivations are excluded. Every extension the
+# upstream supabase/postgres image ships stays available: this is the same
+# postgres flavour, minus the parts that never execute at runtime.
 is_denied() {
   local name="$1"
   case "$name" in
-    postgis-*|sfcgal-*|pgrouting-*|pgroonga-*|supabase-groonga-*|groonga-*) return 0 ;;
-    kytea-*|mecab-*|gdal-*|geos-*|proj-[0-9]*|boost-[0-9]*) return 0 ;;
-    perl-[0-9]*|wrappers-*|plv8-*|timescaledb-*) return 0 ;;
     nix-[0-9]*|nix-man-*) return 0 ;;
     *.drv) return 0 ;;
   esac
@@ -61,8 +58,9 @@ enqueue() {
 
 log "collecting roots"
 
-# Version-switch developer scripts reference alternate extension versions and
-# would drag duplicate store paths into the closure. Remove before scanning.
+# Version-switch developer scripts reference ALTERNATE versions of extensions
+# and would drag duplicate store paths into the closure. The default version of
+# every extension stays; only the switchable alternates are dropped.
 rm -f /usr/lib/postgresql/bin/switch_*_version
 
 root_dirs=(/bin /sbin /usr/bin /usr/sbin /usr/local/bin /usr/lib/postgresql /etc /docker-entrypoint-initdb.d)
@@ -124,31 +122,9 @@ for d in /bin /sbin /lib /lib64 /usr/bin /usr/sbin /usr/local/bin /usr/lib /etc 
   cp -a "$d" "$ROOTFS$(dirname "$d")/"
 done
 
-rm -rf "$ROOTFS/usr/lib/groonga" "$ROOTFS/lib/firmware" "$ROOTFS/lib/apk" "$ROOTFS/lib/modules-load.d" "$ROOTFS/lib/sysctl.d"
+rm -rf "$ROOTFS/lib/firmware" "$ROOTFS/lib/apk" "$ROOTFS/lib/modules-load.d" "$ROOTFS/lib/sysctl.d"
 
-log "deleting denied extension payloads from copied tree"
 chmod -R u+w "$ROOTFS/nix/store" || true
-deny_lib_globs=(
-  'postgis*' 'address_standardizer*' 'libpgrouting*' 'pgrouting*' 'pgroonga*'
-  'plperl*' 'plv8*' 'plls*' 'plcoffee*' 'pljava*' 'wrappers*' 'timescaledb*'
-)
-deny_ext_globs=(
-  'postgis*' 'address_standardizer*' 'pgrouting*' 'pgroonga*'
-  'plperl*' 'plperlu*' 'plv8*' 'plls*' 'plcoffee*' 'pljava*' 'wrappers*'
-  'timescaledb*'
-)
-while IFS= read -r libdir; do
-  for g in "${deny_lib_globs[@]}"; do
-    # shellcheck disable=SC2086
-    rm -f "$libdir"/$g 2>/dev/null || true
-  done
-done < <(find "$ROOTFS/nix/store" -maxdepth 2 -type d -name lib)
-while IFS= read -r extdir; do
-  for g in "${deny_ext_globs[@]}"; do
-    # shellcheck disable=SC2086
-    rm -f "$extdir"/$g 2>/dev/null || true
-  done
-done < <(find "$ROOTFS/nix/store" -type d -path '*share/postgresql/extension')
 
 log "sweeping dangling symlinks"
 sweep() {

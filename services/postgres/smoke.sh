@@ -45,7 +45,7 @@ log "checking local-dev config profile is active"
 [[ "$(psql_admin "SHOW jit")" == "off" ]] || fail "expected jit=off"
 [[ "$(psql_admin "SHOW wal_level")" == "logical" ]] || fail "expected wal_level=logical"
 
-log "creating local-dev extension set"
+log "creating the supported extension set (including the heavy families)"
 extensions=(
   pgcrypto
   pgjwt
@@ -68,17 +68,22 @@ extensions=(
   pgsodium
   supabase_vault
   pgtap
+  pgmq
+  pg_partman
+  pg_repack
+  plpgsql_check
+  postgis
+  postgis_topology
+  address_standardizer
+  pgrouting
+  pgroonga
+  wrappers
 )
 for ext in "${extensions[@]}"; do
   psql_admin "CREATE EXTENSION IF NOT EXISTS $ext CASCADE" >/dev/null \
     || { container_logs "$container"; fail "CREATE EXTENSION $ext failed"; }
 done
 log "all ${#extensions[@]} extensions created"
-
-log "checking denied extensions are really gone"
-if psql_admin "CREATE EXTENSION postgis" >/dev/null 2>&1; then
-  fail "postgis unexpectedly present in slim image"
-fi
 
 log "basic SQL round-trip"
 psql_admin "CREATE TABLE IF NOT EXISTS smoke_check(id serial primary key, v text)" >/dev/null

@@ -33,14 +33,19 @@ local-dev profile baked as overridable image ENV.
 | Metric | Compressed size |
 |---|---:|
 | Upstream ARM64 images total (10 services, current versions) | `2166.9 MiB` |
-| Current slim images total | `570.2 MiB` |
-| Current total reduction vs upstream | `1596.7 MiB / 73.7%` |
+| Current slim images total | `765.6 MiB` |
+| Current total reduction vs upstream | `1401.3 MiB / 64.7%` |
+
+Postgres keeps EVERY extension the upstream image ships (`supabase/postgres`
+flavour contract — users can `CREATE EXTENSION` anything locally), so its disk
+reduction is limited to Nix build cruft. Its contribution to the 25× goal is
+the runtime profile, not disk.
 
 ## Service Summary
 
 | Service | Version | Upstream ARM64 compressed | Slim compressed | Reduction | Idle RSS | Idle CPU | Service report |
 |---|---:|---:|---:|---:|---:|---:|---|
-| `postgres` | `17.6.1.143` | `349.8 MiB` | `99.0 MiB` | `71.7%` | `70.1 MiB` | `9.2%`** | [services/postgres/REPORT.md](services/postgres/REPORT.md) |
+| `postgres` | `17.6.1.143` (all extensions) | `349.8 MiB` | `294.4 MiB` | `15.8%` | `67.5 MiB` | `0.01%` | [services/postgres/REPORT.md](services/postgres/REPORT.md) |
 | `postgrest` | `v14.14` | `145.3 MiB` | `20.3 MiB` | `86.0%` | `29.4 MiB` | `0.13%` | [services/postgrest/REPORT.md](services/postgrest/REPORT.md) |
 | `studio` | `2026.06.29-sha-20290c7` | `304.7 MiB` | `136.3 MiB` | `55.3%` | `201.4 MiB` | `0.00%` | [services/studio/REPORT.md](services/studio/REPORT.md) |
 | `edge-runtime` | `v1.74.2` (no-AI) | `360.6 MiB` | `52.7 MiB` | `85.4%` | `15.1 MiB` | `0.02%` | [services/edge-runtime/REPORT.md](services/edge-runtime/REPORT.md) |
@@ -53,21 +58,20 @@ local-dev profile baked as overridable image ENV.
 
 `*` Pooler note: Docker Hub publishes up to `supabase/supavisor:2.9.7`; the
 upstream comparison uses that tag, so the percentage is directional.
-`**` Postgres CPU was sampled 10s after initdb + migrations + extension
-creation; background workers were still settling.
 
 ## Runtime Footprint (the 25-parallel-stacks view)
 
 RSS multiplies per stack; image size does not (layers are stored once).
 Measured steady-state RSS with the pass-3 runtime profiles:
 
-- Core stack (postgres + auth + postgrest): `124.3 MiB` per stack —
+- Core stack (postgres + auth + postgrest): `121.7 MiB` per stack —
   ~`3.0 GiB` for 25 parallel stacks.
 - Adding realtime (+163) and storage (+212) per stack stays viable
   (~`12.5 GiB` at 25 stacks).
-- `analytics` (`507 MiB`) and `studio` (`201 MiB`) dominate when run
-  per-stack; they are the primary candidates for CLI-level shared singletons
-  or default-off in parallel-stack scenarios.
+- **Decision (2026-07): `analytics` (`507 MiB`) and `studio` (`201 MiB`) are
+  disabled by default in the minimal local stack.** Their slim images exist
+  for when they are enabled; sharing one instance across stacks is the
+  follow-up for the enabled case.
 - The BEAM scheduler profile (`+S 1:1 +sbwt none ...`) eliminated idle
   busy-wait CPU across realtime/analytics/pooler (all ≤ 0.5% idle).
 

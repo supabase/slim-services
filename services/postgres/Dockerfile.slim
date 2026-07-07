@@ -12,6 +12,7 @@ ENV PATH=/nix/var/nix/profiles/default/bin:/usr/lib/postgresql/bin:/usr/local/sb
     LANG=en_US.UTF-8 \
     LANGUAGE=en_US:en \
     LC_ALL=en_US.UTF-8 \
+    GRN_PLUGINS_DIR=/usr/lib/groonga/plugins \
     LOCALE_ARCHIVE=/nix/var/nix/profiles/default/lib/locale/locale-archive
 EXPOSE 5432
 # Entrypoint drops to the postgres user via gosu; root is required at start.

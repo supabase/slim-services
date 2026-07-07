@@ -74,6 +74,11 @@ else
   [[ -n "$UPSTREAM_IMAGE" ]] || fail "recipe must define SOURCE_DIR or SOURCE_IMAGE/UPSTREAM_IMAGE"
 fi
 
+# A previous mode-preserving extraction may have left read-only directories
+# (Nix store trees); make them deletable before clearing.
+if [[ -d "$rootfs" ]]; then
+  chmod -R u+w "$rootfs" 2>/dev/null || true
+fi
 rm -rf "$rootfs"
 mkdir -p "$rootfs" "$artifact_dir"
 
@@ -96,14 +101,35 @@ fi
 
 docker_builder="${DOCKER_BUILDER:-$(docker context show 2>/dev/null || echo default)}"
 log "building $service artifact from ${SOURCE_DIR:-$UPSTREAM_IMAGE}${SOURCE_REF:+@$SOURCE_REF} for $PLATFORM using builder $docker_builder"
-docker buildx build \
-  --builder "$docker_builder" \
-  --platform "$PLATFORM" \
-  --target artifact \
-  --output "type=local,dest=$rootfs" \
-  -f "$dockerfile" \
-  "${build_args[@]}" \
-  "$ROOT_DIR"
+# ARTIFACT_EXPORT=tar streams the artifact stage as a single tarball instead of
+# the per-file local exporter, which can stall on rootfs trees with very large
+# file counts (e.g. the postgres Nix store).
+if [[ "${ARTIFACT_EXPORT:-local}" == "tar" ]]; then
+  export_tar="$artifact_dir/.rootfs-export.tar"
+  rm -f "$export_tar"
+  docker buildx build \
+    --builder "$docker_builder" \
+    --platform "$PLATFORM" \
+    --target artifact \
+    --output "type=tar,dest=$export_tar" \
+    -f "$dockerfile" \
+    "${build_args[@]}" \
+    "$ROOT_DIR"
+  log "extracting artifact tar export"
+  # -p: without it a non-root extraction applies the umask and silently strips
+  # mode bits the image relies on (e.g. postgres-writable config dirs).
+  tar -C "$rootfs" -xpf "$export_tar"
+  rm -f "$export_tar"
+else
+  docker buildx build \
+    --builder "$docker_builder" \
+    --platform "$PLATFORM" \
+    --target artifact \
+    --output "type=local,dest=$rootfs" \
+    -f "$dockerfile" \
+    "${build_args[@]}" \
+    "$ROOT_DIR"
+fi
 
 "$ROOT_DIR/scripts/prune-runtime-tree.sh" "$rootfs"
 archive="$(archive_with_best_available_compressor "$rootfs" "$artifact_dir/$service")"

@@ -14,16 +14,15 @@ development rarely needs. This service prunes the published upstream image
 - `prune.sh` walks the Nix reference graph (`nix-store --query --references`)
   from real roots (`/usr/local/bin`, `/bin`, `/usr/lib/postgresql`, `/etc`,
   `/docker-entrypoint-initdb.d`, the active profile) and copies only the
-  reachable store paths, skipping a deny list of heavyweight packages:
-  - PostGIS stack: `postgis`, `sfcgal`, `gdal`, `geos`, `proj`, `boost`,
-    `pgrouting`
-  - Full-text tokenizer stack: `pgroonga`, `groonga`, `kytea`, `mecab`
-  - `wrappers`, `plv8`, `timescaledb`, `perl` (plperl), nix tooling, `.drv`
-    build derivations
+  reachable store paths. **Every extension the upstream image ships is kept**
+  — this is the `supabase/postgres` flavour; users can `CREATE EXTENSION`
+  anything Supabase supports locally. Only non-runtime content is dropped:
+  - Nix tooling (`nix`, `nix-store`, ...) and `.drv` build derivations
+  - store paths unreachable from the runtime roots (the upstream image ships
+    ~6,700 store paths; the runtime closure is a few hundred)
 - Version-switch developer scripts (`switch_*_version`) are removed before the
-  walk so alternate extension versions do not enter the closure.
-- Denied extension payloads (`.so`, `extension/*.control`, `*.sql`) are also
-  deleted from the copied postgres lib dirs, and dangling symlinks are swept.
+  walk so ALTERNATE extension versions do not enter the closure; the default
+  version of every extension stays. Dangling symlinks are swept.
 - Local-dev config overlay at `/etc/postgresql-custom/conf.d/99-local-dev.conf`
   (loaded through the stock `include_dir`), all values overridable via
   `postgres -c`:
@@ -39,35 +38,43 @@ development rarely needs. This service prunes the published upstream image
 ## What still works (smoke-verified)
 
 - initdb + supabase init scripts + migrations on first boot.
-- `CREATE EXTENSION` for the local-dev set: pgcrypto, pgjwt, uuid-ossp,
-  pg_trgm, hstore, pg_stat_statements, pg_graphql, pg_net, pg_cron, vector,
-  hypopg, index_advisor, pg_jsonschema, pg_hashids, http, pgaudit, pg_tle,
-  rum, pgsodium, supabase_vault, pgtap.
-- Denied extensions are verified ABSENT (`CREATE EXTENSION postgis` fails).
+- `CREATE EXTENSION` for the supported set including the heavy families:
+  pgcrypto, pgjwt, uuid-ossp, pg_trgm, hstore, pg_stat_statements, pg_graphql,
+  pg_net, pg_cron, vector, hypopg, index_advisor, pg_jsonschema, pg_hashids,
+  http, pgaudit, pg_tle, rum, pgsodium, supabase_vault, pgtap, pgmq,
+  pg_partman, pg_repack, plpgsql_check, postgis, postgis_topology,
+  address_standardizer, pgrouting, pgroonga, wrappers.
 
 ## What is intentionally dropped
 
-PostGIS (+ raster/sfcgal/topology/tiger), pgrouting, pgroonga, plv8/plls/
-plcoffee, plperl, wrappers, timescaledb — projects that need these should use
-the upstream `supabase/postgres` image (config.toml image override).
+Only non-runtime content: Nix tooling and build derivations, store paths not
+reachable from the runtime roots, alternate switchable extension versions
+(defaults stay), kernel firmware/apk leftovers under `/lib`. No extension is
+removed. (plv8/pljava/plcoffee/plls/timescaledb are not present in the
+upstream arm64 image to begin with.)
 
-## Measurements (17.6.1.143, linux/arm64, 2026-07)
+## Measurements (17.6.1.143, linux/arm64, full extension set, 2026-07)
 
 | Metric | Upstream | Slim | Reduction |
 |---|---:|---:|---:|
-| Compressed image | `349.8 MiB` (Docker Hub arm64 layers) | `99.0 MiB` (`docker save \| gzip -9`) | `71.7%` |
-| Uncompressed rootfs | ~`1300 MiB` | `431 MiB` | `66.8%` |
+| Compressed image | `349.8 MiB` (Docker Hub arm64 layers) | `294.4 MiB` (`docker save \| gzip -9`) | `15.8%` |
+| Uncompressed rootfs | ~`1300 MiB` | `1129 MiB` | `13.2%` |
 
 | Runtime metric | Value |
 |---|---:|
-| Steady-state RSS (after initdb + migrations + 21 CREATE EXTENSION) | `70.1 MiB` |
-| CPU 10s after smoke activity | `9.2 %`* |
+| Steady-state RSS (settled) | `67.5 MiB` |
+| RSS right after initdb + migrations + 31 CREATE EXTENSION | `110.9 MiB` |
+| Idle CPU (settled) | `0.01 %` |
 
-`*` sampled immediately after initdb/migrations/extension creation; background
-workers (autovacuum, pg_cron, checkpointer) were still settling. A longer-idle
-sample is a follow-up once the measurement pipeline supports per-service settle
-overrides.
+The disk reduction is intentionally modest: every extension the upstream image
+ships stays available (`supabase/postgres` flavour contract), so only Nix
+tooling, build derivations, unreferenced store paths, and alternate switchable
+extension versions are dropped. The per-stack win at 25 parallel stacks comes
+from the runtime profile: `shared_buffers=32MB`, `jit=off`, slowed idle ticks
+(all smoke-verified via the conf.d overlay, `wal_level=logical` untouched).
 
-Smoke-verified: `shared_buffers=32MB`, `jit=off`, `wal_level=logical` active
-via the conf.d overlay; denied extensions absent (`CREATE EXTENSION postgis`
-fails); basic SQL round-trip.
+An earlier pass that additionally deny-listed PostGIS/pgroonga/wrappers/perl
+measured `99.0 MiB` compressed / `431 MiB` rootfs — rejected because the local
+image must support every extension a user may enable. If a "core" variant is
+ever wanted alongside the full flavour, that deny list is in git history
+(`b54916b`).
