@@ -107,3 +107,26 @@ requirements without editing upstream source.
 - Trim unused BEAM release tools.
 - Re-check if `cc-debian13` can become `base-debian13`.
 - Broaden smoke coverage before removing more release modules.
+
+## Footprint Pass 3 (runtime profile, 2026-07)
+
+- Bumped `sources/realtime` to `v2.112.6` (latest release; CLI pins v2.112.2).
+  Artifact build updates: `beacon` path dep removed upstream, new local `forum`
+  path dep copied before `mix deps.get`.
+- Trimmed BEAM release tooling from the artifact (erts `ct_run`/`dialyzer`/
+  `typer`/`erlc`/`escript`/`yielding_c_fun`, lib `src`/`include`/`c_src` dirs,
+  erts doc/man).
+- Added `runtime.env` low-footprint defaults baked as image ENV (overridable):
+  `ELIXIR_ERL_OPTIONS=+fnu +S 1:1 +SDio 1 +sbwt none +sbwtdcpu none +sbwtdio none`
+  (single scheduler, no scheduler busy-wait — the busy-wait removal is the big
+  idle-CPU win at 25 parallel stacks) and `DB_POOL_SIZE=2` (metadata repo pool
+  holds server-side postgres backends; upstream default 5).
+- Note: upstream v2.112.x images bundle a `pgdelta` helper binary built in the
+  upstream Dockerfile; it is not referenced from the Elixir application code
+  (Dockerfile-only), so the slim image omits it.
+
+| Metric | Value |
+|---|---:|
+| Image compressed (`docker save \| gzip -9`) | `28.4 MiB` |
+| Steady-state RSS (idle, after /healthcheck) | `163.2 MiB` |
+| Idle CPU | `0.13 %` |
