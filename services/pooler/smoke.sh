@@ -33,4 +33,5 @@ if ! wait_for_http_code "http://127.0.0.1:$port/api/health" "204" 180 "$token" "
   container_logs "$container"
   fail "pooler /api/health did not return 204"
 fi
+record_runtime_metrics "$container"
 log "pooler smoke passed"
