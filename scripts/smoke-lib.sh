@@ -9,11 +9,18 @@ RUN_ID="${RUN_ID:-$(date +%s)-$$}"
 NETWORK="${NETWORK:-slim-smoke-$RUN_ID}"
 POSTGRES_CONTAINER="${POSTGRES_CONTAINER:-slim-smoke-postgres-$RUN_ID}"
 created_containers=()
+host_service_pids=()
 network_created=0
 
 cleanup_smoke() {
   set +e
-  local container
+  local container pid
+  for pid in "${host_service_pids[@]:-}"; do
+    if [[ -n "$pid" ]] && kill -0 "$pid" >/dev/null 2>&1; then
+      kill "$pid" >/dev/null 2>&1 || true
+      wait "$pid" >/dev/null 2>&1 || true
+    fi
+  done
   for container in "${created_containers[@]:-}"; do
     docker rm -f "$container" >/dev/null 2>&1 || true
   done
@@ -81,9 +88,12 @@ start_postgres() {
   local db="${1:-postgres}"
   ensure_network
   if ! docker inspect "$POSTGRES_CONTAINER" >/dev/null 2>&1; then
+    # 127.0.0.1:: publishes a random host port so host-process smokes can
+    # reach the harness postgres; container smokes keep using the network.
     run_container \
       "$POSTGRES_CONTAINER" \
       --network "$NETWORK" \
+      -p 127.0.0.1::5432 \
       -e POSTGRES_USER=postgres \
       -e POSTGRES_PASSWORD=postgres \
       -e POSTGRES_DB=postgres \
@@ -213,6 +223,173 @@ print(json.dumps({
 PY
 )"; then
     log "WARNING: runtime metrics sampling failed for $container"
+    return 0
+  fi
+
+  log "runtime metrics: $metrics_json"
+  if [[ -n "${SLIM_RUNTIME_METRICS_FILE:-}" ]]; then
+    printf '%s\n' "$metrics_json" > "$SLIM_RUNTIME_METRICS_FILE"
+  fi
+}
+
+# Host-process smoke helpers: the darwin (no-Docker) counterpart of the
+# container helpers above. The CLI runs these artifacts as plain processes with
+# services/<service>/runtime.env applied, so the smoke must do the same.
+
+# Print KEY=VALUE pairs from services/<service>/runtime.env (comments/blank
+# lines skipped). Missing file is fine: not every service has a profile.
+runtime_env_pairs() {
+  local service="$1"
+  local env_file="$ROOT_DIR/services/$service/runtime.env"
+  [[ -f "$env_file" ]] || return 0
+  grep -Ev '^[[:space:]]*(#|$)' "$env_file"
+}
+
+# Start a service as a host process with runtime.env applied.
+# Usage: start_host_service SERVICE LOGFILE [EXTRA_ENV=value ...] -- CMD [ARGS...]
+# Sets $host_service_pid; the process is killed by cleanup_smoke.
+start_host_service() {
+  local service="$1"
+  local logfile="$2"
+  shift 2
+  local extra_env=()
+  while [[ $# -gt 0 && "$1" != "--" ]]; do
+    extra_env+=("$1")
+    shift
+  done
+  [[ "${1:-}" == "--" ]] || fail "start_host_service: missing -- separator before command"
+  shift
+  [[ $# -gt 0 ]] || fail "start_host_service: missing command"
+
+  local runtime_env=()
+  while IFS= read -r pair; do
+    runtime_env+=("$pair")
+  done < <(runtime_env_pairs "$service")
+
+  env \
+    ${runtime_env[@]+"${runtime_env[@]}"} \
+    ${extra_env[@]+"${extra_env[@]}"} \
+    "$@" >"$logfile" 2>&1 &
+  host_service_pid="$!"
+  host_service_pids+=("$host_service_pid")
+}
+
+# wait_for_http_code for a host process: fails fast (with logs) when the
+# process exits before serving.
+wait_for_http_code_host() {
+  local url="$1"
+  local expected="$2"
+  local timeout="${3:-90}"
+  local pid="$4"
+  local logfile="${5:-}"
+  local auth_token="${6:-}"
+  local curl_args=()
+  if [[ -n "$auth_token" ]]; then
+    curl_args=(-H "Authorization: Bearer ${auth_token}")
+  fi
+  local start http_code
+  start="$(date +%s)"
+  while true; do
+    if ! kill -0 "$pid" >/dev/null 2>&1; then
+      if [[ -n "$logfile" ]]; then
+        printf '\n[slim-smoke] host process logs (%s)\n' "$logfile" >&2
+        cat "$logfile" >&2 || true
+      fi
+      return 1
+    fi
+    http_code="$(curl -sS -o /dev/null -w '%{http_code}' ${curl_args[@]+"${curl_args[@]}"} "$url" 2>/dev/null || true)"
+    [[ "$http_code" == "$expected" ]] && return 0
+    if (( "$(date +%s)" - start >= timeout )); then
+      if [[ -n "$logfile" ]]; then
+        printf '\n[slim-smoke] host process logs (%s)\n' "$logfile" >&2
+        cat "$logfile" >&2 || true
+      fi
+      return 1
+    fi
+    sleep 2
+  done
+}
+
+# Sample steady-state RSS and CPU of a host process tree via ps (docker stats
+# is unavailable for host processes). Sums the process and its descendants so
+# wrapper scripts and BEAM/Node children are counted. Writes the same JSON
+# shape as record_runtime_metrics to $SLIM_RUNTIME_METRICS_FILE when set.
+record_host_runtime_metrics() {
+  local pid="$1"
+  local settle="${SLIM_RUNTIME_SETTLE:-10}"
+  local samples="${SLIM_RUNTIME_SAMPLES:-3}"
+  local interval="${SLIM_RUNTIME_SAMPLE_INTERVAL:-2}"
+
+  log "sampling host runtime metrics for pid $pid (settle ${settle}s, ${samples} samples)"
+  sleep "$settle"
+
+  local metrics_json
+  if ! metrics_json="$(python3 - "$pid" "$samples" "$interval" "$settle" <<'PY'
+import json
+import subprocess
+import sys
+import time
+
+root_pid, samples, interval = int(sys.argv[1]), int(sys.argv[2]), float(sys.argv[3])
+settle = int(sys.argv[4])
+
+
+def sample_tree(pid):
+    out = subprocess.check_output(
+        ["ps", "-axo", "pid=,ppid=,rss=,%cpu="], text=True, timeout=60
+    )
+    procs = {}
+    children = {}
+    for line in out.splitlines():
+        parts = line.split()
+        if len(parts) != 4:
+            continue
+        try:
+            p, pp, rss_kib, cpu_pct = int(parts[0]), int(parts[1]), int(parts[2]), float(parts[3])
+        except ValueError:
+            continue
+        procs[p] = (rss_kib, cpu_pct)
+        children.setdefault(pp, []).append(p)
+
+    if pid not in procs:
+        return None
+
+    total_rss_kib = 0
+    total_cpu = 0.0
+    stack = [pid]
+    while stack:
+        cur = stack.pop()
+        rss_kib, cpu_pct = procs[cur]
+        total_rss_kib += rss_kib
+        total_cpu += cpu_pct
+        stack.extend(children.get(cur, []))
+    return total_rss_kib * 1024, total_cpu
+
+
+rss, cpu = [], []
+for i in range(samples):
+    result = sample_tree(root_pid)
+    if result is not None:
+        rss.append(result[0])
+        cpu.append(result[1])
+    if i < samples - 1:
+        time.sleep(interval)
+
+if not rss:
+    sys.exit(1)
+
+avg_rss = sum(rss) / len(rss)
+avg_cpu = sum(cpu) / len(cpu) if cpu else None
+print(json.dumps({
+    "runtime_rss_bytes": int(avg_rss),
+    "runtime_rss_mib": round(avg_rss / 1024 / 1024, 1),
+    "idle_cpu_pct": round(avg_cpu, 2) if avg_cpu is not None else None,
+    "settle_seconds": settle,
+    "samples": len(rss),
+}))
+PY
+)"; then
+    log "WARNING: host runtime metrics sampling failed for pid $pid"
     return 0
   fi
 

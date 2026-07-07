@@ -27,11 +27,13 @@ case "$mode" in
     require_cmd file
     require_cmd otool
     unresolved="$(
-      find "$rootfs/bin" "$rootfs/lib" -type f 2>/dev/null \
+      find "$rootfs" -type f 2>/dev/null \
         | while IFS= read -r file_path; do
             if file "$file_path" | grep -q 'Mach-O'; then
+              # /nix/store: build machine leak. /opt/homebrew + /usr/local:
+              # package-manager paths not guaranteed on user machines.
               otool -L "$file_path" 2>/dev/null \
-                | awk -v file="$file_path" 'NR > 1 && $1 ~ "^/nix/store/" { print file " -> " $1 }'
+                | awk -v file="$file_path" 'NR > 1 && ($1 ~ "^/nix/store/" || $1 ~ "^/opt/homebrew/" || $1 ~ "^/usr/local/") { print file " -> " $1 }'
               otool -l "$file_path" 2>/dev/null \
                 | awk -v file="$file_path" '
                     $1 == "cmd" && $2 == "LC_RPATH" { in_rpath = 1; next }

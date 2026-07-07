@@ -48,11 +48,47 @@ manifest="$artifact_dir/manifest.json"
 
 log "CI target: service=$service version=$version target=$TARGET_OS/$ARCH"
 
+merge_runtime_metrics() {
+  local manifest_file="$1"
+  local metrics_file="$2"
+  [[ -f "$metrics_file" && -f "$manifest_file" ]] || return 0
+  log "recording runtime metrics in manifest"
+  python3 - "$manifest_file" "$metrics_file" <<'PY'
+import json
+import sys
+
+manifest_path, metrics_path = sys.argv[1:]
+
+with open(metrics_path, "r", encoding="utf-8") as fh:
+    metrics = json.load(fh)
+
+with open(manifest_path, "r", encoding="utf-8") as fh:
+    data = json.load(fh)
+
+data["runtime"] = metrics
+
+with open(manifest_path, "w", encoding="utf-8") as fh:
+    json.dump(data, fh, indent=2)
+    fh.write("\n")
+PY
+}
+
 # The distribution archive is created below; skip the duplicate archive the
 # artifact builders would otherwise produce (zstd -19 over the full rootfs).
 ARTIFACT_ARCHIVE_ON_BUILD=0 "$ROOT_DIR/scripts/build-artifact.sh" "$service" "$version"
 
 [[ -d "$rootfs" ]] || fail "expected artifact rootfs not found: $rootfs"
+
+# Portable artifacts must hold the host-native contract: no absolute build-
+# machine paths, no unresolved libraries. The audit tooling is OS-specific
+# (otool vs ldd), so it runs where the host OS matches the target.
+artifact_portable="$(python3 -c 'import json,sys; print("true" if json.load(open(sys.argv[1])).get("portable") else "false")' "$manifest" 2>/dev/null || echo false)"
+if [[ "$artifact_portable" == "true" && "$TARGET_OS" == "$(host_os)" ]]; then
+  audit_mode="--linux"
+  [[ "$TARGET_OS" == "darwin" ]] && audit_mode="--darwin"
+  log "auditing portable artifact ($audit_mode)"
+  "$ROOT_DIR/scripts/audit-portable-artifact.sh" "$audit_mode" "$rootfs"
+fi
 
 # On Linux the artifact smoke would build a temporary image from the exact
 # rootfs the final image is built from and run the identical smoke — pure
@@ -60,7 +96,17 @@ ARTIFACT_ARCHIVE_ON_BUILD=0 "$ROOT_DIR/scripts/build-artifact.sh" "$service" "$v
 # (darwin), or when explicitly requested.
 if [[ "$TARGET_OS" != "linux" || "${FORCE_ARTIFACT_SMOKE:-0}" == "1" ]]; then
   log "smoking $service artifact for $platform_dir"
-  "$ROOT_DIR/scripts/smoke.sh" "$service" --artifact "$rootfs"
+  runtime_metrics_file="$artifact_dir/runtime-metrics.json"
+  rm -f "$runtime_metrics_file"
+  SLIM_RUNTIME_METRICS_FILE="$runtime_metrics_file" \
+    "$ROOT_DIR/scripts/smoke.sh" "$service" --artifact "$rootfs"
+
+  # On darwin this is the only smoke, so these are the artifact's runtime
+  # numbers; on Linux (FORCE_ARTIFACT_SMOKE) the image smoke below overwrites.
+  if [[ "$TARGET_OS" != "linux" && ! -f "$runtime_metrics_file" ]]; then
+    log "WARNING: smoke passed but recorded no runtime metrics — add a record_host_runtime_metrics call to services/$service/smoke.sh"
+  fi
+  merge_runtime_metrics "$manifest" "$runtime_metrics_file"
 fi
 
 archive_prefix="${ARTIFACT_ARCHIVE_PREFIX:-$artifact_dir/$service-$version-$platform_dir}"
@@ -84,27 +130,7 @@ if [[ "$TARGET_OS" == "linux" ]]; then
     if [[ ! -f "$runtime_metrics_file" ]]; then
       log "WARNING: smoke passed but recorded no runtime metrics — add a record_runtime_metrics call to services/$service/smoke.sh"
     fi
-    if [[ -f "$runtime_metrics_file" && -f "$manifest" ]]; then
-      log "recording runtime metrics in manifest"
-      python3 - "$manifest" "$runtime_metrics_file" <<'PY'
-import json
-import sys
-
-manifest_path, metrics_path = sys.argv[1:]
-
-with open(metrics_path, "r", encoding="utf-8") as fh:
-    metrics = json.load(fh)
-
-with open(manifest_path, "r", encoding="utf-8") as fh:
-    data = json.load(fh)
-
-data["runtime"] = metrics
-
-with open(manifest_path, "w", encoding="utf-8") as fh:
-    json.dump(data, fh, indent=2)
-    fh.write("\n")
-PY
-    fi
+    merge_runtime_metrics "$manifest" "$runtime_metrics_file"
 
     if command -v docker >/dev/null 2>&1; then
       log "measuring gzip-compressed Docker archive: $image_tag"

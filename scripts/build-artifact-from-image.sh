@@ -137,6 +137,9 @@ archive="$(archive_with_best_available_compressor "$rootfs" "$artifact_dir/$serv
 rootfs_kib="$(du -sk "$rootfs" | awk '{print $1}')"
 archive_bytes="$(wc -c < "$archive" | tr -d ' ')"
 
+portable="$(portable_flag)"
+assumed_host_libs_json="$(portable_host_libs_json)"
+
 python3 - "$manifest" <<PY
 import json
 import os
@@ -154,6 +157,8 @@ manifest = {
     "include_paths": ${INCLUDE_PATHS_JSON:-[]},
     "auto_elf_deps": "$AUTO_ELF_DEPS" == "true",
     "auto_elf_binaries": ${AUTO_ELF_BINARIES_JSON:-[]},
+    "portable": "$portable" == "true",
+    "assumed_host_libs": json.loads("""$assumed_host_libs_json"""),
     "excluded_file_classes": [
         "sourcemaps",
         "debug-symbols",
