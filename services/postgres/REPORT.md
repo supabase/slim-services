@@ -81,3 +81,84 @@ measured `99.0 MiB` compressed / `431 MiB` rootfs — rejected because the local
 image must support every extension a user may enable. If a "core" variant is
 ever wanted alongside the full flavour, that deny list is in git history
 (`b54916b`).
+
+## Host-Native darwin-arm64 Artifact (2026-07)
+
+Reversal of the plan's original non-goal (user directive): this repo now owns
+the self-contained postgres too. `sources/postgres` is pinned to the same tag
+as the Docker image, and the artifact is upstream's own relocatable package —
+`psql_17_cli_portable` from `nix/packages/postgres-portable.nix`, the exact
+build the Supabase CLI ships — with a repo-owned overlay
+(`services/postgres/nix/packages/`) making two changes:
+
+- **pgvector added to the CLI extension set** (the documented parity gap in
+  the CLI's postgres distribution).
+- Stale `/nix/store` LC_RPATH entries scrubbed from the copied ICU dylibs
+  (upstream rewrites install names but not rpaths; our portable audit
+  rejects them).
+
+Two upstream packaging bugs surfaced and are guarded against in shared
+tooling now:
+
+- `lib/libiconv.dylib` (a reexport stub) ships with an **invalid code
+  signature** — macOS SIGKILLs any process loading it via
+  `DYLD_LIBRARY_PATH`. `build-artifact-from-nix.sh` repairs invalid
+  signatures with the host `codesign` after the rootfs copy, and
+  `audit-portable-artifact.sh --darwin` now verifies every Mach-O signature,
+  failing the build otherwise. The CLI's shipped artifact should be checked
+  for the same class of issue.
+
+Smoke (host process, no Docker anywhere): initdb → pg_ctl with the preload
+set (`pg_stat_statements,pg_cron,pg_net`) → `CREATE EXTENSION` for pgcrypto,
+pg_stat_statements, **vector**, pg_net, pg_cron → a pgvector
+nearest-neighbour round-trip. Re-run from an untarred archive in a scratch
+directory (relocatable). pgsodium/supabase_vault ship in the artifact but
+need the CLI's getkey config to exercise; that belongs to the CLI's smoke.
+
+Local verification note: everything above was verified locally except
+compiling pg_graphql (a pgrx build whose crates.io vendoring is blocked by
+UA filtering on this network — same extension the CLI already ships, and the
+committed recipe includes it; CI builds it via upstream's binary cache).
+
+| Metric | Value |
+|---|---:|
+| Archive (`postgres-17.6.1.143-darwin-arm64.tar.zst`) | `30.4 MiB` |
+| rootfs | `110.2 MiB` |
+| Steady-state RSS (host process, idle, 60s settle) | `34.0 MiB` |
+| Idle CPU | `0.0 %` |
+
+### Native-first, no exceptions (2026-07, user directive)
+
+The portable artifact is now the basis for the Docker image too, on every
+target — an accepted divergence from upstream supabase/postgres bundling:
+
+- The artifact and image ship the **full PG17 extension set** — everything
+  the upstream image supports (timescaledb/plv8 are PG17-incompatible
+  upstream). Installed is not enabled: only the minimal
+  `shared_preload_libraries` set (pg_stat_statements, pg_cron, pg_net,
+  pgsodium, supabase_vault, supautils) is on by default, so the measured
+  footprint is unchanged; pgaudit/pg_stat_monitor/pg_tle need a preload
+  opt-in to CREATE. Disk grows accordingly (~30 -> ~250-300 MiB archive
+  expected).
+- `Dockerfile.artifact` is a nixos/nix flake builder producing the same
+  portable rootfs as darwin (`--accept-flake-config` uses upstream's binary
+  cache); the old docker-image prune (`prune.sh`, `slim-entrypoint.sh`) is
+  gone.
+- `Dockerfile.slim` derives the image: distroless `base-debian13:nonroot` +
+  busybox/bash tools stage + the bundle at `/opt/postgres` + repo-owned
+  `entry.sh`. First boot delegates to the bundle's own
+  `supabase-postgres-init.sh` (initdb, CLI config templates with pgsodium
+  getkey wired, password), then appends the docker network settings
+  (`listen_addresses='*'`, port 5432, `wal_level=logical`, a network
+  scram pg_hba rule) and the low-footprint profile, runs the bundled
+  supabase migrations against a temporary socket-only server, and starts
+  postgres — all as uid 65532 (no gosu/root phase, unlike the upstream
+  image).
+- The image smoke checks the broad preload-free set (29 creates including
+  postgis/pgroonga/wrappers, a pgsodium/vault round-trip through the getkey
+  wiring, and a pgvector nearest-neighbour query); the host smoke creates
+  the same subset minus the getkey-dependent pair.
+
+Verification happens in CI (`service-artifacts.yml`) per the directive —
+no local build for this step; the portable artifact underneath is the one
+already verified above.

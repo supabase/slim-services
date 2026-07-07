@@ -79,9 +79,13 @@ sampled by each service's smoke test (`docker stats`, recorded per build in
 `*` Upstream comparison uses `UPSTREAM_COMPARE_IMAGE` from the recipe (the exact tag is not published on Docker Hub), so the percentage is directional.
 <!-- generated:results:end -->
 
-Postgres keeps every extension the upstream image ships (`supabase/postgres`
-flavour contract), so its disk reduction is limited to Nix build cruft — its
-contribution is the runtime profile below.
+Postgres is native-first like everything else: the image is derived from the
+portable artifact, which ships every extension the upstream PG17 image
+supports (timescaledb/plv8 are PG17-incompatible upstream). Extensions are
+installed but not enabled — only the minimal `shared_preload_libraries` set
+is on by default, so the footprint numbers are unaffected; the few
+preload-gated extensions (pgaudit, pg_stat_monitor, pg_tle) take a config
+opt-in.
 
 ### Host-Native Artifacts
 
@@ -100,6 +104,7 @@ process with `runtime.env` applied (`ps`-based, recorded in the darwin
 <!-- generated:host-native:begin -->
 | Service | Version | Archive | rootfs | Idle RSS | Idle CPU | Portable | Report |
 |---|---:|---:|---:|---:|---:|---|---|
+| Postgres | `17.6.1.143` | `30.4 MiB` | `110.2 MiB` | `34.0 MiB` | `0.00%` | yes | [report](services/postgres/REPORT.md) |
 | PostgREST | `v14.14` | `12.6 MiB` | `83.5 MiB` | `80.1 MiB` | `0.00%` | yes | [report](services/postgrest/REPORT.md) |
 | Auth | `v2.192.0` | `9.4 MiB` | `33.5 MiB` | `29.3 MiB` | `0.00%` | yes | [report](services/auth/REPORT.md) |
 | Realtime | `v2.112.6` | `11.9 MiB` | `40.8 MiB` | `113.0 MiB` | `0.07%` | yes | [report](services/realtime/REPORT.md) |

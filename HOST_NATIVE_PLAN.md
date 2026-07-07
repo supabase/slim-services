@@ -243,12 +243,31 @@ Status 2026-07-07:
 - **studio** host-native: heaviest Node service, Linux native deps, and it is
   disabled by default in the minimal stack — keep it Docker-only (or a shared
   singleton at the CLI level).
-- **postgres** relocatable artifact from this repo: the pruned rootfs is
-  wired to absolute `/nix/store` paths by design. The CLI's existing darwin
-  postgres binary distribution (`~/.supabase/bin/postgres/<version>/`) is the
-  host-native vehicle; its real blocker is **extension parity** (pgvector is
-  missing from that distribution today — file/track upstream with the
-  supabase/postgres team). Revisit only if that distribution is abandoned.
+- ~~**postgres** relocatable artifact from this repo~~ — **reversed
+  2026-07-07 (user directive): this repo owns the self-contained postgres
+  too.** Implementation: `sources/postgres` submodule (pinned to the same
+  tag as the Docker image) + upstream's own relocatable package
+  `psql_17_cli_portable` (the exact build the Supabase CLI ships from
+  `nix/packages/postgres-portable.nix`), with a repo-owned overlay
+  (`services/postgres/nix/packages/`) that adds **pgvector** to the CLI
+  extension set — closing the documented parity gap. Host smoke: initdb +
+  pg_ctl + extension creation + a pgvector nearest-neighbour round-trip, no
+  Docker anywhere. Scoping decisions:
+  - Extension set (updated 2026-07-07, user decision): the FULL PG17 set —
+    everything the upstream Docker image supports (timescaledb/plv8 are
+    PG17-incompatible upstream). Extensions are installed but not enabled;
+    only the minimal `shared_preload_libraries` set is on by default, so
+    disk grows (~30 -> ~250-300 MiB archive) but runtime footprint does not.
+    pgaudit/pg_stat_monitor/pg_tle require a preload opt-in to CREATE.
+  - **Update 2026-07-07 (user directive): no exceptions.** The portable
+    artifact is the basis for the postgres Docker image too, on every
+    target — diverging from upstream supabase/postgres bundling: the image
+    ships the full PG17 extension set (installed, minimal preload — see the
+    extension-set decision above), runs unprivileged on distroless base, and boots
+    through the bundle's own supabase-postgres-init.sh plus repo-owned
+    docker wiring (services/postgres/overlay/entry.sh: network/pg_hba
+    settings, low-footprint profile, supabase migrations). The docker-image
+    prune backend is gone.
 - CLI-side integration (process-compose wiring, download/verify UX, port
   allocation) — separate repo (`supabase/cli`); this repo's deliverables end
   at "archive + manifest + smoke that proves it runs on the host".
