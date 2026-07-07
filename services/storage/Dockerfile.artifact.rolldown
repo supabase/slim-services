@@ -15,7 +15,6 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends build-essential ca-certificates git python3 \
   && rm -rf /var/lib/apt/lists/*
 COPY ${SOURCE_DIR}/package.json ${SOURCE_DIR}/package-lock.json ./
-COPY ${SOURCE_DIR}/patches ./patches
 RUN npm ci
 COPY ${SOURCE_DIR}/ ./
 COPY services/storage/overlay /tmp/slim-overlay
