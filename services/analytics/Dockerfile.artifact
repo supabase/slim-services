@@ -1,86 +1,26 @@
 # syntax=docker/dockerfile:1.7
+# Docker-hosted Nix build for linux targets (used when the host Nix system
+# does not match the target, e.g. building linux/arm64 artifacts on macOS).
+# The artifact is the same portable rootfs services/analytics/nix produces on
+# darwin; the final image is derived from it via Dockerfile.slim.
 ARG SOURCE_DIR=sources/analytics
-ARG ELIXIR_VERSION=1.19.5
-ARG OTP_VERSION=27.3.4.6
-ARG DEBIAN_VERSION=trixie-20260112-slim
-ARG RUST_VERSION=1.94.1
-ARG BUILDER_IMAGE=hexpm/elixir:${ELIXIR_VERSION}-erlang-${OTP_VERSION}-debian-${DEBIAN_VERSION}
-ARG RUNNER_IMAGE=debian:${DEBIAN_VERSION}
+ARG NIX_ATTR=logflare
+ARG NIX_EXPRESSION=nix
 
-FROM ${BUILDER_IMAGE} AS builder
-ARG RUST_VERSION
+FROM nixos/nix:2.24.9 AS builder
 ARG SOURCE_DIR
-ENV MIX_ENV=prod
-WORKDIR /app
-RUN apt-get update -y && apt-get install -y --no-install-recommends \
-    bash build-essential curl gcc git make \
-  && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
-  && apt-get install -y --no-install-recommends nodejs \
-  && curl https://sh.rustup.rs -sSf | bash -s -- -y --default-toolchain ${RUST_VERSION} \
-  && rm -rf /var/lib/apt/lists/*
-COPY ${SOURCE_DIR}/VERSION ${SOURCE_DIR}/mix.exs ${SOURCE_DIR}/mix.lock ./
-RUN mix do local.rebar --force + local.hex --force + deps.get + deps.compile
-COPY ${SOURCE_DIR}/assets/package.json ${SOURCE_DIR}/assets/package-lock.json assets/
-RUN npm --prefix assets ci
+ARG NIX_ATTR
+ARG NIX_EXPRESSION
+WORKDIR /src
 COPY ${SOURCE_DIR}/ ./
-ENV PATH=/root/.cargo/bin:${PATH}
-ENV CARGO_PROFILE_RELEASE_LTO=thin
-ENV CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1
-RUN mix release && npm run --prefix assets deploy && mix phx.digest
-
-FROM ${RUNNER_IMAGE} AS release-root
-WORKDIR /opt/app
-COPY --from=builder /app/_build/prod/rel/logflare /opt/app/rel/logflare
-COPY --from=builder /app/VERSION /opt/app/VERSION
-COPY --from=builder /app/priv/static /opt/app/rel/logflare/bin/priv/static
-RUN cp -r /opt/app/rel/logflare/bin/priv/static /opt/app/rel/logflare/lib/logflare-$(cat /opt/app/VERSION)/priv/static \
-  && rm -r /opt/app/rel/logflare/bin/priv \
-  && find /opt/app/rel/logflare -type f \( -name '*.map' -o -name '*.map.gz' \) -delete
-
-FROM ${RUNNER_IMAGE} AS runtime-deps
-RUN apt-get update -y && apt-get install -y --no-install-recommends \
-    binutils busybox ca-certificates file libstdc++6 openssl \
-  && update-ca-certificates \
-  && rm -rf /var/lib/apt/lists/*
-RUN mkdir -p /rootfs/opt/app /rootfs/usr/bin /rootfs/etc/ssl/certs
-COPY --from=release-root /opt/app /rootfs/opt/app
-# Trim BEAM release tooling that never runs in the final container
-# (REPORT follow-up: compilers/dialyzer/typer class of tools).
-COPY scripts/prune-beam-release.sh /tmp/prune-beam-release.sh
-RUN sh /tmp/prune-beam-release.sh /rootfs/opt/app/rel/logflare
-COPY sources/analytics/run.sh /rootfs/opt/app/rel/logflare/bin/run.sh
-RUN cp /bin/busybox /rootfs/usr/bin/busybox \
-  && ln -sf busybox /rootfs/usr/bin/sh \
-  && for applet in awk basename cat cut date dd df dirname grep mkdir od readlink sed sleep tr uname wc xargs; do ln -sf busybox "/rootfs/usr/bin/${applet}"; done \
-  && cp /usr/bin/env /rootfs/usr/bin/env \
-  && cp /etc/ssl/certs/ca-certificates.crt /rootfs/etc/ssl/certs/ca-certificates.crt \
-  && chmod 0755 /rootfs/opt/app/rel/logflare/bin/run.sh \
-  && find /rootfs/opt/app/rel/logflare -type f \( -name '*.so' -o -perm /111 \) \
-      -exec sh -c 'for f do file "$f" | grep -q ELF && strip --strip-unneeded "$f" || true; done' sh {} + \
-  && set -eux; \
-    scan="/rootfs/usr/bin/busybox $(find /rootfs/usr/bin -type f) $(find /rootfs/opt/app -type f)"; \
-    for f in $scan; do file "$f" | grep -q ELF && ldd "$f" || true; done \
-      | awk '/=> \/.+ \(/ { print $3 } /^[[:space:]]*\// { print $1 }' \
-      | sort -u \
-      | xargs -r -I '{}' cp -L --parents '{}' /rootfs \
-  && if [ -d /rootfs/lib ]; then mkdir -p /rootfs/usr/lib && cp -a /rootfs/lib/. /rootfs/usr/lib/ && rm -rf /rootfs/lib; fi \
-  && for lib in \
-      ld-linux-aarch64.so.1 \
-      libc.so.6 \
-      libcrypto.so.3 \
-      libdl.so.2 \
-      libgcc_s.so.1 \
-      libm.so.6 \
-      libpthread.so.0 \
-      libresolv.so.2 \
-      librt.so.1 \
-      libssl.so.3 \
-      libstdc++.so.6 \
-      libutil.so.1 \
-      libz.so.1 \
-      libzstd.so.1; do \
-      find /rootfs/usr/lib -name "${lib}" -delete; \
-    done
+# Apply the repo-owned portable package (the local Nix runner does the same
+# through a temporary source export; the Docker runner must do it here).
+COPY services/analytics/nix/ nix/
+RUN rm -rf .git
+RUN nix-build "./${NIX_EXPRESSION}" -A "${NIX_ATTR}" --out-link /result \
+  && mkdir -p /rootfs \
+  && cp -RL /result/. /rootfs/ \
+  && chmod -R u+w /rootfs
 
 FROM scratch AS artifact
-COPY --from=runtime-deps /rootfs/ /
+COPY --from=builder /rootfs/ /

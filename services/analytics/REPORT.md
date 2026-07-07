@@ -121,10 +121,11 @@ The hardest BEAM clone (see `services/realtime/REPORT.md` for the shared
 portable-BEAM packaging). Built by `services/analytics/nix/default.nix`.
 Logflare-specific packaging:
 
-- Pin: nixos-unstable rather than the 25.05 pin the other services use — the
-  rustler 0.37 crates require rustc >= 1.91 (25.05 ships 1.86), and unstable
-  provides Elixir 1.19.5 + OTP 27.3.4.x + rustc 1.95, matching the Docker
-  builder (1.19.5 / 27.3.4.6 / 1.94.1).
+- Pins: everything from the shared 25.05 pin (Elixir 1.18.4 / OTP 27.3.4.6;
+  mix.exs allows `~> 1.4` — the Docker builder uses 1.19.5) so shipped
+  binaries keep the same glibc floor as the other services on Linux; only
+  the Rust toolchain (rustc 1.95) comes from a nixos-unstable pin because
+  the rustler 0.37 crates require rustc >= 1.91.
 - Four in-tree rustler NIFs (`arrowipc_ex`, `ch_compression_ex`, `mapper_ex`,
   `sqlparser_ex`) are members of one cargo workspace rooted at the repo top
   level; deps are vendored once via `importCargoLock` from the workspace

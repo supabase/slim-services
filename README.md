@@ -97,13 +97,13 @@ recorded in the darwin `manifest.json`). Refresh with
 | Service | Version | Archive | rootfs | Idle RSS | Idle CPU | Portable | Report |
 |---|---:|---:|---:|---:|---:|---|---|
 | PostgREST | `v14.14` | `12.6 MiB` | `83.5 MiB` | `80.1 MiB` | `0.00%` | yes | [report](services/postgrest/REPORT.md) |
-| Auth | `v2.192.0` | `9.4 MiB` | `33.5 MiB` | `32.3 MiB` | `0.00%` | yes | [report](services/auth/REPORT.md) |
-| Realtime | `v2.112.6` | `11.9 MiB` | `40.8 MiB` | `222.7 MiB` | `0.33%` | yes | [report](services/realtime/REPORT.md) |
+| Auth | `v2.192.0` | `9.4 MiB` | `33.5 MiB` | `29.3 MiB` | `0.00%` | yes | [report](services/auth/REPORT.md) |
+| Realtime | `v2.112.6` | `11.9 MiB` | `40.8 MiB` | `113.0 MiB` | `0.07%` | yes | [report](services/realtime/REPORT.md) |
 | Storage | `v1.62.6` | `2.4 MiB` | `18.7 MiB` | `187.2 MiB` | `0.00%` | yes | [report](services/storage/REPORT.md) |
 | Edge Runtime | `v1.74.2` | `39.9 MiB` | `161.2 MiB` | `57.9 MiB` | `0.00%` | yes | [report](services/edge-runtime/REPORT.md) |
-| Analytics | `v1.46.0` | `33.3 MiB` | `137.2 MiB` | `207.6 MiB` | `0.20%` | yes | [report](services/analytics/REPORT.md) |
+| Analytics | `v1.46.0` | `33.3 MiB` | `137.9 MiB` | `523.0 MiB` | `0.00%` | yes | [report](services/analytics/REPORT.md) |
 | PgMeta | `v0.96.6` | `3.7 MiB` | `48.2 MiB` | `125.6 MiB` | `0.27%` | yes | [report](services/pgmeta/REPORT.md) |
-| Pooler | `v2.9.10` | `23.6 MiB` | `52.4 MiB` | `214.0 MiB` | `0.00%` | yes | [report](services/pooler/REPORT.md) |
+| Pooler | `v2.9.10` | `23.6 MiB` | `52.5 MiB` | `181.8 MiB` | `0.00%` | yes | [report](services/pooler/REPORT.md) |
 <!-- generated:host-native:end -->
 
 See [SLIM_IMAGES_REPORT.md](SLIM_IMAGES_REPORT.md) for the global summary.
