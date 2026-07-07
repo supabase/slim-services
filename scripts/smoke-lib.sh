@@ -138,6 +138,84 @@ wait_for_http_code() {
   done
 }
 
+# Sample steady-state RSS and CPU of a running smoke container via docker stats.
+# Best effort: logs the values, and writes JSON to $SLIM_RUNTIME_METRICS_FILE when
+# set (used by ci-build-service.sh to merge runtime metrics into manifest.json).
+record_runtime_metrics() {
+  local container="$1"
+  local settle="${SLIM_RUNTIME_SETTLE:-10}"
+  local samples="${SLIM_RUNTIME_SAMPLES:-3}"
+  local interval="${SLIM_RUNTIME_SAMPLE_INTERVAL:-2}"
+
+  log "sampling runtime metrics for $container (settle ${settle}s, ${samples} samples)"
+  sleep "$settle"
+
+  local metrics_json
+  if ! metrics_json="$(python3 - "$container" "$samples" "$interval" "$settle" <<'PY'
+import json
+import subprocess
+import sys
+import time
+
+container, samples, interval = sys.argv[1], int(sys.argv[2]), float(sys.argv[3])
+settle = int(sys.argv[4])
+
+UNITS = {
+    "B": 1, "KB": 1000, "MB": 1000**2, "GB": 1000**3,
+    "KIB": 1024, "MIB": 1024**2, "GIB": 1024**3,
+}
+
+def parse_size(text):
+    text = text.strip()
+    num = ""
+    for ch in text:
+        if ch.isdigit() or ch == ".":
+            num += ch
+        else:
+            break
+    unit = text[len(num):].strip().upper()
+    return float(num) * UNITS.get(unit, 1)
+
+rss, cpu = [], []
+for i in range(samples):
+    out = subprocess.check_output(
+        ["docker", "stats", "--no-stream", "--format",
+         "{{.MemUsage}}|{{.CPUPerc}}", container],
+        text=True, timeout=60,
+    ).strip()
+    mem_raw, cpu_raw = out.split("|", 1)
+    try:
+        rss.append(parse_size(mem_raw.split("/")[0]))
+        cpu.append(float(cpu_raw.strip().rstrip("%")))
+    except ValueError:
+        pass
+    if i < samples - 1:
+        time.sleep(interval)
+
+if not rss:
+    sys.exit(1)
+
+avg_rss = sum(rss) / len(rss)
+avg_cpu = sum(cpu) / len(cpu) if cpu else None
+print(json.dumps({
+    "runtime_rss_bytes": int(avg_rss),
+    "runtime_rss_mib": round(avg_rss / 1024 / 1024, 1),
+    "idle_cpu_pct": round(avg_cpu, 2) if avg_cpu is not None else None,
+    "settle_seconds": settle,
+    "samples": len(rss),
+}))
+PY
+)"; then
+    log "WARNING: runtime metrics sampling failed for $container"
+    return 0
+  fi
+
+  log "runtime metrics: $metrics_json"
+  if [[ -n "${SLIM_RUNTIME_METRICS_FILE:-}" ]]; then
+    printf '%s\n' "$metrics_json" > "$SLIM_RUNTIME_METRICS_FILE"
+  fi
+}
+
 b64url() {
   openssl base64 -A | tr '+/' '-_' | tr -d '='
 }

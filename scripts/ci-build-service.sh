@@ -65,7 +65,32 @@ if [[ "$TARGET_OS" == "linux" ]]; then
 
   if [[ "${DOCKER_PUSH:-0}" != "1" ]]; then
     log "smoking Linux Docker image: $image_tag"
-    "$ROOT_DIR/scripts/smoke.sh" "$service" --image "$image_tag"
+    runtime_metrics_file="$artifact_dir/runtime-metrics.json"
+    rm -f "$runtime_metrics_file"
+    SLIM_RUNTIME_METRICS_FILE="$runtime_metrics_file" \
+      "$ROOT_DIR/scripts/smoke.sh" "$service" --image "$image_tag"
+
+    if [[ -f "$runtime_metrics_file" && -f "$manifest" ]]; then
+      log "recording runtime metrics in manifest"
+      python3 - "$manifest" "$runtime_metrics_file" <<'PY'
+import json
+import sys
+
+manifest_path, metrics_path = sys.argv[1:]
+
+with open(metrics_path, "r", encoding="utf-8") as fh:
+    metrics = json.load(fh)
+
+with open(manifest_path, "r", encoding="utf-8") as fh:
+    data = json.load(fh)
+
+data["runtime"] = metrics
+
+with open(manifest_path, "w", encoding="utf-8") as fh:
+    json.dump(data, fh, indent=2)
+    fh.write("\n")
+PY
+    fi
 
     if command -v docker >/dev/null 2>&1; then
       log "measuring gzip-compressed Docker archive: $image_tag"

@@ -46,6 +46,35 @@ platform_os="${PLATFORM%%/*}"
 platform_arch="${PLATFORM#*/}"
 PLATFORM="$(docker_platform "$platform_os" "$platform_arch")"
 
+# Runtime profile contract: services/<service>/runtime.env holds low-footprint
+# local-dev defaults (KEY=VALUE lines). They are baked into the image as ENV so
+# consumers get them by default while remaining overridable at `docker run -e`.
+runtime_env_file="$(service_dir "$service")/runtime.env"
+dockerfile_content="$(cat "$dockerfile")"
+if [[ -f "$runtime_env_file" ]]; then
+  runtime_env_lines="$(python3 - "$runtime_env_file" <<'PY'
+import sys
+
+lines = []
+with open(sys.argv[1], "r", encoding="utf-8") as fh:
+    for raw in fh:
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" not in line:
+            raise SystemExit(f"invalid runtime.env line (expected KEY=VALUE): {line}")
+        key, value = line.split("=", 1)
+        value = value.replace("\\", "\\\\").replace('"', '\\"')
+        lines.append(f'ENV {key.strip()}="{value}"')
+print("\n".join(lines))
+PY
+)"
+  if [[ -n "$runtime_env_lines" ]]; then
+    log "applying runtime profile from $(relative_to_root "$runtime_env_file")"
+    dockerfile_content+=$'\n'"$runtime_env_lines"
+  fi
+fi
+
 log "building $tag from $rel_rootfs on $BASE_IMAGE for $PLATFORM"
 docker_builder="${DOCKER_BUILDER:-$(docker context show 2>/dev/null || echo default)}"
 output_args=()
@@ -54,10 +83,10 @@ if [[ "${DOCKER_PUSH:-0}" == "1" ]]; then
 elif [[ "${DOCKER_LOAD:-1}" == "1" ]]; then
   output_args+=(--load)
 fi
-docker buildx build \
+printf '%s\n' "$dockerfile_content" | docker buildx build \
   --builder "$docker_builder" \
   --platform "$PLATFORM" \
-  -f "$dockerfile" \
+  -f - \
   --build-arg "ARTIFACT_ROOT=$rel_rootfs" \
   --build-arg "BASE_IMAGE=$BASE_IMAGE" \
   -t "$tag" \
