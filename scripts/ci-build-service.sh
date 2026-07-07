@@ -17,6 +17,9 @@ Environment:
   IMAGE_TAG=...           optional Linux image tag
   DOCKER_PUSH=1           push Linux image instead of only loading locally
   DOCKER_LOAD=0|1         load Linux image locally, defaults to 1
+  FORCE_ARTIFACT_SMOKE=1  also smoke the raw artifact on Linux targets
+                          (normally skipped: the image smoke covers the
+                          identical rootfs)
 
 Steps:
   1. Build artifact rootfs for TARGET_OS/ARCH.

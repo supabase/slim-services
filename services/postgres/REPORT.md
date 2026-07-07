@@ -31,9 +31,12 @@ development rarely needs. This service prunes the published upstream image
   `jit=off`, `autovacuum_naptime=60s`, `bgwriter_delay=2000ms`,
   `wal_writer_delay=2000ms`. `wal_level=logical` is left untouched (realtime
   requires it).
-- Entrypoint, gosu, busybox userland, `/etc`, and the init/migration scripts
-  are preserved unchanged, so the CLI's `docker run` contract is identical to
-  the upstream image.
+- Gosu, busybox userland, `/etc`, and the init/migration scripts are preserved
+  unchanged. The image entrypoint is a thin wrapper (`slim-entrypoint.sh`) that
+  restores postgres ownership of `/etc/postgresql*` (lost when Docker COPY
+  assembles the scratch image) and then execs the stock
+  `docker-entrypoint.sh`, so the CLI's `docker run` contract is otherwise
+  identical to the upstream image.
 
 ## What still works (smoke-verified)
 

@@ -13,7 +13,8 @@ Last updated: 2026-07-07
   upstream ARM64 manifest, measured with `docker buildx imagetools inspect
   --raw`.
 - Slim image sizes are local gzip-compressed Docker archives, measured with
-  `docker save IMAGE | gzip -9`.
+  `docker save IMAGE | gzip -9` (pigz -9 when available; same format and
+  near-identical sizes, parallel compression).
 - Phase 1 means the first working slim pass: base-image replacement plus
   runtime artifact extraction/source build and dependency tracking.
 - Phase 2 means accepted service-specific optimization after smoke testing.

@@ -27,8 +27,6 @@ load_recipe "$service"
 [[ -d "$artifact_rootfs" ]] || fail "artifact rootfs not found: $artifact_rootfs"
 
 rel_rootfs="$(relative_to_root "$artifact_rootfs")"
-dockerfile="$(service_dir "$service")/Dockerfile.slim"
-[[ -f "$dockerfile" ]] || fail "Dockerfile not found: $dockerfile"
 manifest="$(dirname "$artifact_rootfs")/manifest.json"
 if [[ -z "${PLATFORM:-}" && -f "$manifest" ]]; then
   PLATFORM="$(python3 - "$manifest" <<'PY'
