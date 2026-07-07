@@ -57,14 +57,20 @@ host_port() {
 
 wait_for_postgres() {
   local timeout="${1:-90}"
+  local container="${2:-$POSTGRES_CONTAINER}"
+  local user="${3:-postgres}"
   local start
   start="$(date +%s)"
   while true; do
-    if docker exec "$POSTGRES_CONTAINER" pg_isready -h 127.0.0.1 -U postgres >/dev/null 2>&1; then
+    if docker exec "$container" pg_isready -h 127.0.0.1 -U "$user" >/dev/null 2>&1; then
       return 0
     fi
+    if [[ "$(docker inspect -f '{{.State.Running}}' "$container" 2>/dev/null || printf false)" != "true" ]]; then
+      container_logs "$container"
+      return 1
+    fi
     if (( "$(date +%s)" - start >= timeout )); then
-      container_logs "$POSTGRES_CONTAINER"
+      container_logs "$container"
       return 1
     fi
     sleep 1

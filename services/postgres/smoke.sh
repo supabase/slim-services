@@ -15,26 +15,15 @@ run_container \
   "$image"
 
 log "waiting for postgres to accept connections (init + migrations)"
-start="$(date +%s)"
-while true; do
-  if docker exec "$container" pg_isready -h 127.0.0.1 -U supabase_admin >/dev/null 2>&1; then
-    break
-  fi
-  if [[ "$(docker inspect -f '{{.State.Running}}' "$container" 2>/dev/null || printf false)" != "true" ]]; then
-    container_logs "$container"
-    fail "postgres container exited during startup"
-  fi
-  if (( "$(date +%s)" - start >= 240 )); then
-    container_logs "$container"
-    fail "postgres did not become ready in time"
-  fi
-  sleep 2
-done
+wait_for_postgres 240 "$container" supabase_admin \
+  || fail "postgres did not become ready in time"
 
-# Give the entrypoint time to finish init scripts/migrations after first ready.
+# The entrypoint boots a TEMPORARY server for init scripts/migrations, stops
+# it, then starts the real one — the first ready signal can be the temporary
+# instance. Grace-wait and re-check so we talk to the final server.
 sleep 5
-docker exec "$container" pg_isready -h 127.0.0.1 -U supabase_admin >/dev/null 2>&1 \
-  || { container_logs "$container"; fail "postgres not ready after migrations"; }
+wait_for_postgres 60 "$container" supabase_admin \
+  || fail "postgres not ready after migrations"
 
 psql_admin() {
   docker exec "$container" psql -h 127.0.0.1 -U supabase_admin -d postgres -v ON_ERROR_STOP=1 -qAt -c "$1"

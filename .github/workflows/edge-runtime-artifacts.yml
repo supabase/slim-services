@@ -121,9 +121,11 @@ jobs:
           set -euo pipefail
           metadata_file="$(mktemp)"
 
-          docker buildx build \
+          # Render through scripts/render-dockerfile.sh so the pushed image
+          # gets the same runtime.env ENV baking the smoked local image had.
+          scripts/render-dockerfile.sh edge-runtime | docker buildx build \
             --platform "${{ matrix.docker_platform }}" \
-            -f services/edge-runtime/Dockerfile.slim \
+            -f - \
             --build-arg "ARTIFACT_ROOT=${{ steps.vars.outputs.artifact_dir }}/rootfs" \
             --build-arg "BASE_IMAGE=gcr.io/distroless/base-debian13:nonroot" \
             --output "type=image,name=${{ steps.vars.outputs.image_repository }},push-by-digest=true,name-canonical=true,push=true" \

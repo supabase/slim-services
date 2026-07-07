@@ -42,12 +42,8 @@ RUN apt-get update -y && apt-get install -y --no-install-recommends \
 RUN mkdir -p /rootfs/app /rootfs/usr/bin /rootfs/etc/ssl/certs
 COPY --from=builder /app/_build/prod/rel/realtime /rootfs/app/
 # Trim BEAM release tooling that never runs in the final container.
-RUN set -eux; \
-  for tool in ct_run dialyzer typer erlc escript yielding_c_fun; do \
-    rm -f /rootfs/app/erts-*/bin/"$tool"; \
-  done; \
-  find /rootfs/app/lib -maxdepth 2 -type d \( -name src -o -name include -o -name c_src \) -exec rm -rf {} +; \
-  rm -rf /rootfs/app/erts-*/doc /rootfs/app/erts-*/man
+COPY scripts/prune-beam-release.sh /tmp/prune-beam-release.sh
+RUN sh /tmp/prune-beam-release.sh /rootfs/app
 COPY services/realtime/overlay/run.sh /rootfs/app/run.sh
 RUN cp /bin/busybox /rootfs/usr/bin/busybox \
   && ln -sf busybox /rootfs/usr/bin/sh \

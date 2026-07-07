@@ -17,7 +17,7 @@ log() { printf '[prune] %s\n' "$*"; }
 is_denied() {
   local name="$1"
   case "$name" in
-    nix-[0-9]*|nix-man-*) return 0 ;;
+    nix-[0-9]*|nix-man*) return 0 ;;
     *.drv) return 0 ;;
   esac
   return 1
@@ -165,11 +165,11 @@ chown 100:101 "$ROOTFS/var/lib/postgresql" "$ROOTFS/run/postgresql" 2>/dev/null 
 mkdir -p "$ROOTFS/etc/postgresql-custom/conf.d"
 cp /overlay/99-local-dev.conf "$ROOTFS/etc/postgresql-custom/conf.d/99-local-dev.conf"
 
-# Docker COPY into the final scratch image strips ownership (everything becomes
-# root:root), but postgres itself writes here at startup (pgsodium root key,
-# config rewrites by the entrypoint). Permission bits survive COPY; ownership
-# does not — so open these up for the local-dev image.
-chmod -R 0777 "$ROOTFS/etc/postgresql" "$ROOTFS/etc/postgresql-custom"
+# Docker COPY into the final scratch image strips ownership; the wrapper
+# entrypoint restores postgres ownership of /etc/postgresql* at container
+# start (running as root before docker-entrypoint.sh gosu-drops).
+cp /overlay/slim-entrypoint.sh "$ROOTFS/usr/local/bin/slim-entrypoint.sh"
+chmod 0755 "$ROOTFS/usr/local/bin/slim-entrypoint.sh"
 
 du -sh "$ROOTFS/nix/store" "$ROOTFS" || true
 log "prune complete"

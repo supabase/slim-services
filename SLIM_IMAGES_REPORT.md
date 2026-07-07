@@ -45,7 +45,7 @@ the runtime profile, not disk.
 
 | Service | Version | Upstream ARM64 compressed | Slim compressed | Reduction | Idle RSS | Idle CPU | Service report |
 |---|---:|---:|---:|---:|---:|---:|---|
-| `postgres` | `17.6.1.143` (all extensions) | `349.8 MiB` | `294.4 MiB` | `15.8%` | `67.5 MiB` | `0.01%` | [services/postgres/REPORT.md](services/postgres/REPORT.md) |
+| `postgres` | `17.6.1.143` (all extensions) | `349.8 MiB` | `293.9 MiB` | `15.8%` | `67.5 MiB` | `0.01%` | [services/postgres/REPORT.md](services/postgres/REPORT.md) |
 | `postgrest` | `v14.14` | `145.3 MiB` | `20.3 MiB` | `86.0%` | `29.4 MiB` | `0.13%` | [services/postgrest/REPORT.md](services/postgrest/REPORT.md) |
 | `studio` | `2026.06.29-sha-20290c7` | `304.7 MiB` | `136.3 MiB` | `55.3%` | `201.4 MiB` | `0.00%` | [services/studio/REPORT.md](services/studio/REPORT.md) |
 | `edge-runtime` | `v1.74.2` (no-AI) | `360.6 MiB` | `52.7 MiB` | `85.4%` | `15.1 MiB` | `0.02%` | [services/edge-runtime/REPORT.md](services/edge-runtime/REPORT.md) |

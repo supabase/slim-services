@@ -90,7 +90,16 @@ if [[ -n "$SOURCE_DIR" ]]; then
   build_args+=(--build-arg "SOURCE_DIR=$SOURCE_DIR")
 fi
 if [[ -n "${SOURCE_IMAGE:-}" ]]; then
-  build_args+=(--build-arg "SOURCE_IMAGE=$SOURCE_IMAGE")
+  # Provenance: source-submodule builds are pinned by commit; image-rooted
+  # builds should be pinned by digest so a republished upstream tag (or stale
+  # local cache) cannot silently change what we build from.
+  source_image_ref="$SOURCE_IMAGE"
+  if [[ -n "${SOURCE_IMAGE_DIGEST:-}" && "$source_image_ref" != *"@"* ]]; then
+    source_image_ref="${source_image_ref}@${SOURCE_IMAGE_DIGEST}"
+  elif [[ -z "$SOURCE_DIR" && "$source_image_ref" != *"@"* ]]; then
+    log "WARNING: docker-image build without SOURCE_IMAGE_DIGEST; the mutable tag $source_image_ref is the only pin"
+  fi
+  build_args+=(--build-arg "SOURCE_IMAGE=$source_image_ref")
 fi
 
 if declare -p ARTIFACT_BUILD_ARGS >/dev/null 2>&1; then
@@ -104,38 +113,45 @@ log "building $service artifact from ${SOURCE_DIR:-$UPSTREAM_IMAGE}${SOURCE_REF:
 # ARTIFACT_EXPORT=tar streams the artifact stage as a single tarball instead of
 # the per-file local exporter, which can stall on rootfs trees with very large
 # file counts (e.g. the postgres Nix store).
+export_tar=""
 if [[ "${ARTIFACT_EXPORT:-local}" == "tar" ]]; then
   export_tar="$artifact_dir/.rootfs-export.tar"
   rm -f "$export_tar"
-  docker buildx build \
-    --builder "$docker_builder" \
-    --platform "$PLATFORM" \
-    --target artifact \
-    --output "type=tar,dest=$export_tar" \
-    -f "$dockerfile" \
-    "${build_args[@]}" \
-    "$ROOT_DIR"
+  trap 'rm -f "$export_tar"' EXIT
+  output_spec="type=tar,dest=$export_tar"
+else
+  output_spec="type=local,dest=$rootfs"
+fi
+
+docker buildx build \
+  --builder "$docker_builder" \
+  --platform "$PLATFORM" \
+  --target artifact \
+  --output "$output_spec" \
+  -f "$dockerfile" \
+  "${build_args[@]}" \
+  "$ROOT_DIR"
+
+if [[ -n "$export_tar" ]]; then
   log "extracting artifact tar export"
   # -p: without it a non-root extraction applies the umask and silently strips
   # mode bits the image relies on (e.g. postgres-writable config dirs).
   tar -C "$rootfs" -xpf "$export_tar"
   rm -f "$export_tar"
-else
-  docker buildx build \
-    --builder "$docker_builder" \
-    --platform "$PLATFORM" \
-    --target artifact \
-    --output "type=local,dest=$rootfs" \
-    -f "$dockerfile" \
-    "${build_args[@]}" \
-    "$ROOT_DIR"
 fi
 
 "$ROOT_DIR/scripts/prune-runtime-tree.sh" "$rootfs"
-archive="$(archive_with_best_available_compressor "$rootfs" "$artifact_dir/$service")"
+
+# ci-build-service.sh creates the distribution archive itself; skip the
+# duplicate (zstd -19 over the full rootfs) when the caller says so.
+archive=""
+archive_bytes="None"
+if [[ "${ARTIFACT_ARCHIVE_ON_BUILD:-1}" == "1" ]]; then
+  archive="$(archive_with_best_available_compressor "$rootfs" "$artifact_dir/$service")"
+  archive_bytes="$(wc -c < "$archive" | tr -d ' ')"
+fi
 
 rootfs_kib="$(du -sk "$rootfs" | awk '{print $1}')"
-archive_bytes="$(wc -c < "$archive" | tr -d ' ')"
 
 python3 - "$manifest" <<PY
 import json
@@ -165,12 +181,12 @@ manifest = {
         "Next tracing manifests"
     ],
     "smoke_command": "scripts/smoke.sh $service --artifact $rootfs",
-    "archive": os.path.basename("$archive"),
+    "archive": os.path.basename("$archive") or None,
     "size": {
         "rootfs_bytes": int($rootfs_kib) * 1024,
         "rootfs_mib": round((int($rootfs_kib) * 1024) / 1024 / 1024, 1),
-        "archive_bytes": int($archive_bytes),
-        "archive_mib": round(int($archive_bytes) / 1024 / 1024, 1)
+        "archive_bytes": $archive_bytes,
+        "archive_mib": round($archive_bytes / 1024 / 1024, 1) if $archive_bytes is not None else None
     }
 }
 
@@ -179,5 +195,5 @@ with open("$manifest", "w", encoding="utf-8") as fh:
     fh.write("\\n")
 PY
 
-"$ROOT_DIR/scripts/measure-artifact.sh" "$rootfs" "$archive"
+"$ROOT_DIR/scripts/measure-artifact.sh" "$rootfs" ${archive:+"$archive"}
 log "source artifact ready: $artifact_dir"

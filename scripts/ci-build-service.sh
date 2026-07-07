@@ -45,12 +45,20 @@ manifest="$artifact_dir/manifest.json"
 
 log "CI target: service=$service version=$version target=$TARGET_OS/$ARCH"
 
-"$ROOT_DIR/scripts/build-artifact.sh" "$service" "$version"
+# The distribution archive is created below; skip the duplicate archive the
+# artifact builders would otherwise produce (zstd -19 over the full rootfs).
+ARTIFACT_ARCHIVE_ON_BUILD=0 "$ROOT_DIR/scripts/build-artifact.sh" "$service" "$version"
 
 [[ -d "$rootfs" ]] || fail "expected artifact rootfs not found: $rootfs"
 
-log "smoking $service artifact for $platform_dir"
-"$ROOT_DIR/scripts/smoke.sh" "$service" --artifact "$rootfs"
+# On Linux the artifact smoke would build a temporary image from the exact
+# rootfs the final image is built from and run the identical smoke — pure
+# duplication. Smoke the artifact directly only where no image follows
+# (darwin), or when explicitly requested.
+if [[ "$TARGET_OS" != "linux" || "${FORCE_ARTIFACT_SMOKE:-0}" == "1" ]]; then
+  log "smoking $service artifact for $platform_dir"
+  "$ROOT_DIR/scripts/smoke.sh" "$service" --artifact "$rootfs"
+fi
 
 archive_prefix="${ARTIFACT_ARCHIVE_PREFIX:-$artifact_dir/$service-$version-$platform_dir}"
 log "creating distribution archive for $platform_dir"
@@ -70,6 +78,9 @@ if [[ "$TARGET_OS" == "linux" ]]; then
     SLIM_RUNTIME_METRICS_FILE="$runtime_metrics_file" \
       "$ROOT_DIR/scripts/smoke.sh" "$service" --image "$image_tag"
 
+    if [[ ! -f "$runtime_metrics_file" ]]; then
+      log "WARNING: smoke passed but recorded no runtime metrics — add a record_runtime_metrics call to services/$service/smoke.sh"
+    fi
     if [[ -f "$runtime_metrics_file" && -f "$manifest" ]]; then
       log "recording runtime metrics in manifest"
       python3 - "$manifest" "$runtime_metrics_file" <<'PY'
@@ -94,8 +105,11 @@ PY
 
     if command -v docker >/dev/null 2>&1; then
       log "measuring gzip-compressed Docker archive: $image_tag"
+      # pigz produces the same -9 sizes as gzip but uses all cores; the
+      # single-threaded fallback costs minutes on GiB-scale images.
+      gzip_cmd="$(command -v pigz || command -v gzip)"
       gzip_bytes="$(
-        docker save "$image_tag" | gzip -9 | wc -c | tr -d ' '
+        docker save "$image_tag" | "$gzip_cmd" -9 | wc -c | tr -d ' '
       )"
       if [[ -f "$manifest" ]]; then
         python3 - "$manifest" "$gzip_bytes" <<'PY'

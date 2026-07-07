@@ -57,7 +57,7 @@ upstream arm64 image to begin with.)
 
 | Metric | Upstream | Slim | Reduction |
 |---|---:|---:|---:|
-| Compressed image | `349.8 MiB` (Docker Hub arm64 layers) | `294.4 MiB` (`docker save \| gzip -9`) | `15.8%` |
+| Compressed image | `349.8 MiB` (Docker Hub arm64 layers) | `293.9 MiB` (`docker save \| gzip -9`) | `15.8%` |
 | Uncompressed rootfs | ~`1300 MiB` | `1129 MiB` | `13.2%` |
 
 | Runtime metric | Value |

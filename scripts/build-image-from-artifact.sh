@@ -47,33 +47,13 @@ platform_arch="${PLATFORM#*/}"
 PLATFORM="$(docker_platform "$platform_os" "$platform_arch")"
 
 # Runtime profile contract: services/<service>/runtime.env holds low-footprint
-# local-dev defaults (KEY=VALUE lines). They are baked into the image as ENV so
-# consumers get them by default while remaining overridable at `docker run -e`.
-runtime_env_file="$(service_dir "$service")/runtime.env"
-dockerfile_content="$(cat "$dockerfile")"
-if [[ -f "$runtime_env_file" ]]; then
-  runtime_env_lines="$(python3 - "$runtime_env_file" <<'PY'
-import sys
-
-lines = []
-with open(sys.argv[1], "r", encoding="utf-8") as fh:
-    for raw in fh:
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        if "=" not in line:
-            raise SystemExit(f"invalid runtime.env line (expected KEY=VALUE): {line}")
-        key, value = line.split("=", 1)
-        value = value.replace("\\", "\\\\").replace('"', '\\"')
-        lines.append(f'ENV {key.strip()}="{value}"')
-print("\n".join(lines))
-PY
-)"
-  if [[ -n "$runtime_env_lines" ]]; then
-    log "applying runtime profile from $(relative_to_root "$runtime_env_file")"
-    dockerfile_content+=$'\n'"$runtime_env_lines"
-  fi
+# local-dev defaults, baked into the image as ENV (overridable at `docker run
+# -e`). render-dockerfile.sh is the single source of truth for the final
+# Dockerfile; CI push paths must use it too.
+if [[ -f "$(service_dir "$service")/runtime.env" ]]; then
+  log "applying runtime profile from services/$service/runtime.env"
 fi
+dockerfile_content="$("$ROOT_DIR/scripts/render-dockerfile.sh" "$service")"
 
 log "building $tag from $rel_rootfs on $BASE_IMAGE for $PLATFORM"
 docker_builder="${DOCKER_BUILDER:-$(docker context show 2>/dev/null || echo default)}"
