@@ -9,10 +9,11 @@ This repo asks a simple question, on three axes:
 > with a low-footprint runtime profile?
 
 For the current Linux ARM64 pass (10 services, latest releases): upstream
-images total **2166.9 MiB** compressed; the slim set totals **765.6 MiB**
-(**64.7%** smaller). Every service also ships measured steady-state RSS and
-idle-CPU numbers, and a minimal core stack (postgres + auth + postgrest) idles
-at about **122 MiB of RSS per stack** with near-zero idle CPU.
+images total ~**2.1 GiB** compressed; the slim set totals ~**765 MiB**
+(~**65%** smaller — exact numbers in the generated table below). Every service
+also ships measured steady-state RSS and idle-CPU numbers, and a minimal core
+stack (postgres + auth + postgrest) idles at roughly **100 MiB of RSS per
+stack** with near-zero idle CPU.
 
 ## Project Goals
 
@@ -58,23 +59,25 @@ The approach is intentionally service-by-service:
 
 Image sizes are gzip-compressed; Idle RSS and Idle CPU are steady-state values
 sampled by each service's smoke test (`docker stats`, recorded per build in
-`manifest.json`).
+`manifest.json`). The table below is generated — refresh it with
+`scripts/update-results-tables.sh` after rebuilding services.
 
+<!-- generated:results:begin -->
 | Service | Version | Upstream ARM64 | Current slim | Reduction | Idle RSS | Idle CPU | Report |
 |---|---:|---:|---:|---:|---:|---:|---|
-| Postgres | `17.6.1.143` (all extensions) | `349.8 MiB` | `293.9 MiB` | `15.8%` | `67.5 MiB` | `0.01%` | [report](services/postgres/REPORT.md) |
+| Postgres | `17.6.1.143` (all extensions) | `349.8 MiB` | `293.9 MiB` | `16.0%` | `66.1 MiB` | `0.01%` | [report](services/postgres/REPORT.md) |
 | PostgREST | `v14.14` | `145.3 MiB` | `20.3 MiB` | `86.0%` | `29.4 MiB` | `0.13%` | [report](services/postgrest/REPORT.md) |
-| Auth | `v2.192.0` | `25.8 MiB` | `11.2 MiB` | `56.6%` | `24.8 MiB` | `0.58%` | [report](services/auth/REPORT.md) |
-| Realtime | `v2.112.6` | `114.7 MiB` | `28.4 MiB` | `75.2%` | `163.2 MiB` | `0.13%` | [report](services/realtime/REPORT.md) |
+| Auth | `v2.192.0` | `25.8 MiB` | `11.2 MiB` | `56.6%` | `8.2 MiB` | `0.01%` | [report](services/auth/REPORT.md) |
+| Realtime | `v2.112.6` | `114.7 MiB` | `28.4 MiB` | `75.2%` | `166.6 MiB` | `0.14%` | [report](services/realtime/REPORT.md) |
 | Storage | `v1.62.6` | `223.5 MiB` | `55.6 MiB` | `75.1%` | `211.5 MiB` | `0.19%` | [report](services/storage/REPORT.md) |
-| Edge Runtime | `v1.74.2` (no-AI) | `360.6 MiB` | `52.7 MiB` | `85.4%` | `15.1 MiB` | `0.02%` | [report](services/edge-runtime/REPORT.md) |
+| Edge Runtime | `v1.74.2` (no-AI) | `360.6 MiB` | `52.7 MiB` | `85.4%` | `14.7 MiB` | `0.04%` | [report](services/edge-runtime/REPORT.md) |
 | Studio | `2026.06.29-sha-20290c7` | `304.7 MiB` | `136.3 MiB` | `55.3%` | `201.4 MiB` | `0.00%` | [report](services/studio/REPORT.md) |
-| Analytics | `v1.46.0` | `258.9 MiB` | `89.7 MiB` | `65.4%` | `507.2 MiB` | `0.50%` | [report](services/analytics/REPORT.md) |
+| Analytics | `v1.46.0` | `258.9 MiB` | `89.7 MiB` | `65.3%` | `546.7 MiB` | `0.35%` | [report](services/analytics/REPORT.md) |
 | PgMeta | `v0.96.6` | `94.2 MiB` | `52.7 MiB` | `44.1%` | `79.4 MiB` | `0.70%` | [report](services/pgmeta/REPORT.md) |
-| Pooler | `v2.9.10` | `289.4 MiB`* | `24.3 MiB` | `91.6%`* | `154.9 MiB` | `0.07%` | [report](services/pooler/REPORT.md) |
+| Pooler | `v2.9.10` | `289.4 MiB`* | `24.3 MiB` | `91.6%`* | `155.6 MiB` | `0.18%` | [report](services/pooler/REPORT.md) |
 
-`*` Pooler upstream comparison uses `supabase/supavisor:2.9.7`, the latest tag
-published on Docker Hub during this pass.
+`*` Upstream comparison uses `UPSTREAM_COMPARE_IMAGE` from the recipe (the exact tag is not published on Docker Hub), so the percentage is directional.
+<!-- generated:results:end -->
 
 Postgres keeps every extension the upstream image ships (`supabase/postgres`
 flavour contract), so its disk reduction is limited to Nix build cruft — its
@@ -110,9 +113,9 @@ Memory and CPU are first-class optimization targets, not just disk:
   `runtime` in the artifact `manifest.json`, so regressions on these axes are
   visible per build, exactly like size.
 - **The parallel-stacks view** — image layers are shared; RSS multiplies per
-  stack. A minimal core stack (postgres + auth + postgrest) idles at
-  ~122 MiB, so 25 parallel stacks cost ~3 GiB. Analytics (~507 MiB) and
-  Studio (~201 MiB) dominate when run per-stack and are disabled by default
+  stack. A minimal core stack (postgres + auth + postgrest) idles at roughly
+  100 MiB, so 25 parallel stacks cost ~3 GiB. Analytics (~500 MiB) and
+  Studio (~200 MiB) dominate when run per-stack and are disabled by default
   in the minimal stack.
 
 ## Repository Layout

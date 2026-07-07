@@ -79,5 +79,8 @@ psql_admin "CREATE TABLE IF NOT EXISTS smoke_check(id serial primary key, v text
 psql_admin "INSERT INTO smoke_check(v) VALUES ('ok')" >/dev/null
 [[ "$(psql_admin "SELECT v FROM smoke_check LIMIT 1")" == "ok" ]] || fail "basic SQL round-trip failed"
 
-record_runtime_metrics "$container"
+# Postgres needs a longer settle than the 10s default: right after initdb +
+# migrations + extension creation, autovacuum/checkpointer are still working
+# and a short settle records churn instead of steady state.
+SLIM_RUNTIME_SETTLE="${SLIM_RUNTIME_SETTLE:-60}" record_runtime_metrics "$container"
 log "postgres smoke passed"
