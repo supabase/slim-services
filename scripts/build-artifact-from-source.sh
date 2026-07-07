@@ -203,6 +203,7 @@ manifest = {
     "artifact_dockerfile": "$artifact_dockerfile",
     "portable": "$portable" == "true",
     "assumed_host_libs": json.loads("""$assumed_host_libs_json"""),
+    "runtime_requires": "${RUNTIME_REQUIRES:-}" or None,
     "excluded_file_classes": [
         "sourcemaps",
         "debug-symbols",

@@ -158,7 +158,20 @@ do **realtime first** (most valuable per-stack), then clone for the others.
 
 ## Phase 4 — Node duo: storage, pgmeta (P2, decide the runtime story first)
 
-Decision to make explicitly (record it in this file when made):
+**Decision (2026-07-07): Option A — one shared Node runtime.** The service
+artifacts stay JS bundles plus a thin `bin/<service>` wrapper that resolves
+the runtime in order: `$SUPABASE_NODE` → `../../node/bin/node` relative to the
+artifact (the CLI's shared runtime location) → `node` on `PATH`. The manifest
+records the requirement in `runtime_requires` (e.g. `node>=20`), so the CLI
+can verify before running. The shared runtime itself is the official
+Node.js darwin-arm64 tarball (signed by the Node release team) downloaded by
+the CLI — this repo does not repackage Node. Smokes provide the runtime via
+`SUPABASE_NODE` (pinned via nixpkgs) so the round-trip is validated against
+the same major each service's Docker image uses (pgmeta 20, storage 24).
+Option B (bundle Node per service) was rejected for the ~50 MiB duplication
+per service; Option C (bun compile) for compat risk with native modules.
+
+Original decision framing:
 
 - **Option A (recommended): one shared Node runtime.** The CLI downloads a
   single `node-<version>-darwin-arm64` runtime artifact; storage and pgmeta

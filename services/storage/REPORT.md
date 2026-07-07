@@ -115,3 +115,28 @@ accepted path avoids dependency shims or upstream source edits.
 | Image compressed (`docker save \| gzip -9`) | `55.6 MiB` |
 | Steady-state RSS (after object round-trip) | `211.5 MiB` |
 | Idle CPU | `0.19 %` |
+
+## Host-Native darwin-arm64 Artifact (2026-07)
+
+Runtime decision (recorded in HOST_NATIVE_PLAN.md Phase 4): **Option A — one
+shared Node runtime**. The artifact stays a rolldown JS bundle; a thin
+`bin/storage` wrapper resolves the runtime (`SUPABASE_NODE` →
+`../../node/bin/node` → `PATH`) and the manifest records
+`runtime_requires: node>=20` so the CLI can verify before running.
+
+- `services/storage/build-host.sh` mirrors `Dockerfile.artifact.rolldown` on
+  the host: npm ci + upstream build + rolldown bundle (pinned npm 11.12.1
+  for upstream's engines check; node 24 from pinned nixpkgs = the Docker
+  runtime major). The one native module, `fs-xattr`, compiles for darwin
+  during npm ci. Sharp is not a dependency at v1.62.6 (image transformation
+  is imgproxy-based and off in the local profile).
+- Smoke (host process, `runtime.env` applied): `/status` 200 plus the full
+  bucket → upload → download round-trip on the file backend; re-run from an
+  untarred archive in a scratch directory (relocatable); darwin audit clean.
+
+| Metric | Value |
+|---|---:|
+| Archive (`storage-v1.62.6-darwin-arm64.tar.zst`) | `2.4 MiB` |
+| rootfs | `18.7 MiB` |
+| Steady-state RSS (host process, idle) | `187.2 MiB` |
+| Idle CPU | `0.0 %` |
