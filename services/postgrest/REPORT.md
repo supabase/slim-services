@@ -108,3 +108,35 @@ We also validated upstream PR #4193 artifacts from GitHub Actions:
 | Image compressed (`docker save \| gzip -9`) | `20.3 MiB` |
 | Steady-state RSS (idle) | `29.4 MiB` |
 | Idle CPU | `0.13 %` |
+
+## Host-Native darwin-arm64 Artifact (2026-07)
+
+Decision: consume the upstream macOS release binary instead of building from
+source (the HOST_NATIVE_PLAN.md fallback). The repo's static Nix expression is
+Linux-only — macOS has no static linking — and a from-source GHC build on
+darwin without upstream's cachix cache costs hours for a binary upstream
+already publishes (and the CLI already consumes).
+
+The upstream binary is not portable as published: it links
+`/opt/homebrew/opt/libpq/lib/libpq.5.dylib`, so it silently requires Homebrew
+on user machines. `services/postgrest/build-host.sh` repairs this:
+
+- fetch `postgrest-v14.14-macos-aarch64.tar.xz` pinned by sha256;
+- bundle `libpq` from pinned nixpkgs into `lib/` and rewrite the Homebrew
+  install name to `@rpath/libpq.5.dylib` + `@executable_path/../lib` rpath;
+- `scripts/portable-darwin-fixup.sh` completes the closure (openssl/kerberos
+  transitives), strips, ad-hoc signs, and audits.
+- `scripts/audit-portable-artifact.sh --darwin` now also rejects
+  `/opt/homebrew` and `/usr/local` references (found while validating this
+  artifact).
+
+Smoke: host process against harness postgres with `runtime.env` applied
+(`PGRST_DB_POOL=2`), `/` returns 200; re-smoked from an untarred archive in a
+scratch directory to prove relocatability.
+
+| Metric | Value |
+|---|---:|
+| Archive (`postgrest-v14.14-darwin-arm64.tar.zst`) | `12.6 MiB` |
+| rootfs | `83.5 MiB` |
+| Steady-state RSS (host process, idle) | `80.1 MiB` |
+| Idle CPU | `0.0 %` |
