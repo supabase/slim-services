@@ -86,3 +86,29 @@ migrations intact. No separate phase 2 optimization is worth carrying for now.
 | Image compressed (`docker save \| gzip -9`) | `11.2 MiB` |
 | Steady-state RSS (idle, after /health) | `24.8 MiB` |
 | Idle CPU | `0.58 %` |
+
+## Host-Native darwin-arm64 Artifact (2026-07)
+
+Auth is the first service on the host-native contract (HOST_NATIVE_PLAN.md):
+`services/auth/build-host.sh` cross-compiles the pinned submodule with the
+host Go toolchain (`CGO_ENABLED=0 GOOS=darwin GOARCH=arm64`, same flags as
+`Dockerfile.artifact`) — no Docker in the build or smoke path for the service.
+
+- Layout: `rootfs/bin/auth` + `bin/gotrue` symlink. No CA bundle (Go uses the
+  macOS system trust store) and no `migrations/` directory (embedded via
+  `go:embed` in `main.go` since v2.189.0). The CLI's current
+  `~/.supabase/bin/auth/<version>/darwin-arm64/` layout ships a `migrations/`
+  directory and bare `auth`/`gotrue` at the platform root; the embedded
+  migrations make the directory redundant for these versions.
+- `manifest.json`: `portable: true`, assumed host libs = libSystem + system
+  frameworks (pure-Go darwin binaries still link libSystem).
+- Smoke: host process against the harness postgres with `runtime.env` applied,
+  `/health` 200; re-run from an untarred archive in a scratch directory to
+  prove relocatability. `scripts/audit-portable-artifact.sh --darwin` clean.
+
+| Metric | Value |
+|---|---:|
+| Archive (`auth-v2.192.0-darwin-arm64.tar.zst`) | `9.4 MiB` |
+| rootfs | `33.5 MiB` |
+| Steady-state RSS (host process, idle) | `29.3 MiB` |
+| Idle CPU | `0.0 %` |

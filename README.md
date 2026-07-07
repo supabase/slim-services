@@ -83,6 +83,23 @@ Postgres keeps every extension the upstream image ships (`supabase/postgres`
 flavour contract), so its disk reduction is limited to Nix build cruft — its
 contribution is the runtime profile below.
 
+### Host-Native Artifacts (darwin-arm64)
+
+Services on the host-native contract ([HOST_NATIVE_PLAN.md](HOST_NATIVE_PLAN.md))
+also ship a self-contained, relocatable `tar.zst` archive that the CLI can
+download to `~/.supabase/bin/<service>/<version>/` and run without Docker.
+Archives are zstd-compressed; Idle RSS and Idle CPU are sampled from the
+artifact running as a real host process with `runtime.env` applied (`ps`-based,
+recorded in the darwin `manifest.json`). Refresh with
+`scripts/update-results-tables.sh --host-native-only` after darwin rebuilds.
+
+<!-- generated:host-native:begin -->
+| Service | Version | Archive | rootfs | Idle RSS | Idle CPU | Portable | Report |
+|---|---:|---:|---:|---:|---:|---|---|
+| PostgREST | `v14.14` | `12.6 MiB` | `83.5 MiB` | `80.1 MiB` | `0.00%` | yes | [report](services/postgrest/REPORT.md) |
+| Auth | `v2.192.0` | `9.4 MiB` | `33.5 MiB` | `29.3 MiB` | `0.00%` | yes | [report](services/auth/REPORT.md) |
+<!-- generated:host-native:end -->
+
 See [SLIM_IMAGES_REPORT.md](SLIM_IMAGES_REPORT.md) for the global summary.
 Each service report is self-contained for distribution to the owning team.
 For Nix-backed native services, see

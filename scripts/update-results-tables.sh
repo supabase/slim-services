@@ -7,16 +7,19 @@ source "$ROOT_DIR/scripts/lib.sh"
 
 usage() {
   cat <<'EOF'
-Usage: scripts/update-results-tables.sh [--allow-missing]
+Usage: scripts/update-results-tables.sh [--allow-missing] [--host-native-only]
 
 Regenerate the results tables in README.md and SLIM_IMAGES_REPORT.md from the
 latest artifacts/<service>/*/linux-arm64/manifest.json files (slim size, idle
 RSS, idle CPU) and upstream compressed sizes fetched live with
-`docker buildx imagetools inspect`.
+`docker buildx imagetools inspect`. Also regenerates the host-native
+darwin-arm64 table in README.md from darwin-arm64 manifests (services without
+one are simply omitted).
 
 Content is spliced between these marker comments, which must exist:
-  <!-- generated:totals:begin -->    ... <!-- generated:totals:end -->
-  <!-- generated:results:begin -->   ... <!-- generated:results:end -->
+  <!-- generated:totals:begin -->      ... <!-- generated:totals:end -->
+  <!-- generated:results:begin -->     ... <!-- generated:results:end -->
+  <!-- generated:host-native:begin --> ... <!-- generated:host-native:end -->
 
 Recipe variables consumed per service:
   UPSTREAM_IMAGE          upstream reference for the size comparison
@@ -26,15 +29,25 @@ Recipe variables consumed per service:
 
 --allow-missing skips services without a local linux-arm64 manifest instead of
 failing.
+--host-native-only only regenerates the host-native table (darwin rebuilds do
+not change the Linux image numbers, and regenerating those requires all Linux
+artifacts locally plus registry access).
 EOF
 }
 
 [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { usage; exit 0; }
 allow_missing=0
-[[ "${1:-}" == "--allow-missing" ]] && allow_missing=1
+host_native_only=0
+for arg in "$@"; do
+  case "$arg" in
+    --allow-missing) allow_missing=1 ;;
+    --host-native-only) host_native_only=1 ;;
+    *) usage >&2; exit 2 ;;
+  esac
+done
 
-require_cmd docker
 require_cmd python3
+[[ "$host_native_only" == "1" ]] || require_cmd docker
 
 # Table order and display names (core services first, opt-ins last).
 ordered_services=(postgres postgrest auth realtime storage edge-runtime studio analytics pgmeta pooler)
@@ -51,6 +64,78 @@ for i in "${!ordered_services[@]}"; do
   )"
   rows_tsv+="$service"$'\t'"$display"$'\t'"$recipe_vars"$'\n'
 done
+
+# Host-native darwin-arm64 table: driven by darwin manifests only; services
+# without one are omitted (the table grows service by service).
+ROWS_TSV="$rows_tsv" python3 - "$ROOT_DIR" <<'PY'
+import glob
+import json
+import os
+import sys
+
+root = sys.argv[1]
+
+rows = []
+for line in os.environ["ROWS_TSV"].splitlines():
+    if not line.strip():
+        continue
+    service, display = line.split("\t")[:2]
+
+    manifests = glob.glob(os.path.join(root, "artifacts", service, "*", "darwin-arm64", "manifest.json"))
+    if not manifests:
+        continue
+    manifest_path = max(manifests, key=os.path.getmtime)
+    with open(manifest_path, encoding="utf-8") as fh:
+        manifest = json.load(fh)
+
+    version = manifest.get("version", "?")
+    size = manifest.get("size") or {}
+    archive_mib = size.get("archive_mib")
+    rootfs_mib = size.get("rootfs_mib")
+    runtime = manifest.get("runtime") or {}
+    rss = runtime.get("runtime_rss_mib")
+    cpu = runtime.get("idle_cpu_pct")
+    portable = manifest.get("portable")
+
+    archive_cell = f"`{archive_mib:.1f} MiB`" if archive_mib is not None else "—"
+    rootfs_cell = f"`{rootfs_mib:.1f} MiB`" if rootfs_mib is not None else "—"
+    rss_cell = f"`{rss:.1f} MiB`" if rss is not None else "—"
+    cpu_cell = f"`{cpu:.2f}%`" if cpu is not None else "—"
+    portable_cell = "yes" if portable else "**no**"
+    rows.append(
+        f"| {display} | `{version}` | {archive_cell} | {rootfs_cell} "
+        f"| {rss_cell} | {cpu_cell} | {portable_cell} "
+        f"| [report](services/{service}/REPORT.md) |"
+    )
+
+if rows:
+    header = (
+        "| Service | Version | Archive | rootfs | Idle RSS | Idle CPU | Portable | Report |\n"
+        "|---|---:|---:|---:|---:|---:|---|---|"
+    )
+    table = header + "\n" + "\n".join(rows)
+else:
+    table = "_No darwin-arm64 artifacts built yet._"
+
+def splice(path, marker, content):
+    begin, end = f"<!-- generated:{marker}:begin -->", f"<!-- generated:{marker}:end -->"
+    with open(path, encoding="utf-8") as fh:
+        text = fh.read()
+    if begin not in text or end not in text:
+        raise SystemExit(f"[tables] ERROR: markers {begin} / {end} not found in {path}")
+    head, rest = text.split(begin, 1)
+    _, tail = rest.split(end, 1)
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(head + begin + "\n" + content + "\n" + end + tail)
+    print(f"[tables] updated {os.path.relpath(path, root)} ({marker})", file=sys.stderr)
+
+splice(os.path.join(root, "README.md"), "host-native", table)
+PY
+
+if [[ "$host_native_only" == "1" ]]; then
+  log "host-native results table regenerated"
+  exit 0
+fi
 
 # Rows travel via the environment: python reads its program from stdin (the
 # heredoc), so stdin cannot also carry the data.

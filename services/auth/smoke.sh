@@ -6,39 +6,96 @@ source "$ROOT_DIR/scripts/smoke-lib.sh"
 
 require_cmd docker
 require_cmd curl
-image="${IMAGE:?set IMAGE to the image tag to smoke test}"
-ensure_image "$image"
 
-log "checking auth executable"
-docker run --rm --entrypoint /usr/local/bin/auth "$image" version >/dev/null
+image="${IMAGE:-}"
+artifact_rootfs="${ARTIFACT_ROOTFS:-}"
+
+if [[ -n "$image" && -n "$artifact_rootfs" ]]; then
+  fail "set only one of IMAGE or ARTIFACT_ROOTFS"
+fi
+if [[ -z "$image" && -z "$artifact_rootfs" ]]; then
+  fail "set IMAGE to smoke a Docker image, or ARTIFACT_ROOTFS to smoke an extracted artifact"
+fi
+
+cleanup_auth_smoke() {
+  rm -f "${auth_log:-}"
+  cleanup_smoke
+}
+trap cleanup_auth_smoke EXIT
+
+jwt_secret='auth-jwt-secret-with-at-least-32-characters'
 
 start_postgres auth_smoke
 docker exec "$POSTGRES_CONTAINER" sh -lc \
   "psql -h 127.0.0.1 -U postgres -d auth_smoke -c 'CREATE SCHEMA IF NOT EXISTS auth'" \
   >/dev/null
 
-jwt_secret='auth-jwt-secret-with-at-least-32-characters'
-container="auth-smoke-$RUN_ID"
-run_container \
-  "$container" \
-  --network "$NETWORK" \
-  -p 127.0.0.1::9999 \
-  -e GOTRUE_SITE_URL=http://localhost:9999 \
-  -e API_EXTERNAL_URL=http://localhost:9999 \
-  -e GOTRUE_API_HOST=0.0.0.0 \
-  -e PORT=9999 \
-  -e GOTRUE_DB_DRIVER=postgres \
-  -e GOTRUE_DB_DATABASE_URL="postgres://postgres:postgres@$POSTGRES_CONTAINER:5432/auth_smoke?sslmode=disable" \
-  -e GOTRUE_JWT_SECRET="$jwt_secret" \
-  -e GOTRUE_JWT_AUD=authenticated \
-  -e GOTRUE_LOG_LEVEL=warn \
-  "$image"
-port="$(host_port "$container" 9999)"
+if [[ -n "$image" ]]; then
+  ensure_image "$image"
 
-log "smoke testing auth on port $port"
-if ! wait_for_http_code "http://127.0.0.1:$port/health" "200" 120 "" "$container"; then
-  container_logs "$container"
-  fail "auth /health did not return 200"
+  log "checking auth executable"
+  docker run --rm --entrypoint /usr/local/bin/auth "$image" version >/dev/null
+
+  container="auth-smoke-$RUN_ID"
+  run_container \
+    "$container" \
+    --network "$NETWORK" \
+    -p 127.0.0.1::9999 \
+    -e GOTRUE_SITE_URL=http://localhost:9999 \
+    -e API_EXTERNAL_URL=http://localhost:9999 \
+    -e GOTRUE_API_HOST=0.0.0.0 \
+    -e PORT=9999 \
+    -e GOTRUE_DB_DRIVER=postgres \
+    -e GOTRUE_DB_DATABASE_URL="postgres://postgres:postgres@$POSTGRES_CONTAINER:5432/auth_smoke?sslmode=disable" \
+    -e GOTRUE_JWT_SECRET="$jwt_secret" \
+    -e GOTRUE_JWT_AUD=authenticated \
+    -e GOTRUE_LOG_LEVEL=warn \
+    "$image"
+  port="$(host_port "$container" 9999)"
+
+  log "smoke testing auth on port $port"
+  if ! wait_for_http_code "http://127.0.0.1:$port/health" "200" 120 "" "$container"; then
+    container_logs "$container"
+    fail "auth /health did not return 200"
+  fi
+  record_runtime_metrics "$container"
+else
+  require_cmd python3
+
+  auth_bin="$artifact_rootfs/bin/auth"
+  [[ -x "$auth_bin" ]] || fail "auth artifact binary not found or not executable: $auth_bin"
+
+  log "checking auth executable"
+  "$auth_bin" version >/dev/null
+
+  pg_port="$(host_port "$POSTGRES_CONTAINER" 5432)"
+  port="$(python3 - <<'PY'
+import socket
+
+with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+    sock.bind(("127.0.0.1", 0))
+    print(sock.getsockname()[1])
+PY
+)"
+  auth_log="$(mktemp "${TMPDIR:-/tmp}/auth-smoke.XXXXXX.log")"
+
+  log "smoke testing auth host process on port $port"
+  start_host_service auth "$auth_log" \
+    GOTRUE_SITE_URL="http://localhost:$port" \
+    API_EXTERNAL_URL="http://localhost:$port" \
+    GOTRUE_API_HOST=127.0.0.1 \
+    PORT="$port" \
+    GOTRUE_DB_DRIVER=postgres \
+    GOTRUE_DB_DATABASE_URL="postgres://postgres:postgres@127.0.0.1:$pg_port/auth_smoke?sslmode=disable" \
+    GOTRUE_JWT_SECRET="$jwt_secret" \
+    GOTRUE_JWT_AUD=authenticated \
+    GOTRUE_LOG_LEVEL=warn \
+    -- "$auth_bin"
+
+  if ! wait_for_http_code_host "http://127.0.0.1:$port/health" "200" 120 "$host_service_pid" "$auth_log"; then
+    fail "auth /health did not return 200"
+  fi
+  record_host_runtime_metrics "$host_service_pid"
 fi
-record_runtime_metrics "$container"
+
 log "auth smoke passed"

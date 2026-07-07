@@ -44,7 +44,9 @@ case "${ARTIFACT_BACKEND:-docker-source}" in
     exec "$ROOT_DIR/scripts/build-artifact-from-nix.sh" "$service" "$@"
     ;;
   docker-source)
-    [[ "$TARGET_OS" == "linux" ]] || fail "docker-source artifacts are only supported for linux targets"
+    if [[ "$TARGET_OS" != "linux" && ! -x "$ROOT_DIR/services/$service/build-host.sh" ]]; then
+      fail "docker-source artifacts for non-linux targets require services/$service/build-host.sh"
+    fi
     exec "$ROOT_DIR/scripts/build-artifact-from-source.sh" "$service" "$@"
     ;;
   docker-image)
