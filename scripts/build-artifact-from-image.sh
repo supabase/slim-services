@@ -79,7 +79,20 @@ if [[ "${AUTO_ELF_DEPS:-false}" == "true" ]]; then
     fail "AUTO_ELF_DEPS=true requires AUTO_ELF_BINARIES in the recipe"
   fi
 
-  elf_list="$(printf '%s\n' "${AUTO_ELF_BINARIES[@]}")"
+  # Statically linked binaries have no deps to collect, and their images may
+  # not even carry a shell for the docker run below (postgrest amd64 is a
+  # lone static binary).
+  elf_list=""
+  for binary in "${AUTO_ELF_BINARIES[@]}"; do
+    if file "$rootfs$binary" 2>/dev/null | grep -q 'statically linked'; then
+      log "skipping ELF dependency collection for statically linked $binary"
+      continue
+    fi
+    elf_list="${elf_list}${binary}"$'\n'
+  done
+fi
+
+if [[ -n "${elf_list:-}" ]]; then
   log "collecting ELF dependencies from $SOURCE_IMAGE"
   docker run --rm --platform "$PLATFORM" \
     --user 0:0 \

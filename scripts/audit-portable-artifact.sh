@@ -63,7 +63,9 @@ case "$mode" in
         | while IFS= read -r file_path; do
             if file "$file_path" | grep -q 'ELF'; then
               # ldd exits nonzero on statically linked binaries; that is a
-              # pass, not an audit error, so don't let pipefail kill the scan.
+              # pass, not an audit error, so keep pipefail from killing the
+              # scan. (No apostrophes here: bash 3.2 on macOS mis-parses
+              # quotes in comments inside command substitutions.)
               LD_LIBRARY_PATH="$lib_path:${LD_LIBRARY_PATH:-}" \
                 ldd "$file_path" 2>/dev/null \
                 | awk -v file="$file_path" '/not found/ { print file " -> " $0 }' \
