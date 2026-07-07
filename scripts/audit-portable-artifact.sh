@@ -51,13 +51,25 @@ case "$mode" in
   --linux)
     require_cmd file
     require_cmd ldd
+    # Resolve against the artifact's own library dirs first (including Debian
+    # multiarch dirs) so bundled libs don't get checked against older host
+    # copies of the same soname.
+    lib_path="$rootfs/usr/local/lib:$rootfs/lib:$rootfs/usr/lib"
+    for dir in "$rootfs"/lib/*-linux-gnu* "$rootfs"/usr/lib/*-linux-gnu*; do
+      [[ -d "$dir" ]] && lib_path="$lib_path:$dir"
+    done
     unresolved="$(
       find "$rootfs" -type f 2>/dev/null \
         | while IFS= read -r file_path; do
             if file "$file_path" | grep -q 'ELF'; then
-              LD_LIBRARY_PATH="$rootfs/usr/local/lib:$rootfs/lib:${LD_LIBRARY_PATH:-}" \
+              # ldd exits nonzero on statically linked binaries; that is a
+              # pass, not an audit error, so keep pipefail from killing the
+              # scan. (No apostrophes here: bash 3.2 on macOS mis-parses
+              # quotes in comments inside command substitutions.)
+              LD_LIBRARY_PATH="$lib_path:${LD_LIBRARY_PATH:-}" \
                 ldd "$file_path" 2>/dev/null \
-                | awk -v file="$file_path" '/not found/ { print file " -> " $0 }'
+                | awk -v file="$file_path" '/not found/ { print file " -> " $0 }' \
+                || true
             fi
           done
     )"
