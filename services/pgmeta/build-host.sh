@@ -43,6 +43,10 @@ find dist node_modules \
 find node_modules \
   \( -path '*/test/*' -o -path '*/tests/*' -o -path '*/__tests__/*' -o -path '*/example/*' -o -path '*/examples/*' -o -path '*/benchmark/*' -o -path '*/benchmarks/*' \) \
   -print0 | xargs -0r rm -rf
+# Sentry's cpu profiler ships prebuilt .node binaries for every platform/libc
+# in one package. The musl variants reference libc.musl-*.so.1, which can
+# never resolve on our glibc/darwin targets and would fail the portable audit.
+find node_modules -type f -name '*-musl-*.node' -print0 | xargs -0r rm -f
 
 mkdir -p "$ROOTFS/app" "$ROOTFS/bin"
 cp package.json "$ROOTFS/app/package.json"

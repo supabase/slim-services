@@ -136,6 +136,24 @@ artifact_rootfs_path() {
   printf '%s/artifacts/%s/%s/%s/rootfs' "$ROOT_DIR" "$service" "$version" "$(artifact_platform_dir "$os" "$arch")"
 }
 
+# Resolve SOURCE_REF to a commit sha inside a source checkout. CI initializes
+# submodules with `--depth 1`, which fetches the pinned commit but not the tag
+# the recipe names; fetch the missing tag shallowly before giving up.
+resolve_source_ref() {
+  local source_dir="$1"
+  local ref="$2"
+  local sha
+  if sha="$(git -C "$source_dir" rev-parse --verify --quiet "$ref^{commit}")"; then
+    printf '%s' "$sha"
+    return 0
+  fi
+  # Callers capture stdout as the sha; keep the progress note on stderr.
+  log "ref $ref not found in $source_dir; fetching tag from origin" >&2
+  git -C "$source_dir" fetch --quiet --depth 1 origin \
+    "refs/tags/$ref:refs/tags/$ref" 2>/dev/null || true
+  git -C "$source_dir" rev-parse "$ref^{commit}"
+}
+
 host_matches_target() {
   local os="$1"
   local arch="$2"

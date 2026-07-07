@@ -64,7 +64,7 @@ out_link="$artifact_dir/nix-result"
 [[ -d "$source_abs" ]] || fail "source submodule directory not found: $SOURCE_DIR"
 [[ -f "$source_abs/.git" || -d "$source_abs/.git" ]] || fail "source directory is not a git checkout: $SOURCE_DIR"
 
-expected_ref="$(git -C "$source_abs" rev-parse "$SOURCE_REF^{commit}" 2>/dev/null || git -C "$source_abs" rev-parse "$SOURCE_REF")"
+expected_ref="$(resolve_source_ref "$source_abs" "$SOURCE_REF")"
 actual_ref="$(git -C "$source_abs" rev-parse HEAD)"
 if [[ "$actual_ref" != "$expected_ref" ]]; then
   fail "$SOURCE_DIR is at $actual_ref, expected $SOURCE_REF ($expected_ref). Run: git submodule update --init --recursive"
