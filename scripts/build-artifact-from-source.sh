@@ -31,11 +31,8 @@ VERSION="${2:-${VERSION:-dev}}"
 TARGET_OS="$(target_os)"
 ARCH="$(target_arch)"
 if [[ "$TARGET_OS" == "linux" ]]; then
-  require_cmd docker
   PLATFORM="${PLATFORM:-$(docker_platform "$TARGET_OS" "$ARCH")}"
 else
-  # Non-linux targets build with services/<service>/build-host.sh on the host
-  # toolchain instead of Docker (no Docker on macOS CI runners).
   PLATFORM="${PLATFORM:-$TARGET_OS/$ARCH}"
 fi
 
@@ -55,7 +52,17 @@ artifact_dir="$ROOT_DIR/artifacts/$service/$VERSION/$(artifact_platform_dir "$TA
 rootfs="$artifact_dir/rootfs"
 manifest="$artifact_dir/manifest.json"
 
-if [[ "$TARGET_OS" == "linux" ]]; then
+# Non-linux targets always build with services/<service>/build-host.sh (no
+# Docker on macOS CI runners); linux targets do too when the recipe opts in
+# with ARTIFACT_SOURCE_BUILD="host" (native-first services whose build is a
+# plain host toolchain, e.g. Go cross-compiles and Node bundles).
+use_host_build=0
+if [[ "$TARGET_OS" != "linux" || "${ARTIFACT_SOURCE_BUILD:-docker}" == "host" ]]; then
+  use_host_build=1
+fi
+
+if [[ "$use_host_build" == "0" ]]; then
+  require_cmd docker
   [[ -f "$dockerfile" ]] || fail "artifact Dockerfile not found: $dockerfile"
 fi
 
@@ -116,7 +123,7 @@ if declare -p ARTIFACT_BUILD_ARGS >/dev/null 2>&1; then
   done
 fi
 
-if [[ "$TARGET_OS" != "linux" ]]; then
+if [[ "$use_host_build" == "1" ]]; then
   # Host-toolchain build: services/<service>/build-host.sh cross-compiles the
   # pinned submodule into ROOTFS with no Docker involved. sources/ stays
   # read-only; the script must write only to ROOTFS.
