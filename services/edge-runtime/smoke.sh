@@ -74,15 +74,17 @@ if [[ -n "$image" ]]; then
     docker_platform_args=(--platform "$PLATFORM")
   fi
 
+  # ${arr[@]+...} keeps the empty-array expansion safe under `set -u` on
+  # bash 3.2 (macOS /bin/bash), where a plain "${arr[@]}" errors.
   log "smoke testing edge-runtime image: --help"
-  docker run --rm "${docker_platform_args[@]}" "$image" --help >/dev/null
+  docker run --rm ${docker_platform_args[@]+"${docker_platform_args[@]}"} "$image" --help >/dev/null
 
   container_name="slim-smoke-edge-runtime-$RUN_ID"
 
   log "smoke testing edge-runtime image: local function serve"
   run_container \
     "$container_name" \
-    "${docker_platform_args[@]}" \
+    ${docker_platform_args[@]+"${docker_platform_args[@]}"} \
     -p 127.0.0.1::9000 \
     -v "$fixture_dir:/tmp/edge-smoke-function:ro" \
     "$image" \
