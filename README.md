@@ -2,18 +2,21 @@
 
 Experimental slim runtime artifacts and Docker images for Supabase services.
 
-This repo asks a simple question:
+This repo asks a simple question, on three axes:
 
-> How small can each Supabase service image be if we package only the runtime
-> files it actually needs?
+> How small can each Supabase service be — in **image size**, **memory**, and
+> **CPU** — if we package only the runtime files it actually needs and ship it
+> with a low-footprint runtime profile?
 
-The answer, for the current Linux ARM64 pass, is promising: the full set of
-services drops from **1777.1 MiB** of upstream ARM64 images to **470.4 MiB** of
-current slim images, a reduction of **1306.7 MiB / 73.5%**.
+For the current Linux ARM64 pass (10 services, latest releases): upstream
+images total **2166.9 MiB** compressed; the slim set totals **765.6 MiB**
+(**64.7%** smaller). Every service also ships measured steady-state RSS and
+idle-CPU numbers, and a minimal core stack (postgres + auth + postgrest) idles
+at about **122 MiB of RSS per stack** with near-zero idle CPU.
 
 ## Project Goals
 
-This project has two long-term goals:
+This project has three long-term goals:
 
 1. Figure out how to package each Supabase service as a self-contained archive
    or executable for macOS and Linux, as small as we can make it while still
@@ -21,6 +24,9 @@ This project has two long-term goals:
 2. Use those artifacts to produce the smallest practical Docker images, then
    upstream the maintainable build and packaging improvements back to each
    service repository.
+3. Minimize each service's runtime footprint — steady-state memory and idle
+   CPU — so many local stacks can run in parallel on one developer machine
+   (the working target: ~25 stacks on a 32 GB laptop).
 
 The Docker images are the first delivery target because they immediately help
 local development and CI. The deeper goal is portable, minimal service runtime
@@ -32,6 +38,11 @@ Supabase local development and CI pull a lot of service images. Large images
 cost time, bandwidth, cache space, and iteration speed. The goal here is to
 produce smaller local/CI-oriented service images while keeping upstream service
 source trees read-only and preserving a clear validation path.
+
+Disk is only half the story: image layers are stored once and shared by every
+container, but **RSS and CPU multiply per running stack**. That is why each
+service now also carries a runtime profile and measured runtime numbers — see
+[Runtime Footprint](#runtime-footprint) below.
 
 The approach is intentionally service-by-service:
 
@@ -45,20 +56,29 @@ The approach is intentionally service-by-service:
 
 ## Current Results
 
-| Service | Version | Upstream ARM64 | Current slim | Reduction | Base | Report |
-|---|---:|---:|---:|---:|---|---|
-| PostgREST | `v14.10` | `126.0 MiB` | `21.2 MiB` | `83.2%` | `scratch` | [report](services/postgrest/REPORT.md) |
-| Studio | `2026.04.27-sha-4afbe9c` | `294.2 MiB` | `128.4 MiB` | `56.4%` | Distroless Node 22 Debian 13 | [report](services/studio/REPORT.md) |
-| Edge Runtime | `v1.73.15` | `360.6 MiB` | `60.8 MiB` | `83.1%` | Distroless base Debian 13 | [report](services/edge-runtime/REPORT.md) |
-| Analytics | `v1.39.2` | `257.0 MiB` | `89.4 MiB` | `65.2%` | Distroless cc Debian 13 | [report](services/analytics/REPORT.md) |
-| Realtime | `v2.87.0` | `122.8 MiB` | `28.5 MiB` | `76.8%` | Distroless cc Debian 13 | [report](services/realtime/REPORT.md) |
-| Pooler | `v2.9.2` | `287.1 MiB`* | `24.3 MiB` | `91.5%`* | Distroless cc Debian 13 | [report](services/pooler/REPORT.md) |
-| PgMeta | `v0.96.4` | `94.3 MiB` | `52.1 MiB` | `44.8%` | Distroless Node 20 Debian 13 | [report](services/pgmeta/REPORT.md) |
-| Storage | `v1.55.3` | `211.4 MiB` | `55.5 MiB` | `73.7%` | Distroless Node 24 Debian 13 | [report](services/storage/REPORT.md) |
-| Auth | `v2.189.0` | `23.7 MiB` | `10.2 MiB` | `57.0%` | `scratch` | [report](services/auth/REPORT.md) |
+Image sizes are gzip-compressed; Idle RSS and Idle CPU are steady-state values
+sampled by each service's smoke test (`docker stats`, recorded per build in
+`manifest.json`).
 
-`*` Pooler upstream comparison uses `supabase/supavisor:2.7.4`, because
-`supabase/supavisor:2.9.2` was not published on Docker Hub during this pass.
+| Service | Version | Upstream ARM64 | Current slim | Reduction | Idle RSS | Idle CPU | Report |
+|---|---:|---:|---:|---:|---:|---:|---|
+| Postgres | `17.6.1.143` (all extensions) | `349.8 MiB` | `293.9 MiB` | `15.8%` | `67.5 MiB` | `0.01%` | [report](services/postgres/REPORT.md) |
+| PostgREST | `v14.14` | `145.3 MiB` | `20.3 MiB` | `86.0%` | `29.4 MiB` | `0.13%` | [report](services/postgrest/REPORT.md) |
+| Auth | `v2.192.0` | `25.8 MiB` | `11.2 MiB` | `56.6%` | `24.8 MiB` | `0.58%` | [report](services/auth/REPORT.md) |
+| Realtime | `v2.112.6` | `114.7 MiB` | `28.4 MiB` | `75.2%` | `163.2 MiB` | `0.13%` | [report](services/realtime/REPORT.md) |
+| Storage | `v1.62.6` | `223.5 MiB` | `55.6 MiB` | `75.1%` | `211.5 MiB` | `0.19%` | [report](services/storage/REPORT.md) |
+| Edge Runtime | `v1.74.2` (no-AI) | `360.6 MiB` | `52.7 MiB` | `85.4%` | `15.1 MiB` | `0.02%` | [report](services/edge-runtime/REPORT.md) |
+| Studio | `2026.06.29-sha-20290c7` | `304.7 MiB` | `136.3 MiB` | `55.3%` | `201.4 MiB` | `0.00%` | [report](services/studio/REPORT.md) |
+| Analytics | `v1.46.0` | `258.9 MiB` | `89.7 MiB` | `65.4%` | `507.2 MiB` | `0.50%` | [report](services/analytics/REPORT.md) |
+| PgMeta | `v0.96.6` | `94.2 MiB` | `52.7 MiB` | `44.1%` | `79.4 MiB` | `0.70%` | [report](services/pgmeta/REPORT.md) |
+| Pooler | `v2.9.10` | `289.4 MiB`* | `24.3 MiB` | `91.6%`* | `154.9 MiB` | `0.07%` | [report](services/pooler/REPORT.md) |
+
+`*` Pooler upstream comparison uses `supabase/supavisor:2.9.7`, the latest tag
+published on Docker Hub during this pass.
+
+Postgres keeps every extension the upstream image ships (`supabase/postgres`
+flavour contract), so its disk reduction is limited to Nix build cruft — its
+contribution is the runtime profile below.
 
 See [SLIM_IMAGES_REPORT.md](SLIM_IMAGES_REPORT.md) for the global summary.
 Each service report is self-contained for distribution to the owning team.
@@ -66,6 +86,34 @@ For Nix-backed native services, see
 [NIX_PORTABLE_ARTIFACT_PLAYBOOK.md](NIX_PORTABLE_ARTIFACT_PLAYBOOK.md) for the
 reusable artifact-to-image pattern learned from Edge Runtime.
 For CI target naming and commands, see [CI_MATRIX.md](CI_MATRIX.md).
+
+## Runtime Footprint
+
+Memory and CPU are first-class optimization targets, not just disk:
+
+- **Runtime profiles** — each service has a `services/<service>/runtime.env`
+  with low-footprint local-dev defaults, baked into the image as ENV and
+  overridable at `docker run -e`. The same KEY=VALUE files are the intended
+  source for host-native (no-Docker) runs later. Highlights:
+  - BEAM services (realtime, analytics, pooler): one scheduler and no
+    scheduler busy-waiting (`+S 1:1 +sbwt none ...`) — idle CPU drops from
+    several percent to ≤0.5%.
+  - Node services (storage, studio, pgmeta): V8 heap caps
+    (`--max-old-space-size`).
+  - Go services (auth): `GOMEMLIMIT`, `GOGC`, `GOMAXPROCS`.
+  - All DB clients: shrunk connection pools — every pooled connection holds a
+    server-side postgres backend, so this also cuts postgres memory.
+  - Postgres: a conf overlay (`shared_buffers=32MB`, `jit=off`, slowed idle
+    ticks) via the stock `include_dir`; `wal_level=logical` untouched.
+- **Measurement** — every smoke samples steady-state RSS and idle CPU
+  (`record_runtime_metrics` in `scripts/smoke-lib.sh`) and records them under
+  `runtime` in the artifact `manifest.json`, so regressions on these axes are
+  visible per build, exactly like size.
+- **The parallel-stacks view** — image layers are shared; RSS multiplies per
+  stack. A minimal core stack (postgres + auth + postgrest) idles at
+  ~122 MiB, so 25 parallel stacks cost ~3 GiB. Analytics (~507 MiB) and
+  Studio (~201 MiB) dominate when run per-stack and are disabled by default
+  in the minimal stack.
 
 ## Repository Layout
 
@@ -97,8 +145,10 @@ The expanded `rootfs/` is the canonical artifact for local smoke tests,
 inspection, and Docker image assembly. Compressed archives are derived
 distribution products and may be generated separately from an existing rootfs.
 
-The manifest records source ref, selected base image, entrypoint, smoke command,
-artifact size, and image size when measured.
+The manifest records source ref (or pinned image digest), selected base image,
+entrypoint, smoke command, artifact size, image size, and — after an image
+smoke — steady-state runtime metrics (`runtime.runtime_rss_mib`,
+`runtime.idle_cpu_pct`).
 
 ## Build Backends
 
@@ -109,11 +159,17 @@ Each service has a `services/<service>/recipe.env` file. The dispatcher reads
   `services/<service>/Dockerfile.artifact`.
 - `nix`: build from a configured Nix flake/package and export either the full
   portable rootfs or declared runtime paths into the artifact rootfs.
+- `docker-image`: run `Dockerfile.artifact` rooted at a published upstream
+  image (`FROM $SOURCE_IMAGE`, pinned by `SOURCE_IMAGE_DIGEST`) — used when
+  pruning the published image is the practical path (postgres).
 - `image`: extract selected paths from a published image as a fallback or
   comparison path.
 
 The final `Dockerfile.slim` files are artifact-only: they copy a prepared
-`rootfs/` into the smallest proven runtime base.
+`rootfs/` into the smallest proven runtime base. Images are always assembled
+through `scripts/render-dockerfile.sh`, which appends the `runtime.env`
+profile as ENV — never build `Dockerfile.slim` directly or the runtime
+profile is silently skipped.
 
 Portable archive builds share two hardening steps. For Nix-backed portable
 artifacts, these checks should run inside the Nix package when practical; the
@@ -147,7 +203,7 @@ git submodule update --init --recursive
 Build one service artifact:
 
 ```bash
-TARGET_OS=linux ARCH=arm64 scripts/build-artifact.sh storage v1.55.3
+TARGET_OS=linux ARCH=arm64 scripts/build-artifact.sh storage v1.62.6
 ```
 
 Build a slim image from that artifact:
@@ -155,26 +211,26 @@ Build a slim image from that artifact:
 ```bash
 scripts/build-image-from-artifact.sh \
   storage \
-  artifacts/storage/v1.55.3/linux-arm64/rootfs \
-  local/storage:slim-v1.55.3-arm64
+  artifacts/storage/v1.62.6/linux-arm64/rootfs \
+  local/storage:slim-v1.62.6-arm64
 ```
 
 Run the service smoke test:
 
 ```bash
-scripts/smoke.sh storage --image local/storage:slim-v1.55.3-arm64
+scripts/smoke.sh storage --image local/storage:slim-v1.62.6-arm64
 ```
 
 Or smoke an artifact rootfs directly, which first builds a temporary image:
 
 ```bash
-scripts/smoke.sh storage --artifact artifacts/storage/v1.55.3/linux-arm64/rootfs
+scripts/smoke.sh storage --artifact artifacts/storage/v1.62.6/linux-arm64/rootfs
 ```
 
 Run the full CI-style build for one service and matrix cell:
 
 ```bash
-TARGET_OS=linux ARCH=arm64 scripts/ci-build-service.sh edge-runtime v1.73.15
+TARGET_OS=linux ARCH=arm64 scripts/ci-build-service.sh edge-runtime v1.74.2
 ```
 
 ## Common Commands
@@ -212,13 +268,17 @@ scripts/archive-artifact.sh <artifact-rootfs> [archive-prefix]
 
 ## Service Reports
 
+- [Postgres](services/postgres/REPORT.md): Nix reference-graph prune of the
+  published image; every supported extension kept (31 smoke-verified,
+  including PostGIS/pgroonga/wrappers), low-memory conf overlay.
 - [PostgREST](services/postgrest/REPORT.md): stable ARM64 dynamic bundle in
   `scratch`; static upstream artifact path validated for a future stable
   release.
 - [Studio](services/studio/REPORT.md): Next.js standalone image kept at phase 1;
   a local-dev-only Sharp tradeoff could save more, but is not adopted.
 - [Edge Runtime](services/edge-runtime/REPORT.md): adopted Nix/native artifact
-  pruning and ONNX runtime cleanup.
+  pruning; local-dev default excludes ONNX/OpenBLAS (`withAi = false`), the AI
+  profile stays available upstream or via `withAi = true`.
 - [Analytics](services/analytics/REPORT.md): adopted native stripping,
   sourcemap-gzip pruning, curl removal, and base-library dedupe.
 - [Realtime](services/realtime/REPORT.md): adopted production-ready launcher
@@ -248,7 +308,10 @@ scripts/archive-artifact.sh <artifact-rootfs> [archive-prefix]
 
 ## Status
 
-This repo is ready for team review and CI hardening. The first optimization
-pass is complete; the next phase is to turn the current scripts and smoke tests
-into repeatable CI jobs, then broaden smoke coverage where teams want narrower
-local-development profiles.
+Three optimization passes are complete: base-image/artifact slimming (pass 1),
+service-specific pruning (pass 2), and the runtime-footprint pass (pass 3 —
+latest versions, postgres onboarding, `runtime.env` profiles, and RSS/CPU
+measurement in every smoke). The next phase is CI rollout: turn the per-service
+builds and smoke tests into repeatable CI jobs (only edge-runtime has a
+workflow today), plus the CLI-side follow-ups tracked in
+[SLIM_IMAGES_REPORT.md](SLIM_IMAGES_REPORT.md) § Remaining Work.
