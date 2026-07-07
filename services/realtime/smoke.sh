@@ -92,49 +92,20 @@ fi
 
 ensure_image "$image"
 
-log "checking realtime slim runtime commands"
+# Derived image: portable artifact + busybox/tini entry wiring. The full
+# functional proof is the container boot below (entry.sh runs migrations and
+# seeds before serving).
+log "checking realtime derived-image entry wiring"
 docker run --rm --entrypoint /usr/bin/sh "$image" -c '
   set -eu
-  for bin in awk base64 cat chmod curl date grep head hostname mv od openssl rm setpriv sh tini tr; do
+  for bin in sh tini; do
     test -x "/usr/bin/${bin}"
   done
-  /usr/bin/curl --version >/dev/null
-  /usr/bin/openssl version >/dev/null
+  test -x /app/bin/realtime
+  test -x /app/bin/server
+  test -x /app/bin/migrate
+  test -r /app/entry.sh
 '
-
-log "checking generated certs fail fast without AWS env"
-cert_output="$(
-  docker run --rm --entrypoint /usr/bin/sh \
-    -e GENERATE_CLUSTER_CERTS=true \
-    "$image" /app/run.sh true 2>&1 || true
-)"
-if ! printf '%s' "$cert_output" | grep -q 'AWS_CONTAINER_CREDENTIALS_RELATIVE_URI is required'; then
-  printf '%s\n' "$cert_output" >&2
-  fail "realtime generated certs path did not fail with the expected missing-env error"
-fi
-
-log "checking AWS metadata IPv6 parser overlay"
-metadata_ip="$(
-  awk '
-    BEGIN {
-      data = "{\"Networks\":[{\"IPv6Addresses\":[\"fd00::1\",\"2600:1f18:abcd::42\"]}]}"
-      if (match(data, /"IPv6Addresses"[[:space:]]*:[[:space:]]*\[/)) {
-        s = substr(data, RSTART + RLENGTH)
-        while (match(s, /"([^"\\]|\\.)*"/)) {
-          value = substr(s, RSTART + 1, RLENGTH - 2)
-          print value
-          s = substr(s, RSTART + RLENGTH)
-          if (match(s, /^[[:space:]]*\]/)) {
-            exit
-          }
-        }
-      }
-    }
-  ' | grep -Ev '^f[cd]' | head -1
-)"
-if [[ "$metadata_ip" != "2600:1f18:abcd::42" ]]; then
-  fail "realtime AWS metadata parser did not select the public IPv6 address"
-fi
 
 start_postgres realtime_smoke
 

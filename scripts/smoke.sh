@@ -61,6 +61,11 @@ PY
 
     if [[ "$artifact_os" != "linux" && "${SUPPORTS_DIRECT_ARTIFACT_SMOKE:-false}" == "true" ]] && host_matches_target "$artifact_os" "$artifact_arch"; then
       ARTIFACT_ROOTFS="$artifact_rootfs" "$ROOT_DIR/services/$service/smoke.sh"
+    elif [[ "$artifact_os" == "linux" && "${SLIM_DIRECT_LINUX_ARTIFACT_SMOKE:-0}" == "1" && "${SUPPORTS_DIRECT_ARTIFACT_SMOKE:-false}" == "true" ]] && host_matches_target "$artifact_os" "$artifact_arch"; then
+      # Native-first: linux artifacts are host-native too; on a matching
+      # linux host this smokes the artifact as a real host process (the CLI's
+      # no-Docker mode). Default remains the temp-image smoke below.
+      ARTIFACT_ROOTFS="$artifact_rootfs" "$ROOT_DIR/services/$service/smoke.sh"
     elif [[ "$artifact_os" == "linux" ]]; then
       run_id="${RUN_ID:-$(date +%s)-$$}"
       image="local/$service:slim-smoke-$artifact_arch-$run_id"

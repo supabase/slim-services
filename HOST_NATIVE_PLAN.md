@@ -13,14 +13,24 @@ packaging of the same per-service artifact pipeline, not a replacement.
 
 ## Where we are today
 
-> **Status 2026-07-07: implemented.** Every Supabase-owned service in scope
-> (auth, postgrest, realtime, analytics, pooler, storage, pgmeta, plus the
-> edge-runtime reference) now ships a darwin-arm64 host-native archive:
-> audit-clean, smoked as a real host process with `runtime.env` applied, and
-> re-smoked from an untarred archive to prove relocatability. See the
-> host-native results table in README.md and the per-service REPORT.md
-> sections. The table below describes the pre-implementation state and is
-> kept for context.
+> **Status 2026-07-07: implemented for darwin-arm64.** Every Supabase-owned
+> service in scope (auth, postgrest, realtime, analytics, pooler, storage,
+> pgmeta, plus the edge-runtime reference) ships a darwin-arm64 host-native
+> archive: audit-clean, smoked as a real host process with `runtime.env`
+> applied, and re-smoked from an untarred archive to prove relocatability.
+> See the host-native results table in README.md and the per-service
+> REPORT.md sections. The table below describes the pre-implementation state
+> and is kept for context.
+>
+> **Directive 2026-07-07 (supersedes the "Docker images unchanged" framing
+> and the linux non-goal):** the CLI will run every service either native or
+> in Docker, on both Linux and macOS, at the user's choice. Therefore the
+> native artifact is the single source of truth on every target, Linux
+> included, and **the Docker image is derived from the native rootfs**
+> (`Dockerfile.slim` = base + artifact + entry wiring), exactly as
+> edge-runtime already works. The docker-source builders stop being the
+> Linux artifact path service by service as each one converges — see
+> "Native-first convergence" below.
 
 Before this work, only **edge-runtime** met the bar. It is the reference
 implementation:
@@ -256,6 +266,41 @@ Status 2026-07-07:
   Linux artifacts must NOT replace the docker-source artifacts the Docker
   images are built from, so they need a distinct flavor in the artifact
   layout (e.g. `linux-arm64-portable/`) and in archive names.
+
+## Native-first convergence (Linux native + derived Docker images)
+
+Per the 2026-07-07 directive above. Target state per service and Linux arch
+(`linux-arm64`, `linux-amd64`):
+
+1. The Linux artifact is host-native: relocatable, `audit --linux` clean,
+   only the glibc family assumed from the host (`assumed_host_libs`),
+   runnable straight from the extracted archive. Same `bin/<service>` layout
+   as darwin.
+2. `Dockerfile.slim` derives the image from that rootfs: distroless base +
+   `COPY ${ARTIFACT_ROOT}/` + entry wiring (busybox/tini stages where a
+   shell-based entrypoint is needed). `render-dockerfile.sh` keeps baking
+   `runtime.env` as ENV.
+3. Per-service path:
+   - **auth** — `build-host.sh` for Linux too (Go cross-compiles anywhere);
+     image adds CA bundle + passwd in a Dockerfile.slim stage.
+   - **postgrest** — the existing image-extraction artifact already bundles
+     the ELF closure and the image is already scratch + rootfs; just declare
+     PORTABLE on Linux and audit.
+   - **realtime / pooler / analytics** — extend `services/<s>/nix/default.nix`
+     with the Linux half of the playbook (bundle non-glibc libs into
+     `dylib/`, patchelf `$ORIGIN`-relative rpaths + system loader
+     interpreter, in-derivation ldd audit); `Dockerfile.artifact` becomes a
+     nixos/nix builder (edge-runtime pattern) for Docker-hosted Linux builds;
+     new derived `Dockerfile.slim` with a minimal repo-owned entry script
+     (migrate → optional seeds → exec server; the old docker-source `run.sh`
+     cloud logic — Fly/ECS cert bootstrap — is dropped from the local/CI
+     image).
+   - **storage / pgmeta** — `build-host.sh` runs on Linux runners as-is
+     (fs-xattr builds natively); derived image = distroless nodejs +
+     `COPY rootfs/app/ /app/`.
+4. Smokes: on Linux CI both flavors are validated — the derived image smoke
+   (as today) plus a direct host-process artifact smoke
+   (`SLIM_DIRECT_LINUX_ARTIFACT_SMOKE=1`).
 
 ## Suggested execution order for the implementing session
 
