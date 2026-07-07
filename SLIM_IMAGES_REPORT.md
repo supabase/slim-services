@@ -124,9 +124,7 @@ Measured steady-state RSS with the pass-3 runtime profiles:
    and `studio` as shared singletons (or default-off) for parallel stacks;
    wire memory limits through `container.HostConfig.Resources`.
 3. Revisit PostgREST once a stable upstream static ARM64 artifact is published.
-4. Longer-idle CPU sample for postgres (measured 10s after migrations; add a
-   per-service settle override to the measurement pipeline).
-5. Storage module-level pruning of AWS/Smithy/Iceberg surfaces — the object
+4. Storage module-level pruning of AWS/Smithy/Iceberg surfaces — the object
    round-trip smoke added in pass 3 is the safety net it was waiting for.
 6. Further analytics RSS reduction requires upstream boot-time feature flags
    (Broadway/ETS allocations dominate its ~500 MiB idle footprint).
