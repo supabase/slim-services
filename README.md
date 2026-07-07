@@ -98,6 +98,8 @@ recorded in the darwin `manifest.json`). Refresh with
 |---|---:|---:|---:|---:|---:|---|---|
 | PostgREST | `v14.14` | `12.6 MiB` | `83.5 MiB` | `80.1 MiB` | `0.00%` | yes | [report](services/postgrest/REPORT.md) |
 | Auth | `v2.192.0` | `9.4 MiB` | `33.5 MiB` | `29.3 MiB` | `0.00%` | yes | [report](services/auth/REPORT.md) |
+| Realtime | `v2.112.6` | `11.9 MiB` | `40.8 MiB` | `222.7 MiB` | `0.33%` | yes | [report](services/realtime/REPORT.md) |
+| Edge Runtime | `v1.74.2` | `39.9 MiB` | `161.2 MiB` | `57.9 MiB` | `0.00%` | yes | [report](services/edge-runtime/REPORT.md) |
 <!-- generated:host-native:end -->
 
 See [SLIM_IMAGES_REPORT.md](SLIM_IMAGES_REPORT.md) for the global summary.
