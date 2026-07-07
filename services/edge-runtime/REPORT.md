@@ -159,3 +159,22 @@ Largest remaining Darwin payloads:
 Further meaningful reduction likely needs feature-level changes, especially an
 optional Edge Runtime build profile without ONNX/OpenBLAS for local development
 scenarios that do not need AI inference.
+
+## Footprint Pass 3 (no-AI local-dev profile, 2026-07)
+
+- Bumped `sources/edge-runtime` to `v1.74.2` (CLI-pinned release; upstream
+  `nix/` unchanged since v1.73.15, so the portable overlay still applies).
+- The portable rootfs now EXCLUDES ONNX Runtime + OpenBLAS by default
+  (`withAi ? false` in the package overlay). The binary loads ONNX lazily via
+  `ORT_DYLIB_PATH`, so `Supabase.ai` inference fails with a clear dlopen error
+  while everything else works; build with `withAi = true` or use the upstream
+  image for the AI profile. Rootfs shrank `161.2 -> 128.3 MiB`.
+- Added `services/edge-runtime/Dockerfile.artifact`: Docker-hosted Nix build
+  for linux targets on non-linux hosts (applies the package overlay and strips
+  the submodule `.git` pointer before `nix build`).
+
+| Metric | Value |
+|---|---:|
+| Image compressed (`docker save \| gzip -9`) | `52.7 MiB` (upstream v1.74.2: `360.6 MiB`) |
+| Steady-state RSS (serving the smoke function) | `15.1 MiB` |
+| Idle CPU | `0.02 %` |
