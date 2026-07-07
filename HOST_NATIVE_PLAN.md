@@ -13,7 +13,17 @@ packaging of the same per-service artifact pipeline, not a replacement.
 
 ## Where we are today
 
-Only **edge-runtime** meets the bar. It is the reference implementation:
+> **Status 2026-07-07: implemented.** Every Supabase-owned service in scope
+> (auth, postgrest, realtime, analytics, pooler, storage, pgmeta, plus the
+> edge-runtime reference) now ships a darwin-arm64 host-native archive:
+> audit-clean, smoked as a real host process with `runtime.env` applied, and
+> re-smoked from an untarred archive to prove relocatability. See the
+> host-native results table in README.md and the per-service REPORT.md
+> sections. The table below describes the pre-implementation state and is
+> kept for context.
+
+Before this work, only **edge-runtime** met the bar. It is the reference
+implementation:
 Nix-built, bundles every library except the host libc, darwin-arm64 supported,
 smoke-testable as a plain host process.
 
