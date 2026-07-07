@@ -109,3 +109,16 @@ savings are too small for the added variant/overlay maintenance.
 - Audit production dependencies for packages unused by broader runtime paths.
 - Consider local-dev dependency shims only if the expected compressed gain is
   above the threshold.
+
+## Footprint Pass 3 (runtime profile, 2026-07)
+
+- Bumped `sources/pgmeta` to `v0.96.6` (CLI-pinned release).
+- Added `runtime.env` baked as image ENV (overridable):
+  `NODE_OPTIONS=--max-old-space-size=96 --max-semi-space-size=2`.
+- Smoke now records steady-state runtime metrics into `manifest.json`.
+
+| Metric | Value |
+|---|---:|
+| Image compressed (`docker save \| gzip -9`) | `52.7 MiB` |
+| Steady-state RSS (idle, after /health) | `79.4 MiB` |
+| Idle CPU | `0.70 %` |

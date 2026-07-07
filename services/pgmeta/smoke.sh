@@ -29,4 +29,5 @@ if ! wait_for_http_code "http://127.0.0.1:$port/health" "200" 120 "" "$container
   container_logs "$container"
   fail "pgmeta /health did not return 200"
 fi
+record_runtime_metrics "$container"
 log "pgmeta smoke passed"
