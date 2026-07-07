@@ -51,11 +51,6 @@ PostGIS (+ raster/sfcgal/topology/tiger), pgrouting, pgroonga, plv8/plls/
 plcoffee, plperl, wrappers, timescaledb — projects that need these should use
 the upstream `supabase/postgres` image (config.toml image override).
 
-## Measurements
-
-See `Footprint Pass` sections below; refreshed per build in
-`artifacts/postgres/<version>/linux-arm64/manifest.json`.
-
 ## Measurements (17.6.1.143, linux/arm64, 2026-07)
 
 | Metric | Upstream | Slim | Reduction |
