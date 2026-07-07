@@ -1,0 +1,19 @@
+ARG BASE_IMAGE=scratch
+FROM ${BASE_IMAGE}
+ARG ARTIFACT_ROOT
+COPY ${ARTIFACT_ROOT}/ /
+# Mirror the upstream supabase/postgres runtime environment.
+ENV PATH=/nix/var/nix/profiles/default/bin:/usr/lib/postgresql/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    PGDATA=/var/lib/postgresql/data \
+    POSTGRES_HOST=/var/run/postgresql \
+    POSTGRES_USER=supabase_admin \
+    POSTGRES_DB=postgres \
+    POSTGRES_INITDB_ARGS="--allow-group-access --locale-provider=icu --encoding=UTF-8 --icu-locale=en_US.UTF-8" \
+    LANG=en_US.UTF-8 \
+    LANGUAGE=en_US:en \
+    LC_ALL=en_US.UTF-8 \
+    LOCALE_ARCHIVE=/nix/var/nix/profiles/default/lib/locale/locale-archive
+EXPOSE 5432
+# Entrypoint drops to the postgres user via gosu; root is required at start.
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+CMD ["postgres", "-D", "/etc/postgresql"]

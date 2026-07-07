@@ -13,6 +13,7 @@ SERVICES=(
   realtime
   pgmeta
   auth
+  postgres
 )
 
 log() {

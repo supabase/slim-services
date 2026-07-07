@@ -35,42 +35,58 @@ PLATFORM="${PLATFORM:-$(docker_platform "$TARGET_OS" "$ARCH")}"
 
 load_recipe "$service"
 
-SOURCE_DIR="${SOURCE_DIR:?recipe must define SOURCE_DIR}"
-SOURCE_REF="${SOURCE_REF:?recipe must define SOURCE_REF}"
+# SOURCE_DIR is optional: recipes with ARTIFACT_BACKEND=docker-image build their
+# Dockerfile.artifact from an upstream image (SOURCE_IMAGE) with no submodule.
+SOURCE_DIR="${SOURCE_DIR:-}"
 BASE_IMAGE="${BASE_IMAGE:?recipe must define BASE_IMAGE}"
 ENTRYPOINT_JSON="${ENTRYPOINT_JSON:?recipe must define ENTRYPOINT_JSON}"
 CMD_JSON="${CMD_JSON:-[]}"
 UPSTREAM_IMAGE="${UPSTREAM_IMAGE:-${SOURCE_IMAGE:-}}"
 
-source_abs="$ROOT_DIR/$SOURCE_DIR"
 artifact_dockerfile="${ARTIFACT_DOCKERFILE:-Dockerfile.artifact}"
 dockerfile="$ROOT_DIR/services/$service/$artifact_dockerfile"
 artifact_dir="$ROOT_DIR/artifacts/$service/$VERSION/$(artifact_platform_dir "$TARGET_OS" "$ARCH")"
 rootfs="$artifact_dir/rootfs"
 manifest="$artifact_dir/manifest.json"
 
-[[ -d "$source_abs" ]] || fail "source submodule directory not found: $SOURCE_DIR"
-[[ -f "$source_abs/.git" || -d "$source_abs/.git" ]] || fail "source directory is not a git checkout: $SOURCE_DIR"
 [[ -f "$dockerfile" ]] || fail "artifact Dockerfile not found: $dockerfile"
 
-expected_ref="$(git -C "$source_abs" rev-parse "$SOURCE_REF^{commit}" 2>/dev/null || git -C "$source_abs" rev-parse "$SOURCE_REF")"
-actual_ref="$(git -C "$source_abs" rev-parse HEAD)"
-if [[ "$actual_ref" != "$expected_ref" ]]; then
-  fail "$SOURCE_DIR is at $actual_ref, expected $SOURCE_REF ($expected_ref). Run: git submodule update --init --recursive"
-fi
+actual_ref=""
+build_mode="image-dockerfile"
+if [[ -n "$SOURCE_DIR" ]]; then
+  build_mode="source-submodule"
+  SOURCE_REF="${SOURCE_REF:?recipe must define SOURCE_REF when SOURCE_DIR is set}"
+  source_abs="$ROOT_DIR/$SOURCE_DIR"
+  [[ -d "$source_abs" ]] || fail "source submodule directory not found: $SOURCE_DIR"
+  [[ -f "$source_abs/.git" || -d "$source_abs/.git" ]] || fail "source directory is not a git checkout: $SOURCE_DIR"
 
-if [[ -n "$(git -C "$source_abs" status --short)" ]]; then
-  fail "$SOURCE_DIR has local modifications; source artifact builds require clean submodules"
+  expected_ref="$(git -C "$source_abs" rev-parse "$SOURCE_REF^{commit}" 2>/dev/null || git -C "$source_abs" rev-parse "$SOURCE_REF")"
+  actual_ref="$(git -C "$source_abs" rev-parse HEAD)"
+  if [[ "$actual_ref" != "$expected_ref" ]]; then
+    fail "$SOURCE_DIR is at $actual_ref, expected $SOURCE_REF ($expected_ref). Run: git submodule update --init --recursive"
+  fi
+
+  if [[ -n "$(git -C "$source_abs" status --short)" ]]; then
+    fail "$SOURCE_DIR has local modifications; source artifact builds require clean submodules"
+  fi
+else
+  SOURCE_REF="${SOURCE_REF:-}"
+  [[ -n "$UPSTREAM_IMAGE" ]] || fail "recipe must define SOURCE_DIR or SOURCE_IMAGE/UPSTREAM_IMAGE"
 fi
 
 rm -rf "$rootfs"
 mkdir -p "$rootfs" "$artifact_dir"
 
 build_args=(
-  --build-arg "SOURCE_DIR=$SOURCE_DIR"
   --build-arg "SERVICE_VERSION=$VERSION"
   --build-arg "BASE_IMAGE=$BASE_IMAGE"
 )
+if [[ -n "$SOURCE_DIR" ]]; then
+  build_args+=(--build-arg "SOURCE_DIR=$SOURCE_DIR")
+fi
+if [[ -n "${SOURCE_IMAGE:-}" ]]; then
+  build_args+=(--build-arg "SOURCE_IMAGE=$SOURCE_IMAGE")
+fi
 
 if declare -p ARTIFACT_BUILD_ARGS >/dev/null 2>&1; then
   for arg in "${ARTIFACT_BUILD_ARGS[@]}"; do
@@ -79,7 +95,7 @@ if declare -p ARTIFACT_BUILD_ARGS >/dev/null 2>&1; then
 fi
 
 docker_builder="${DOCKER_BUILDER:-$(docker context show 2>/dev/null || echo default)}"
-log "building $service artifact from $SOURCE_DIR@$SOURCE_REF for $PLATFORM using builder $docker_builder"
+log "building $service artifact from ${SOURCE_DIR:-$UPSTREAM_IMAGE}${SOURCE_REF:+@$SOURCE_REF} for $PLATFORM using builder $docker_builder"
 docker buildx build \
   --builder "$docker_builder" \
   --platform "$PLATFORM" \
@@ -111,7 +127,7 @@ manifest = {
     "base_image": "$BASE_IMAGE",
     "entrypoint": json.loads("""$ENTRYPOINT_JSON"""),
     "cmd": json.loads("""$CMD_JSON"""),
-    "build_mode": "source-submodule",
+    "build_mode": "$build_mode",
     "artifact_dockerfile": "$artifact_dockerfile",
     "excluded_file_classes": [
         "sourcemaps",
