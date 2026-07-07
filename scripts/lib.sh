@@ -180,6 +180,41 @@ archive_with_best_available_compressor() {
   printf '%s\n' "$archive"
 }
 
+# Host-native artifact contract: recipes declare PORTABLE="true" (optionally
+# per target, recipe.env is sourced with TARGET_OS/ARCH resolved) when the
+# artifact is self-contained and relocatable — runnable straight from an
+# extracted archive with no container. The manifest records the flag plus the
+# libraries the artifact still expects from the host, so the CLI can verify
+# host compatibility before running.
+portable_flag() {
+  printf '%s' "${PORTABLE:-false}"
+}
+
+portable_host_libs_json() {
+  if [[ "$(portable_flag)" != "true" ]]; then
+    printf '[]'
+    return 0
+  fi
+  if [[ -n "${PORTABLE_HOST_LIBS_JSON:-}" ]]; then
+    printf '%s' "$PORTABLE_HOST_LIBS_JSON"
+    return 0
+  fi
+  case "$(target_os)" in
+    darwin)
+      # Every macOS install provides libSystem and the system frameworks.
+      printf '["/usr/lib/libSystem.B.dylib","/System/Library/Frameworks"]'
+      ;;
+    linux)
+      # The glibc family we deliberately resolve from the host/base image
+      # (see should_exclude in services/edge-runtime/nix/edge-runtime.nix).
+      printf '["ld-linux","libc","libdl","libpthread","libm","libresolv","librt"]'
+      ;;
+    *)
+      printf '[]'
+      ;;
+  esac
+}
+
 relative_to_root() {
   local path="$1"
   python3 - "$ROOT_DIR" "$path" <<'PY'

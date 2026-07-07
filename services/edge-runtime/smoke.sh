@@ -115,14 +115,15 @@ PY
   edge_runtime_log="$(mktemp "${TMPDIR:-/tmp}/edge-runtime-smoke.XXXXXX.log")"
 
   log "smoke testing edge-runtime artifact: local function serve"
-  "$edge_runtime_bin" \
+  start_host_service edge-runtime "$edge_runtime_log" -- \
+    "$edge_runtime_bin" \
     start \
     --main-service "$fixture_dir" \
-    --port "$port" \
-    >"$edge_runtime_log" 2>&1 &
-  edge_runtime_pid="$!"
+    --port "$port"
+  edge_runtime_pid="$host_service_pid"
 
   assert_smoke_body "http://127.0.0.1:$port/smoke" 90
+  record_host_runtime_metrics "$edge_runtime_pid"
 fi
 
 log "edge-runtime smoke passed"

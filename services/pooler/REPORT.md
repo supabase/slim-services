@@ -104,3 +104,44 @@ source untouched.
 | Image compressed (`docker save \| gzip -9`) | `24.3 MiB` |
 | Steady-state RSS (idle, after /api/health) | `154.9 MiB` |
 | Idle CPU | `0.07 %` |
+
+## Host-Native darwin-arm64 Artifact (2026-07)
+
+Built by the repo-owned Nix package `services/pooler/nix/default.nix`,
+adapted from upstream's `nix/package.nix` (which supports aarch64-darwin but
+is stale: it points at `native/pgparser/Cargo.lock` while the workspace lock
+lives at `native/Cargo.lock`). Same portable-BEAM packaging as realtime
+(see `services/realtime/REPORT.md`), plus the supavisor-specific parts:
+
+- NIF inventory: OTP-standard NIFs + `libpgparser.so`, a Rust (rustler)
+  wrapper around libpg_query. Cargo deps are vendored via `importCargoLock`;
+  the vendor copy must be writable because pg_query's build script writes
+  generated protobuf bindings back into the crate source.
+- `native/pgparser/.cargo/config.toml` already ships the macOS
+  `-undefined dynamic_lookup` link flags rustler NIFs need.
+- Elixir 1.18.4 / OTP 27.3.4.6 from pinned nixpkgs (Docker builder: 1.18.2 /
+  27.2.1 — same majors, newer patches).
+- Smoke (host process, `runtime.env` applied): `bin/migrate`, then
+  `bin/server`; authenticated `/api/health` returns 204. Re-run from an
+  untarred archive in a scratch directory (relocatable).
+  `scripts/audit-portable-artifact.sh --darwin` clean.
+
+| Metric | Value |
+|---|---:|
+| Archive (`pooler-v2.9.10-darwin-arm64.tar.zst`) | `23.6 MiB` |
+| rootfs | `52.4 MiB` |
+| Steady-state RSS (host process, idle) | `214.0 MiB` |
+| Idle CPU | `0.0 %` |
+
+### Native-first convergence (2026-07)
+
+Same convergence as realtime: the Nix package builds the Linux artifacts
+(pg_query's bindgen needs `rustPlatform.bindgenHook` on Linux), and
+`Dockerfile.slim` derives the image from the rootfs (`entry.sh`: RLIMIT hook
+→ migrate → server; replaces limits.sh + docker-source). linux-arm64
+verified: derived image smoke green (authenticated `/api/health` 204, RSS
+159.0 MiB ≈ before; 39.0 MiB gzip vs 24.3 — the artifact now carries
+openssl/libstdc++/ncurses itself instead of leaning on distroless-cc, the
+cost of one rootfs serving native and Docker), and the archive runs as a
+bare host process on a store-less Debian. disksup disabled via `vm.args`
+(see realtime's note).

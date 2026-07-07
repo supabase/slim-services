@@ -206,6 +206,15 @@ TARGET_OS=darwin ARCH=arm64 scripts/ci-build-service.sh edge-runtime v1.73.15
 
 ## Common Pitfalls
 
+- nixpkgs patches some packages to embed absolute Nix store paths inside
+  *data*, not just binaries. Worst case found so far: OTP's `disksup.erl` is
+  patched to spawn its port shell via the store bash, compiled into
+  `disksup.beam` inside a compressed literal chunk — invisible to `strings`,
+  `grep`, `otool`, and `ldd`, and it only fails off the build machine (the
+  path exists locally). For BEAM artifacts, append
+  `-os_mon start_disksup false` to the release `vm.args`; in general, smoke
+  the artifact somewhere the build machine's store does not exist (a
+  container for Linux, another Mac for darwin) before trusting it.
 - `ldd` only sees linked libraries, not every runtime `dlopen` path.
 - `patchelf --shrink-rpath` is useful, but still audit afterwards.
 - Stripping must happen after patching; otherwise size regressions can be huge.

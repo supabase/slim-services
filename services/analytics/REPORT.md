@@ -114,3 +114,54 @@ keep idle RSS at ~500 MiB — by far the heaviest service in the local stack
 run analytics as a shared singleton across stacks or default it off; further
 in-repo reduction requires disabling logflare subsystems at boot, which needs
 upstream feature flags.
+
+## Host-Native darwin-arm64 Artifact (2026-07)
+
+The hardest BEAM clone (see `services/realtime/REPORT.md` for the shared
+portable-BEAM packaging). Built by `services/analytics/nix/default.nix`.
+Logflare-specific packaging:
+
+- Pins: everything from the shared 25.05 pin (Elixir 1.18.4 / OTP 27.3.4.6;
+  mix.exs allows `~> 1.4` — the Docker builder uses 1.19.5) so shipped
+  binaries keep the same glibc floor as the other services on Linux; only
+  the Rust toolchain (rustc 1.95) comes from a nixos-unstable pin because
+  the rustler 0.37 crates require rustc >= 1.91.
+- Four in-tree rustler NIFs (`arrowipc_ex`, `ch_compression_ex`, `mapper_ex`,
+  `sqlparser_ex`) are members of one cargo workspace rooted at the repo top
+  level; deps are vendored once via `importCargoLock` from the workspace
+  `Cargo.lock`.
+- `explorer` (polars) and `sql_fmt` use rustler_precompiled, which downloads
+  a NIF during compilation; the pinned `nif-2.15-aarch64-apple-darwin`
+  tarballs are fetched as fixed-output derivations and seeded into the
+  rustler_precompiled cache, so the sandboxed build stays offline (checksums
+  verified against the checksum file in each hex package).
+- Asset pipeline skipped like realtime, but logflare configures
+  `cache_static_manifest`, so a stub `cache_manifest.json` is installed
+  (endpoint boots; UI assets 404; API unaffected). `docs/` must stay in the
+  build source: compiling `docs_view.ex` copies it into `priv/docs`.
+- Smoke (host process, `runtime.env` applied): `Logflare.Release.migrate`,
+  then `bin/logflare start --sname logflare` (mirrors upstream `run.sh`);
+  `/health` returns 200. Re-run from an untarred archive (relocatable), and
+  NIF loading verified explicitly from the relocated artifact:
+  `SqlFmt.format_query/1` and `Explorer.DataFrame.new/1` both execute.
+
+| Metric | Value |
+|---|---:|
+| Archive (`analytics-v1.46.0-darwin-arm64.tar.zst`) | `33.3 MiB` |
+| rootfs | `137.2 MiB` |
+| Steady-state RSS (host process, idle) | `207.6 MiB` |
+| Idle CPU | `0.2 %` |
+
+### Native-first convergence (2026-07)
+
+Same convergence as realtime/pooler: Linux artifacts from the Nix package,
+image derived via `Dockerfile.slim` (`entry.sh`: migrate → `start --sname
+logflare`, replacing upstream run.sh minus its cloud secrets/startup hooks).
+Pin correction: shipped libraries must match the runtime glibc floor —
+nixos-unstable's glibc 2.42 symbols broke the distroless (2.41) image, so
+everything builds from the shared 25.05 pin (Elixir 1.18.4; mix.exs allows
+`~> 1.4`) with only the Rust toolchain from unstable (rustler 0.37 needs
+rustc ≥ 1.91). rustler_precompiled NIF tarballs are pinned per target
+(darwin-arm64, linux-arm64, linux-amd64). linux-arm64 verified: derived
+image smoke green — RSS 479.7 MiB (was 546.7) and 58.4 MiB gzip (was 89.7,
+no npm assets + tighter pruning). disksup disabled via `vm.args`.

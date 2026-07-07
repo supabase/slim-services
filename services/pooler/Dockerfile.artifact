@@ -1,76 +1,26 @@
 # syntax=docker/dockerfile:1.7
+# Docker-hosted Nix build for linux targets (used when the host Nix system
+# does not match the target, e.g. building linux/arm64 artifacts on macOS).
+# The artifact is the same portable rootfs services/pooler/nix produces on
+# darwin; the final image is derived from it via Dockerfile.slim.
 ARG SOURCE_DIR=sources/pooler
-ARG ELIXIR_VERSION=1.18.2
-ARG OTP_VERSION=27.2.1
-ARG DEBIAN_VERSION=bullseye-20250203-slim
-ARG BUILDER_IMAGE=hexpm/elixir:${ELIXIR_VERSION}-erlang-${OTP_VERSION}-debian-${DEBIAN_VERSION}
-ARG RUNNER_IMAGE=debian:${DEBIAN_VERSION}
+ARG NIX_ATTR=supavisor
+ARG NIX_EXPRESSION=nix
 
-FROM ${BUILDER_IMAGE} AS builder
-ENV MIX_ENV=prod
-WORKDIR /app
-RUN apt-get update -y && apt-get install -y --no-install-recommends \
-    build-essential cmake curl git libclang-dev \
-  && rm -rf /var/lib/apt/lists/*
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-ENV PATH=/root/.cargo/bin:${PATH}
-RUN mix local.hex --force && mix local.rebar --force
+FROM nixos/nix:2.24.9 AS builder
 ARG SOURCE_DIR
-COPY ${SOURCE_DIR}/mix.exs ${SOURCE_DIR}/mix.lock ${SOURCE_DIR}/VERSION ./
-RUN mix deps.get --only ${MIX_ENV}
-COPY ${SOURCE_DIR}/config/config.exs ${SOURCE_DIR}/config/prod.exs config/
-RUN mix deps.compile
-COPY ${SOURCE_DIR}/priv priv
-COPY ${SOURCE_DIR}/lib lib
-COPY ${SOURCE_DIR}/native native
-RUN mix compile
-COPY ${SOURCE_DIR}/config/runtime.exs config/
-COPY ${SOURCE_DIR}/rel rel
-RUN mix release supavisor
-
-FROM ${RUNNER_IMAGE} AS runtime-deps
-RUN apt-get update -y && apt-get install -y --no-install-recommends \
-    binutils busybox ca-certificates file libncurses5 libstdc++6 openssl tini \
-  && update-ca-certificates \
-  && rm -rf /var/lib/apt/lists/*
-RUN mkdir -p /rootfs/app /rootfs/usr/bin /rootfs/etc/ssl/certs
-COPY --from=builder /app/_build/prod/rel/supavisor /rootfs/app/
-COPY services/pooler/overlay/limits.sh /rootfs/app/limits.sh
-RUN cp /bin/busybox /rootfs/usr/bin/busybox \
-  && ln -sf busybox /rootfs/usr/bin/sh \
-  && for applet in awk basename cat cut date dd df dirname grep hostname mkdir od readlink sed sleep tr uname wc xargs; do ln -sf busybox "/rootfs/usr/bin/${applet}"; done \
-  && cp /usr/bin/tini /rootfs/usr/bin/tini \
-  && cp /usr/bin/env /rootfs/usr/bin/env \
-  && cp /etc/ssl/certs/ca-certificates.crt /rootfs/etc/ssl/certs/ca-certificates.crt \
-  && chmod 0755 /rootfs/app/limits.sh \
-  && find /rootfs/app -type f \( -name '*.so' -o -perm /111 \) \
-      -exec sh -c 'for f do file "$f" | grep -q ELF && strip --strip-unneeded "$f" || true; done' sh {} + \
-  && set -eux; \
-    scan="$(find /rootfs/usr/bin -type f) $(find /rootfs/app -type f)"; \
-    for f in $scan; do file "$f" | grep -q ELF && ldd "$f" || true; done \
-      | awk '/=> \/.+ \(/ { print $3 } /^[[:space:]]*\// { print $1 }' \
-      | sort -u \
-      | xargs -r -I '{}' cp -L --parents '{}' /rootfs \
-  && mkdir -p /rootfs/lib/aarch64-linux-gnu \
-  && cp -a /lib/aarch64-linux-gnu/libnss_dns* /lib/aarch64-linux-gnu/libnss_files* /rootfs/lib/aarch64-linux-gnu/ \
-  && if [ -d /rootfs/lib ]; then mkdir -p /rootfs/usr/lib && cp -a /rootfs/lib/. /rootfs/usr/lib/ && rm -rf /rootfs/lib; fi \
-  && for lib in \
-      ld-linux-aarch64.so.1 \
-      libc.so.6 \
-      libdl.so.2 \
-      libgcc_s.so.1 \
-      libm.so.6 \
-      libnss_dns.so.2 \
-      libnss_files.so.2 \
-      libpthread.so.0 \
-      libresolv.so.2 \
-      librt.so.1 \
-      libstdc++.so.6 \
-      libutil.so.1; do \
-      find /rootfs/usr/lib -name "${lib}" -delete; \
-    done \
-  && find /rootfs/usr/lib -name 'libnss_dns-*.so' -delete \
-  && find /rootfs/usr/lib -name 'libnss_files-*.so' -delete
+ARG NIX_ATTR
+ARG NIX_EXPRESSION
+WORKDIR /src
+COPY ${SOURCE_DIR}/ ./
+# Apply the repo-owned portable package (the local Nix runner does the same
+# through a temporary source export; the Docker runner must do it here).
+COPY services/pooler/nix/ nix/
+RUN rm -rf .git
+RUN nix-build "./${NIX_EXPRESSION}" -A "${NIX_ATTR}" --out-link /result \
+  && mkdir -p /rootfs \
+  && cp -RL /result/. /rootfs/ \
+  && chmod -R u+w /rootfs
 
 FROM scratch AS artifact
-COPY --from=runtime-deps /rootfs/ /
+COPY --from=builder /rootfs/ /

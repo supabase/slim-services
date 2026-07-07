@@ -122,3 +122,30 @@ savings are too small for the added variant/overlay maintenance.
 | Image compressed (`docker save \| gzip -9`) | `52.7 MiB` |
 | Steady-state RSS (idle, after /health) | `79.4 MiB` |
 | Idle CPU | `0.70 %` |
+
+## Host-Native darwin-arm64 Artifact (2026-07)
+
+Runtime decision (recorded in HOST_NATIVE_PLAN.md Phase 4): **Option A — one
+shared Node runtime**. The artifact stays a JS bundle; a thin `bin/pgmeta`
+wrapper resolves the runtime (`SUPABASE_NODE` → `../../node/bin/node` →
+`PATH`) and the manifest records `runtime_requires: node>=20`.
+
+- `services/pgmeta/build-host.sh` mirrors `Dockerfile.artifact` on the host:
+  npm clean-install + tsc build + npm prune, node 20 from pinned nixpkgs
+  (the Docker runtime major). No native modules.
+- Smoke (host process, `runtime.env` applied): `/health` 200; re-run from an
+  untarred archive in a scratch directory (relocatable); darwin audit clean.
+
+| Metric | Value |
+|---|---:|
+| Archive (`pgmeta-v0.96.6-darwin-arm64.tar.zst`) | `3.7 MiB` |
+| rootfs | `48.2 MiB` |
+| Steady-state RSS (host process, idle) | `125.6 MiB` |
+| Idle CPU | `0.27 %` |
+
+### Native-first convergence (2026-07)
+
+Same as storage: `build-host.sh` builds the Linux artifacts on Linux hosts,
+`Dockerfile.slim` derives the image from the artifact's `app/` tree on the
+distroless Node base, and the Dockerfile.artifact builder is gone. First
+Linux verification happens in CI (`service-artifacts.yml`), by design.

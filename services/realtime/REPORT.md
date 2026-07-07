@@ -130,3 +130,55 @@ requirements without editing upstream source.
 | Image compressed (`docker save \| gzip -9`) | `28.4 MiB` |
 | Steady-state RSS (idle, after /healthcheck) | `163.2 MiB` |
 | Idle CPU | `0.13 %` |
+
+## Host-Native darwin-arm64 Artifact (2026-07)
+
+First BEAM service on the host-native contract (HOST_NATIVE_PLAN.md), built by
+the repo-owned Nix package `services/realtime/nix/default.nix` (applied over
+the read-only submodule via `NIX_PACKAGE_OVERLAY`; Linux keeps the Docker
+artifact builder unchanged):
+
+- NIF inventory (fast-fail check): only OTP-standard NIFs (crypto, asn1,
+  runtime_tools) — no app-level native code, so a plain `mixRelease` works.
+- `mixRelease` (Elixir 1.18.4 / OTP 27.3.4.6 from pinned nixpkgs 25.05,
+  matching the Docker builder's 1.18/27.3) with ERTS included; deps pinned by
+  a fixed-output `fetchMixDeps` hash.
+- Portable packaging in the derivation: every Nix-store dylib the release
+  references (openssl for the crypto NIF, ncurses/zlib/libc++ for ERTS) is
+  bundled into `dylib/`, install names rewritten to `@rpath` with
+  `@loader_path`-relative rpaths, ad-hoc signed; mixRelease's PATH-wrapper
+  shims and Nix shebangs are removed; the build fails if any shipped Mach-O
+  or launch script still references `/nix/store`.
+- Profile note: `mix assets.deploy` (esbuild/tailwind dashboard assets) is
+  skipped — no `cache_static_manifest` is configured, so the service works
+  fully; only LiveDashboard UI assets 404. Same philosophy as edge-runtime's
+  no-AI profile.
+- Smoke (host process, `runtime.env` applied): `bin/migrate`, seeds
+  (`Realtime.Release.seeds/1`), then `bin/server`; `/healthcheck` returns 200.
+  Re-run from an untarred archive in a scratch directory (relocatable).
+  `scripts/audit-portable-artifact.sh --darwin` clean.
+
+| Metric | Value |
+|---|---:|
+| Archive (`realtime-v2.112.6-darwin-arm64.tar.zst`) | `11.9 MiB` |
+| rootfs | `40.8 MiB` |
+| Steady-state RSS (host process, idle) | `222.7 MiB` |
+| Idle CPU | `0.33 %` |
+
+Host RSS runs higher than the container number (~163 MiB): same release, but
+the host BEAM sizes its allocators for the machine rather than a cgroup.
+Tuning beyond the existing `+S 1:1` profile is follow-up work.
+
+### Native-first convergence (2026-07)
+
+The Nix package now builds the Linux artifacts too (patchelf `$ORIGIN`
+rpaths + system loader; in-derivation ldd audit), and `Dockerfile.slim`
+derives the image from that rootfs (distroless `base-debian13:nonroot` +
+busybox/tini/CA stage + `entry.sh`: migrate → optional seeds → server). The
+docker-source builder is gone; the old run.sh cloud bootstrap (Fly/ECS cert
+generation) is not part of the local/CI image. linux-arm64 verified: derived
+image smoke green (RSS 162.8 MiB ≈ before; 26.6 MiB gzip, was 28.4) and the
+archive runs as a bare host process on a store-less Debian (healthcheck 200).
+Found in the process: nixpkgs compiles an absolute Nix-store bash path into
+OTP's `disksup.beam` — disksup is disabled via `vm.args` in the portable
+packaging (see NIX_PORTABLE_ARTIFACT_PLAYBOOK.md).

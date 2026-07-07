@@ -1,7 +1,21 @@
+# syntax=docker/dockerfile:1.7
+# Derived image: the portable artifact (static bin/auth) plus the CA bundle
+# and user metadata a scratch image needs (on hosts, the system trust store
+# and passwd are assumed instead).
 ARG BASE_IMAGE=scratch
+
+FROM alpine:3.23 AS meta
+RUN apk add --no-cache ca-certificates \
+  && mkdir -p /out/etc/ssl/certs /out/usr/local/bin \
+  && cp /etc/ssl/certs/ca-certificates.crt /out/etc/ssl/certs/ca-certificates.crt \
+  && printf 'root:x:0:0:root:/root:/sbin/nologin\nsupabase:x:1000:1000:supabase:/nonexistent:/sbin/nologin\n' > /out/etc/passwd \
+  && printf 'root:x:0:\nsupabase:x:1000:\n' > /out/etc/group \
+  && ln -s auth /out/usr/local/bin/gotrue
+
 FROM ${BASE_IMAGE}
 ARG ARTIFACT_ROOT
-COPY ${ARTIFACT_ROOT}/ /
+COPY --from=meta /out/ /
+COPY ${ARTIFACT_ROOT}/bin/auth /usr/local/bin/auth
 USER 1000:1000
 EXPOSE 9999
 ENTRYPOINT ["/usr/local/bin/auth"]

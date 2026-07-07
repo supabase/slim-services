@@ -107,7 +107,7 @@ nix_flake_for_build="$NIX_FLAKE"
 build_dir=""
 if [[ "$resolved_nix_runner" == "local" && -n "$NIX_PACKAGE_OVERLAY" ]]; then
   overlay_abs="$ROOT_DIR/$NIX_PACKAGE_OVERLAY"
-  [[ -f "$overlay_abs" ]] || fail "Nix package overlay not found: $NIX_PACKAGE_OVERLAY"
+  [[ -e "$overlay_abs" ]] || fail "Nix package overlay not found: $NIX_PACKAGE_OVERLAY"
   NIX_PACKAGE_OVERLAY_DEST="${NIX_PACKAGE_OVERLAY_DEST:-nix/$(basename "$NIX_PACKAGE_OVERLAY")}"
   build_dir="$(mktemp -d "${TMPDIR:-/tmp}/slim-images-$service-$TARGET_OS-$ARCH.XXXXXX")"
   build_dir="$(cd "$build_dir" && pwd -P)"
@@ -118,8 +118,13 @@ if [[ "$resolved_nix_runner" == "local" && -n "$NIX_PACKAGE_OVERLAY" ]]; then
   git -C "$source_abs" archive HEAD | tar -C "$build_src" -xf -
 
   log "applying Nix package overlay $NIX_PACKAGE_OVERLAY -> $NIX_PACKAGE_OVERLAY_DEST"
-  mkdir -p "$(dirname "$build_src/$NIX_PACKAGE_OVERLAY_DEST")"
-  cp "$overlay_abs" "$build_src/$NIX_PACKAGE_OVERLAY_DEST"
+  if [[ -d "$overlay_abs" ]]; then
+    mkdir -p "$build_src/$NIX_PACKAGE_OVERLAY_DEST"
+    cp -R "$overlay_abs/." "$build_src/$NIX_PACKAGE_OVERLAY_DEST/"
+  else
+    mkdir -p "$(dirname "$build_src/$NIX_PACKAGE_OVERLAY_DEST")"
+    cp "$overlay_abs" "$build_src/$NIX_PACKAGE_OVERLAY_DEST"
+  fi
   nix_flake_for_build="$build_src"
 fi
 
@@ -132,7 +137,10 @@ case "$NIX_BUILD_MODE" in
     fi
     ;;
   nix-build)
-    nix_installable="${nix_flake_for_build} -A ${NIX_ATTR}"
+    # NIX_EXPRESSION points at the .nix file or directory (relative to the
+    # build tree) holding the attribute set, e.g. "nix" for repo-owned
+    # services/<service>/nix/default.nix overlays.
+    nix_installable="${nix_flake_for_build}/${NIX_EXPRESSION:-.} -A ${NIX_ATTR}"
     ;;
   *)
     fail "unknown NIX_BUILD_MODE for $service: $NIX_BUILD_MODE"
@@ -163,7 +171,7 @@ case "$resolved_nix_runner" in
       nix-build)
         (
           cd "$ROOT_DIR"
-          nix-build "$nix_flake_for_build" -A "$NIX_ATTR" --out-link "$out_link"
+          nix-build "$nix_flake_for_build/${NIX_EXPRESSION:-.}" -A "$NIX_ATTR" --out-link "$out_link"
         )
         ;;
     esac
@@ -251,6 +259,9 @@ if [[ -n "$archive" ]]; then
   archive_bytes="$(wc -c < "$archive" | tr -d ' ')"
 fi
 
+portable="$(portable_flag)"
+assumed_host_libs_json="$(portable_host_libs_json)"
+
 python3 - "$manifest" "$archive" "$archive_bytes" <<PY
 import json
 import os
@@ -286,6 +297,8 @@ manifest = {
     "nix_package_overlay": "$NIX_PACKAGE_OVERLAY",
     "nix_package_overlay_dest": "$NIX_PACKAGE_OVERLAY_DEST",
     "nix_copy_paths": ${NIX_COPY_PATHS_JSON:-[]},
+    "portable": "$portable" == "true",
+    "assumed_host_libs": json.loads("""$assumed_host_libs_json"""),
     "archive_on_build": "${ARTIFACT_ARCHIVE_ON_BUILD:-1}" == "1",
     "excluded_file_classes": [
         "sourcemaps",

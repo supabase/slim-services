@@ -117,14 +117,22 @@ Measured steady-state RSS with the pass-3 runtime profiles:
 
 ## Remaining Work
 
-1. Add CI jobs that build each current slim artifact/image and run the matching
-   smoke test (only edge-runtime has a workflow today; postgres and the
-   docker-image backend need one too).
-2. CLI-level follow-ups surfaced by the runtime measurements: run `analytics`
+1. Run the first full CI pass of `.github/workflows/service-artifacts.yml`
+   (7 services x linux-arm64/linux-amd64/darwin-arm64; builds the host-native
+   artifact, derives + smokes the Linux image, host-process smokes the
+   artifact, uploads archive + SHA256SUMS). It verifies the two cells that
+   cannot be built locally from macOS: the Node duo's Linux artifacts and the
+   linux-amd64 BEAM/Node cells. postgres and studio (docker-image backend)
+   still need a workflow.
+2. Regenerate the Linux results tables after that pass — the committed image
+   numbers for storage/pgmeta/postgrest/studio/postgres predate the
+   native-first convergence (realtime/pooler/analytics/auth were re-measured
+   locally: 26.6/39.0/58.4/11.4 MiB gzip).
+3. CLI-level follow-ups surfaced by the runtime measurements: run `analytics`
    and `studio` as shared singletons (or default-off) for parallel stacks;
    wire memory limits through `container.HostConfig.Resources`.
-3. Revisit PostgREST once a stable upstream static ARM64 artifact is published.
-4. Storage module-level pruning of AWS/Smithy/Iceberg surfaces — the object
+4. Revisit PostgREST once a stable upstream static ARM64 artifact is published.
+5. Storage module-level pruning of AWS/Smithy/Iceberg surfaces — the object
    round-trip smoke added in pass 3 is the safety net it was waiting for.
 6. Further analytics RSS reduction requires upstream boot-time feature flags
    (Broadway/ETS allocations dominate its ~500 MiB idle footprint).

@@ -22,7 +22,6 @@ EOF
 [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { usage; exit 0; }
 [[ $# -ge 1 && $# -le 2 ]] || { usage >&2; exit 2; }
 
-require_cmd docker
 require_cmd git
 require_cmd tar
 require_cmd python3
@@ -31,7 +30,11 @@ service="$1"
 VERSION="${2:-${VERSION:-dev}}"
 TARGET_OS="$(target_os)"
 ARCH="$(target_arch)"
-PLATFORM="${PLATFORM:-$(docker_platform "$TARGET_OS" "$ARCH")}"
+if [[ "$TARGET_OS" == "linux" ]]; then
+  PLATFORM="${PLATFORM:-$(docker_platform "$TARGET_OS" "$ARCH")}"
+else
+  PLATFORM="${PLATFORM:-$TARGET_OS/$ARCH}"
+fi
 
 load_recipe "$service"
 
@@ -49,7 +52,19 @@ artifact_dir="$ROOT_DIR/artifacts/$service/$VERSION/$(artifact_platform_dir "$TA
 rootfs="$artifact_dir/rootfs"
 manifest="$artifact_dir/manifest.json"
 
-[[ -f "$dockerfile" ]] || fail "artifact Dockerfile not found: $dockerfile"
+# Non-linux targets always build with services/<service>/build-host.sh (no
+# Docker on macOS CI runners); linux targets do too when the recipe opts in
+# with ARTIFACT_SOURCE_BUILD="host" (native-first services whose build is a
+# plain host toolchain, e.g. Go cross-compiles and Node bundles).
+use_host_build=0
+if [[ "$TARGET_OS" != "linux" || "${ARTIFACT_SOURCE_BUILD:-docker}" == "host" ]]; then
+  use_host_build=1
+fi
+
+if [[ "$use_host_build" == "0" ]]; then
+  require_cmd docker
+  [[ -f "$dockerfile" ]] || fail "artifact Dockerfile not found: $dockerfile"
+fi
 
 actual_ref=""
 build_mode="image-dockerfile"
@@ -108,36 +123,55 @@ if declare -p ARTIFACT_BUILD_ARGS >/dev/null 2>&1; then
   done
 fi
 
-docker_builder="${DOCKER_BUILDER:-$(docker context show 2>/dev/null || echo default)}"
-log "building $service artifact from ${SOURCE_DIR:-$UPSTREAM_IMAGE}${SOURCE_REF:+@$SOURCE_REF} for $PLATFORM using builder $docker_builder"
-# ARTIFACT_EXPORT=tar streams the artifact stage as a single tarball instead of
-# the per-file local exporter, which can stall on rootfs trees with very large
-# file counts (e.g. the postgres Nix store).
-export_tar=""
-if [[ "${ARTIFACT_EXPORT:-local}" == "tar" ]]; then
-  export_tar="$artifact_dir/.rootfs-export.tar"
-  rm -f "$export_tar"
-  trap 'rm -f "$export_tar"' EXIT
-  output_spec="type=tar,dest=$export_tar"
+if [[ "$use_host_build" == "1" ]]; then
+  # Host-toolchain build: services/<service>/build-host.sh cross-compiles the
+  # pinned submodule into ROOTFS with no Docker involved. sources/ stays
+  # read-only; the script must write only to ROOTFS.
+  host_build="$ROOT_DIR/services/$service/build-host.sh"
+  [[ -x "$host_build" ]] || fail "$service has no host build script for $TARGET_OS targets: $host_build"
+  [[ -n "$SOURCE_DIR" ]] || fail "host builds require SOURCE_DIR in the recipe"
+  build_mode="host-source"
+  log "building $service artifact from $SOURCE_DIR@$SOURCE_REF with host toolchain for $TARGET_OS/$ARCH"
+  SERVICE="$service" \
+    VERSION="$VERSION" \
+    TARGET_OS="$TARGET_OS" \
+    ARCH="$ARCH" \
+    SOURCE_DIR="$source_abs" \
+    ROOTFS="$rootfs" \
+    ROOT_DIR="$ROOT_DIR" \
+    "$host_build"
 else
-  output_spec="type=local,dest=$rootfs"
-fi
+  docker_builder="${DOCKER_BUILDER:-$(docker context show 2>/dev/null || echo default)}"
+  log "building $service artifact from ${SOURCE_DIR:-$UPSTREAM_IMAGE}${SOURCE_REF:+@$SOURCE_REF} for $PLATFORM using builder $docker_builder"
+  # ARTIFACT_EXPORT=tar streams the artifact stage as a single tarball instead of
+  # the per-file local exporter, which can stall on rootfs trees with very large
+  # file counts (e.g. the postgres Nix store).
+  export_tar=""
+  if [[ "${ARTIFACT_EXPORT:-local}" == "tar" ]]; then
+    export_tar="$artifact_dir/.rootfs-export.tar"
+    rm -f "$export_tar"
+    trap 'rm -f "$export_tar"' EXIT
+    output_spec="type=tar,dest=$export_tar"
+  else
+    output_spec="type=local,dest=$rootfs"
+  fi
 
-docker buildx build \
-  --builder "$docker_builder" \
-  --platform "$PLATFORM" \
-  --target artifact \
-  --output "$output_spec" \
-  -f "$dockerfile" \
-  "${build_args[@]}" \
-  "$ROOT_DIR"
+  docker buildx build \
+    --builder "$docker_builder" \
+    --platform "$PLATFORM" \
+    --target artifact \
+    --output "$output_spec" \
+    -f "$dockerfile" \
+    "${build_args[@]}" \
+    "$ROOT_DIR"
 
-if [[ -n "$export_tar" ]]; then
-  log "extracting artifact tar export"
-  # -p: without it a non-root extraction applies the umask and silently strips
-  # mode bits the image relies on (e.g. postgres-writable config dirs).
-  tar -C "$rootfs" -xpf "$export_tar"
-  rm -f "$export_tar"
+  if [[ -n "$export_tar" ]]; then
+    log "extracting artifact tar export"
+    # -p: without it a non-root extraction applies the umask and silently strips
+    # mode bits the image relies on (e.g. postgres-writable config dirs).
+    tar -C "$rootfs" -xpf "$export_tar"
+    rm -f "$export_tar"
+  fi
 fi
 
 "$ROOT_DIR/scripts/prune-runtime-tree.sh" "$rootfs"
@@ -153,9 +187,14 @@ fi
 
 rootfs_kib="$(du -sk "$rootfs" | awk '{print $1}')"
 
+portable="$(portable_flag)"
+assumed_host_libs_json="$(portable_host_libs_json)"
+
 python3 - "$manifest" <<PY
 import json
 import os
+
+archive_bytes = $archive_bytes
 
 manifest = {
     "service": "$service",
@@ -171,6 +210,9 @@ manifest = {
     "cmd": json.loads("""$CMD_JSON"""),
     "build_mode": "$build_mode",
     "artifact_dockerfile": "$artifact_dockerfile",
+    "portable": "$portable" == "true",
+    "assumed_host_libs": json.loads("""$assumed_host_libs_json"""),
+    "runtime_requires": "${RUNTIME_REQUIRES:-}" or None,
     "excluded_file_classes": [
         "sourcemaps",
         "debug-symbols",
@@ -185,8 +227,8 @@ manifest = {
     "size": {
         "rootfs_bytes": int($rootfs_kib) * 1024,
         "rootfs_mib": round((int($rootfs_kib) * 1024) / 1024 / 1024, 1),
-        "archive_bytes": $archive_bytes,
-        "archive_mib": round($archive_bytes / 1024 / 1024, 1) if $archive_bytes is not None else None
+        "archive_bytes": archive_bytes,
+        "archive_mib": round(archive_bytes / 1024 / 1024, 1) if archive_bytes is not None else None
     }
 }
 
