@@ -100,6 +100,7 @@ recorded in the darwin `manifest.json`). Refresh with
 | Auth | `v2.192.0` | `9.4 MiB` | `33.5 MiB` | `29.3 MiB` | `0.00%` | yes | [report](services/auth/REPORT.md) |
 | Realtime | `v2.112.6` | `11.9 MiB` | `40.8 MiB` | `222.7 MiB` | `0.33%` | yes | [report](services/realtime/REPORT.md) |
 | Edge Runtime | `v1.74.2` | `39.9 MiB` | `161.2 MiB` | `57.9 MiB` | `0.00%` | yes | [report](services/edge-runtime/REPORT.md) |
+| Pooler | `v2.9.10` | `23.6 MiB` | `52.4 MiB` | `214.0 MiB` | `0.00%` | yes | [report](services/pooler/REPORT.md) |
 <!-- generated:host-native:end -->
 
 See [SLIM_IMAGES_REPORT.md](SLIM_IMAGES_REPORT.md) for the global summary.
