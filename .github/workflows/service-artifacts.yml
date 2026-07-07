@@ -174,3 +174,83 @@ jobs:
             ${{ steps.vars.outputs.artifact_dir }}/*.tar.zst
             ${{ steps.vars.outputs.artifact_dir }}/SHA256SUMS
             ${{ steps.vars.outputs.artifact_dir }}/manifest.json
+
+  # Refresh the README/report results tables from the manifests this run
+  # produced and open a docs PR when the numbers changed. --merge only
+  # touches rows for services that were rebuilt (whatever succeeded, even on
+  # a partial or partially-failed run) and keeps every other row verbatim.
+  update-tables:
+    name: refresh results tables
+    needs: build
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Download run manifests
+        uses: actions/download-artifact@v4
+        with:
+          path: ci-artifacts
+
+      - name: Place manifests into the artifacts layout
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import glob
+          import json
+          import os
+          import shutil
+
+          placed = 0
+          for path in glob.glob("ci-artifacts/*/manifest.json"):
+              with open(path, encoding="utf-8") as fh:
+                  m = json.load(fh)
+              service = m.get("service")
+              version = m.get("version")
+              platform_dir = (m.get("platform") or "").replace("/", "-")
+              if not (service and version and platform_dir):
+                  print(f"skipping {path}: missing service/version/platform")
+                  continue
+              dest = os.path.join("artifacts", service, version, platform_dir)
+              os.makedirs(dest, exist_ok=True)
+              shutil.copy(path, os.path.join(dest, "manifest.json"))
+              placed += 1
+              print(f"placed {service} {version} {platform_dir}")
+          print(f"{placed} manifests placed")
+          PY
+
+      - name: Regenerate tables (merge mode)
+        shell: bash
+        run: |
+          set -euo pipefail
+          scripts/update-results-tables.sh --merge
+
+      - name: Open a docs PR when the tables changed
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet README.md SLIM_IMAGES_REPORT.md; then
+            echo "tables unchanged; nothing to do"
+            exit 0
+          fi
+          branch="ci/results-tables-${{ github.run_id }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add README.md SLIM_IMAGES_REPORT.md
+          git commit -m "Docs: refresh results tables from CI run ${{ github.run_id }}"
+          git push origin "$branch"
+          gh pr create \
+            --base "${{ github.ref_name }}" \
+            --head "$branch" \
+            --title "Docs: refresh results tables (CI run ${{ github.run_id }})" \
+            --body "Automated table refresh from the [service-artifacts run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}). Rows for services rebuilt in that run were regenerated from their manifests; all other rows were kept verbatim; totals recomputed from the final row set."

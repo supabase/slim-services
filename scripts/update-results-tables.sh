@@ -32,16 +32,22 @@ failing.
 --host-native-only only regenerates the host-native table (darwin rebuilds do
 not change the Linux image numbers, and regenerating those requires all Linux
 artifacts locally plus registry access).
+--merge updates only the rows for services with local manifests and keeps the
+existing table rows (and their upstream sizes) for everything else; totals are
+recomputed from the final row set. This is the CI mode: a partial
+service-artifacts.yml dispatch refreshes just the rows it rebuilt.
 EOF
 }
 
 [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { usage; exit 0; }
 allow_missing=0
 host_native_only=0
+merge=0
 for arg in "$@"; do
   case "$arg" in
     --allow-missing) allow_missing=1 ;;
     --host-native-only) host_native_only=1 ;;
+    --merge) merge=1 ;;
     *) usage >&2; exit 2 ;;
   esac
 done
@@ -66,14 +72,33 @@ for i in "${!ordered_services[@]}"; do
 done
 
 # Host-native darwin-arm64 table: driven by darwin manifests only; services
-# without one are omitted (the table grows service by service).
-ROWS_TSV="$rows_tsv" python3 - "$ROOT_DIR" <<'PY'
+# without one are omitted (or, with --merge, keep their existing row).
+ROWS_TSV="$rows_tsv" MERGE="$merge" python3 - "$ROOT_DIR" <<'PY'
 import glob
 import json
 import os
+import re
 import sys
 
 root = sys.argv[1]
+merge = os.environ.get("MERGE") == "1"
+
+def existing_rows(path, marker):
+    """display name -> existing table row inside the marker block."""
+    begin, end = f"<!-- generated:{marker}:begin -->", f"<!-- generated:{marker}:end -->"
+    with open(path, encoding="utf-8") as fh:
+        text = fh.read()
+    if begin not in text or end not in text:
+        return {}
+    block = text.split(begin, 1)[1].split(end, 1)[0]
+    rows = {}
+    for line in block.splitlines():
+        m = re.match(r"^\| ([^|]+?) \| `", line)
+        if m:
+            rows[m.group(1)] = line
+    return rows
+
+kept = existing_rows(os.path.join(root, "README.md"), "host-native") if merge else {}
 
 rows = []
 for line in os.environ["ROWS_TSV"].splitlines():
@@ -83,6 +108,8 @@ for line in os.environ["ROWS_TSV"].splitlines():
 
     manifests = glob.glob(os.path.join(root, "artifacts", service, "*", "darwin-arm64", "manifest.json"))
     if not manifests:
+        if merge and display in kept:
+            rows.append(kept[display])
         continue
     manifest_path = max(manifests, key=os.path.getmtime)
     with open(manifest_path, encoding="utf-8") as fh:
@@ -139,14 +166,38 @@ fi
 
 # Rows travel via the environment: python reads its program from stdin (the
 # heredoc), so stdin cannot also carry the data.
-ROWS_TSV="$rows_tsv" python3 - "$ROOT_DIR" "$allow_missing" <<'PY'
+ROWS_TSV="$rows_tsv" MERGE="$merge" python3 - "$ROOT_DIR" "$allow_missing" <<'PY'
 import glob
 import json
 import os
+import re
 import subprocess
 import sys
 
 root, allow_missing = sys.argv[1], sys.argv[2] == "1"
+merge = os.environ.get("MERGE") == "1"
+
+def existing_rows(path, marker):
+    begin, end = f"<!-- generated:{marker}:begin -->", f"<!-- generated:{marker}:end -->"
+    with open(path, encoding="utf-8") as fh:
+        text = fh.read()
+    if begin not in text or end not in text:
+        return {}
+    block = text.split(begin, 1)[1].split(end, 1)[0]
+    rows = {}
+    for line in block.splitlines():
+        m = re.match(r"^\| ([^|]+?) \| `", line)
+        if m:
+            rows[m.group(1)] = line
+    return rows
+
+kept = existing_rows(os.path.join(root, "README.md"), "results") if merge else {}
+
+def row_mib(row, col):
+    """Parse the MiB value out of table column `col` of a generated row."""
+    cells = [c.strip() for c in row.split("|")]
+    m = re.search(r"([0-9.]+) MiB", cells[col])
+    return float(m.group(1)) if m else None
 
 def upstream_mib(image_ref):
     """Sum of compressed arm64 layer sizes for an image reference."""
@@ -183,8 +234,11 @@ for line in os.environ["ROWS_TSV"].splitlines():
 
     manifests = glob.glob(os.path.join(root, "artifacts", service, "*", "linux-arm64", "manifest.json"))
     if not manifests:
+        if merge and display in kept:
+            rows.append(kept[display])
+            continue
         msg = f"no linux-arm64 manifest for {service}; build it first (scripts/ci-build-service.sh {service} <version>)"
-        if allow_missing:
+        if allow_missing or merge:
             print(f"[tables] WARNING: {msg}", file=sys.stderr)
             continue
         raise SystemExit(f"[tables] ERROR: {msg}")
@@ -199,17 +253,19 @@ for line in os.environ["ROWS_TSV"].splitlines():
     rss = runtime.get("runtime_rss_mib")
     cpu = runtime.get("idle_cpu_pct")
     if slim_mib is None:
-        raise SystemExit(f"[tables] ERROR: {manifest_path} has no image.gzip_mib; run the full ci-build for {service}")
+        msg = f"{manifest_path} has no image.gzip_mib; run the full ci-build for {service}"
+        if merge:
+            print(f"[tables] WARNING: {msg} — keeping existing row", file=sys.stderr)
+            if display in kept:
+                rows.append(kept[display])
+            continue
+        raise SystemExit(f"[tables] ERROR: {msg}")
 
     ref = compare_image or upstream_image
     star = "*" if compare_image else ""
-    if star:
-        directional = True
     print(f"[tables] fetching upstream size for {service}: {ref}", file=sys.stderr)
     up = upstream_mib(ref)
 
-    total_upstream += up
-    total_slim += slim_mib
     reduction = (1 - slim_mib / up) * 100
 
     version_cell = f"`{version}`" + (f" ({note})" if note else "")
@@ -220,6 +276,17 @@ for line in os.environ["ROWS_TSV"].splitlines():
         f"| `{reduction:.1f}%`{star} | {rss_cell} | {cpu_cell} "
         f"| [report](services/{service}/REPORT.md) |"
     )
+
+# Totals + the directional marker come from the FINAL row set (fresh and
+# kept rows alike), so --merge keeps them truthful.
+for row in rows:
+    up = row_mib(row, 3)
+    slim = row_mib(row, 4)
+    if up is not None and slim is not None:
+        total_upstream += up
+        total_slim += slim
+    if "MiB`*" in row:
+        directional = True
 
 header = (
     "| Service | Version | Upstream ARM64 | Current slim | Reduction | Idle RSS | Idle CPU | Report |\n"
