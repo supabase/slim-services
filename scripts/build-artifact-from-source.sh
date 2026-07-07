@@ -187,6 +187,8 @@ python3 - "$manifest" <<PY
 import json
 import os
 
+archive_bytes = $archive_bytes
+
 manifest = {
     "service": "$service",
     "version": "$VERSION",
@@ -218,8 +220,8 @@ manifest = {
     "size": {
         "rootfs_bytes": int($rootfs_kib) * 1024,
         "rootfs_mib": round((int($rootfs_kib) * 1024) / 1024 / 1024, 1),
-        "archive_bytes": $archive_bytes,
-        "archive_mib": round($archive_bytes / 1024 / 1024, 1) if $archive_bytes is not None else None
+        "archive_bytes": archive_bytes,
+        "archive_mib": round(archive_bytes / 1024 / 1024, 1) if archive_bytes is not None else None
     }
 }
 

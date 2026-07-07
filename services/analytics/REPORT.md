@@ -114,3 +114,39 @@ keep idle RSS at ~500 MiB — by far the heaviest service in the local stack
 run analytics as a shared singleton across stacks or default it off; further
 in-repo reduction requires disabling logflare subsystems at boot, which needs
 upstream feature flags.
+
+## Host-Native darwin-arm64 Artifact (2026-07)
+
+The hardest BEAM clone (see `services/realtime/REPORT.md` for the shared
+portable-BEAM packaging). Built by `services/analytics/nix/default.nix`.
+Logflare-specific packaging:
+
+- Pin: nixos-unstable rather than the 25.05 pin the other services use — the
+  rustler 0.37 crates require rustc >= 1.91 (25.05 ships 1.86), and unstable
+  provides Elixir 1.19.5 + OTP 27.3.4.x + rustc 1.95, matching the Docker
+  builder (1.19.5 / 27.3.4.6 / 1.94.1).
+- Four in-tree rustler NIFs (`arrowipc_ex`, `ch_compression_ex`, `mapper_ex`,
+  `sqlparser_ex`) are members of one cargo workspace rooted at the repo top
+  level; deps are vendored once via `importCargoLock` from the workspace
+  `Cargo.lock`.
+- `explorer` (polars) and `sql_fmt` use rustler_precompiled, which downloads
+  a NIF during compilation; the pinned `nif-2.15-aarch64-apple-darwin`
+  tarballs are fetched as fixed-output derivations and seeded into the
+  rustler_precompiled cache, so the sandboxed build stays offline (checksums
+  verified against the checksum file in each hex package).
+- Asset pipeline skipped like realtime, but logflare configures
+  `cache_static_manifest`, so a stub `cache_manifest.json` is installed
+  (endpoint boots; UI assets 404; API unaffected). `docs/` must stay in the
+  build source: compiling `docs_view.ex` copies it into `priv/docs`.
+- Smoke (host process, `runtime.env` applied): `Logflare.Release.migrate`,
+  then `bin/logflare start --sname logflare` (mirrors upstream `run.sh`);
+  `/health` returns 200. Re-run from an untarred archive (relocatable), and
+  NIF loading verified explicitly from the relocated artifact:
+  `SqlFmt.format_query/1` and `Explorer.DataFrame.new/1` both execute.
+
+| Metric | Value |
+|---|---:|
+| Archive (`analytics-v1.46.0-darwin-arm64.tar.zst`) | `33.3 MiB` |
+| rootfs | `137.2 MiB` |
+| Steady-state RSS (host process, idle) | `207.6 MiB` |
+| Idle CPU | `0.2 %` |
