@@ -43,10 +43,21 @@ find dist node_modules \
 find node_modules \
   \( -path '*/test/*' -o -path '*/tests/*' -o -path '*/__tests__/*' -o -path '*/example/*' -o -path '*/examples/*' -o -path '*/benchmark/*' -o -path '*/benchmarks/*' \) \
   -print0 | xargs -0r rm -rf
-# Sentry's cpu profiler ships prebuilt .node binaries for every platform/libc
-# in one package. The musl variants reference libc.musl-*.so.1, which can
-# never resolve on our glibc/darwin targets and would fail the portable audit.
+# Sentry's cpu profiler ships prebuilt .node binaries for every
+# platform/arch/libc in one package. Foreign ones can never load on this
+# target and fail the portable audit: musl variants reference
+# libc.musl-*.so.1, and the darwin-x64 prebuilds carry code signatures
+# that do not verify. Keep only the current platform/arch (plus the musl
+# prune, since the keep pattern cannot separate glibc from musl).
+node_arch="x64"
+[[ "$ARCH" == "arm64" ]] && node_arch="arm64"
+find node_modules -type f -name 'sentry_cpu_profiler-*.node' \
+  ! -name "sentry_cpu_profiler-${TARGET_OS}-${node_arch}-*" -print0 | xargs -0r rm -f
 find node_modules -type f -name '*-musl-*.node' -print0 | xargs -0r rm -f
+# node-gyp intermediates (build/Release/obj.target, *.o) are not runtime
+# files, and their unsigned Mach-O objects fail the darwin signature audit.
+find node_modules -type d -path '*/build/Release/obj.target' -prune -print0 | xargs -0r rm -rf
+find node_modules -type f \( -name '*.o' -o -name '*.o.d' \) -print0 | xargs -0r rm -f
 
 mkdir -p "$ROOTFS/app" "$ROOTFS/bin"
 cp package.json "$ROOTFS/app/package.json"
