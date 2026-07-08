@@ -69,6 +69,11 @@ find dist-bundle dist-bundle/node_modules \
 find dist-bundle/node_modules \
   \( -path '*/test/*' -o -path '*/tests/*' -o -path '*/__tests__/*' -o -path '*/example/*' -o -path '*/examples/*' -o -path '*/benchmark/*' -o -path '*/benchmarks/*' \) \
   -print0 | xargs -0r rm -rf
+# node-gyp leaves intermediate objects next to the built .node (fs-xattr's
+# build/Release/obj.target/**/*.o); they are not runtime files, and their
+# unsigned Mach-O objects fail the darwin signature audit.
+find dist-bundle/node_modules -type d -path '*/build/Release/obj.target' -prune -print0 | xargs -0r rm -rf
+find dist-bundle/node_modules -type f \( -name '*.o' -o -name '*.o.d' \) -print0 | xargs -0r rm -f
 
 mkdir -p "$ROOTFS/app/dist" "$ROOTFS/bin"
 cp dist-bundle/package.json "$ROOTFS/app/package.json"
