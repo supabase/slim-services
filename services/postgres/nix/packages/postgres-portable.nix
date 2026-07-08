@@ -256,7 +256,12 @@ stdenv.mkDerivation {
       for macho in $out/bin/.* $out/bin/* $out/lib/*; do
         [ -f "$macho" ] || continue
         file "$macho" 2>/dev/null | grep -q "Mach-O" || continue
-        otool -L "$macho" 2>/dev/null | awk '{print $1}' | grep '^/nix/store/.*libiconv' | while read -r dep; do
+        # Phases run under pipefail: a no-match grep must not abort the
+        # build, so capture with an explicit fallback instead of piping
+        # straight into the loop.
+        iconv_refs="$(otool -L "$macho" 2>/dev/null | awk '{print $1}' | grep '^/nix/store/.*libiconv' || true)"
+        [ -n "$iconv_refs" ] || continue
+        echo "$iconv_refs" | while read -r dep; do
           if [ ! -e "$out/lib/libiconv.2.dylib" ] && nm -gU "$dep" 2>/dev/null | grep -qw _libiconv; then
             echo "Bundling GNU libiconv from $dep"
             cp -L "$dep" "$out/lib/libiconv.2.dylib"
@@ -395,8 +400,12 @@ stdenv.mkDerivation {
       # This makes the bundle portable across macOS systems for Supabase CLI
       for bin in $out/bin/.*-wrapped; do
         if [ -f "$bin" ] && file "$bin" | grep -q "Mach-O"; then
-          # Get all dylib dependencies from Nix store
-          otool -L "$bin" | grep /nix/store | awk '{print $1}' | while read dep; do
+          # Get all dylib dependencies from Nix store. Phases run under
+          # pipefail: capture with a fallback — a binary with no store refs
+          # left must not abort the build.
+          bin_deps="$(otool -L "$bin" | grep /nix/store | awk '{print $1}' || true)"
+          echo "$bin_deps" | while read dep; do
+            [ -n "$dep" ] || continue
             libname=$(basename "$dep")
             # libiconv/libcharset: only the GNU provider is bundled (see
             # installPhase); Apple-SDK consumers go to the OS copies.
@@ -431,8 +440,14 @@ stdenv.mkDerivation {
           # Add @rpath to the library itself so it can find other libraries
           install_name_tool -add_rpath "@loader_path" "$lib" 2>/dev/null || true
 
-          # Then fix references to other libraries
-          otool -L "$lib" | grep /nix/store | awk '{print $1}' | while read dep; do
+          # Then fix references to other libraries. The -id rewrite above
+          # removes the store ID line, so a dylib whose remaining deps are
+          # all /usr/lib (e.g. the bundled GNU libiconv, which links only
+          # libSystem) makes this grep match NOTHING — capture with a
+          # fallback so pipefail does not abort the phase.
+          lib_deps="$(otool -L "$lib" | grep /nix/store | awk '{print $1}' || true)"
+          echo "$lib_deps" | while read dep; do
+            [ -n "$dep" ] || continue
             deplibname=$(basename "$dep")
             # libiconv/libcharset: only the GNU provider is bundled (see
             # installPhase); Apple-SDK consumers go to the OS copies.
