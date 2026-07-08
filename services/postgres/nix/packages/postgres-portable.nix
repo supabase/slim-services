@@ -299,6 +299,17 @@ stdenv.mkDerivation {
         exit 1
       fi
 
+      # slim-services overlay: the pgrx extensions ship unstripped (wrappers
+      # alone is 128 MiB; ~30 MiB stripped). Strip BEFORE patchelf — GNU
+      # strip can corrupt binaries whose section layout patchelf already
+      # rewrote, the reverse order is safe.
+      for elf in $out/bin/.*-wrapped $out/lib/*.so*; do
+        [ -f "$elf" ] || continue
+        [ -L "$elf" ] && continue
+        file "$elf" | grep -q ELF || continue
+        strip --strip-unneeded "$elf" 2>/dev/null || true
+      done
+
       # On Linux, patch binaries to use system interpreter and relative library paths
       # This makes the bundle portable across Linux systems for Supabase CLI
       for bin in $out/bin/.*-wrapped; do
@@ -322,6 +333,60 @@ stdenv.mkDerivation {
           # Shrink RPATH to remove any unused paths
           patchelf --shrink-rpath "$lib" 2>/dev/null || true
         fi
+      done
+
+      # slim-services overlay: nixpkgs proj/gdal link libsqlite3 by ABSOLUTE
+      # store path (CMake full-path linking), which an ldd audit on a build
+      # machine cannot catch — its /nix/store resolves the reference. Bundle
+      # any such dependency next to the other libs and rewrite the NEEDED
+      # entry to its basename; loop until a pass adds nothing new (bundled
+      # deps can bring their own absolute references).
+      changed=1
+      while [ "$changed" = 1 ]; do
+        changed=0
+        for so in $out/lib/*.so*; do
+          [ -f "$so" ] || continue
+          [ -L "$so" ] && continue
+          file "$so" | grep -q ELF || continue
+          for needed in $(patchelf --print-needed "$so" 2>/dev/null); do
+            case "$needed" in
+              /nix/store/*)
+                base="$(basename "$needed")"
+                if [ ! -e "$out/lib/$base" ]; then
+                  cp -L "$needed" "$out/lib/$base"
+                  chmod u+w "$out/lib/$base"
+                  strip --strip-unneeded "$out/lib/$base" 2>/dev/null || true
+                  patchelf --set-rpath '$ORIGIN' "$out/lib/$base" 2>/dev/null || true
+                  changed=1
+                fi
+                patchelf --replace-needed "$needed" "$base" "$so"
+                ;;
+            esac
+          done
+        done
+      done
+    ''
+    + ''
+      # slim-services overlay: the upstream tree reaches this package as a
+      # symlink farm, and the `cp -rL` copies above expand every alias into a
+      # full copy — postgis ships ~130 identical 8-MiB upgrade scripts, and
+      # every extension exists as both name.so and name-<version>.so. Replace
+      # identical siblings with relative symlinks (same directory only).
+      for dedup_dir in "$out/share/postgresql/extension" "$out/lib"; do
+        [ -d "$dedup_dir" ] || continue
+        (
+          cd "$dedup_dir"
+          declare -A seen_hash
+          while IFS= read -r f; do
+            f="''${f#./}"
+            h="$(sha256sum "$f" | cut -d' ' -f1)"
+            if [ -n "''${seen_hash[$h]:-}" ]; then
+              ln -sf "''${seen_hash[$h]}" "$f"
+            else
+              seen_hash[$h]="$f"
+            fi
+          done < <(find . -maxdepth 1 -type f -size +1M | LC_ALL=C sort)
+        )
       done
     ''
     + lib.optionalString stdenv.isDarwin ''

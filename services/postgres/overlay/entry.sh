@@ -18,10 +18,12 @@ first_boot=0
 if [ ! -s "$PGDATA/PG_VERSION" ]; then
   first_boot=1
   echo "Initializing database (portable bundle init)"
-  # The init script ends with `exec postgres -D $PGDATA "$@"`; passing
-  # --version makes that final exec print-and-exit instead of serving, so it
-  # acts as a pure init step.
-  bash "$BUNDLE/share/supabase-cli/bin/supabase-postgres-init.sh" --version >/dev/null
+  # The init script unconditionally ends with `exec postgres -D $PGDATA
+  # "$@"`. Passing `-C max_connections` turns that exec into
+  # print-a-setting-and-exit, making the script a pure init step
+  # (`--version` would not work: postgres only accepts it as the FIRST
+  # argument; after -D it is parsed as a GUC assignment and FATALs).
+  bash "$BUNDLE/share/supabase-cli/bin/supabase-postgres-init.sh" -C max_connections >/dev/null
 
   # The CLI config template targets a loopback dev server (port 54322,
   # listen 127.0.0.1, wal_level=replica); append the docker/network settings
