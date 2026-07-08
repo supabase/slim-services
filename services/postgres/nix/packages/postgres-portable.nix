@@ -242,15 +242,18 @@ stdenv.mkDerivation {
       fi
     done
 
-    # slim-services overlay: the darwin closure contains TWO providers of
-    # libiconv.2.dylib/libcharset.1.dylib — GNU libiconv-1.x (exports
-    # _libiconv; what libidn2 and friends import) and the Apple SDK stub
-    # (exports _iconv, reexports its own libcharset). The flat basename
-    # copies above let whichever is traversed last clobber the other, so
-    # which provider shipped depended on enumeration order (latestOnly
-    # flipped it: pg_net -> libidn2 -> "Symbol not found: _libiconv").
-    # Bundle exactly the GNU copy; postFixup routes Apple-SDK references to
-    # the OS libraries in the dyld shared cache instead.
+    # slim-services overlay: the darwin closure contains TWO libiconv
+    # FAMILIES at once — GNU libiconv-1.x (exports _libiconv; libidn2-2.3.8
+    # and gettext-0.25.1 import that) and the Apple SDK libiconv (exports
+    # _iconv; libidn2-2.3.7 and gettext-0.21.1 import that) — and both ship
+    # dylibs named libiconv(.2).dylib/libcharset.1.dylib. The flat basename
+    # copies above let whichever was traversed last clobber the other, and
+    # NO single file can satisfy both symbol sets. Ship the GNU library
+    # under a NON-COLLIDING name: the bin wrappers set DYLD_LIBRARY_PATH,
+    # which redirects ANY matching leafname into lib/ (even /usr/lib
+    # references), so no bundled file may be named libiconv*/libcharset*.
+    # postFixup routes GNU-family references to the bundled copy and
+    # Apple-family references to the OS copies in the dyld shared cache.
     if [ "$(uname)" = "Darwin" ]; then
       rm -f $out/lib/libiconv* $out/lib/libcharset*
       for macho in $out/bin/.* $out/bin/* $out/lib/*; do
@@ -262,10 +265,10 @@ stdenv.mkDerivation {
         iconv_refs="$(otool -L "$macho" 2>/dev/null | awk '{print $1}' | grep '^/nix/store/.*libiconv' || true)"
         [ -n "$iconv_refs" ] || continue
         echo "$iconv_refs" | while read -r dep; do
-          if [ ! -e "$out/lib/libiconv.2.dylib" ] && nm -gU "$dep" 2>/dev/null | grep -qw _libiconv; then
-            echo "Bundling GNU libiconv from $dep"
-            cp -L "$dep" "$out/lib/libiconv.2.dylib"
-            chmod u+w "$out/lib/libiconv.2.dylib"
+          if [ ! -e "$out/lib/libgnuiconv.2.dylib" ] && nm -gU "$dep" 2>/dev/null | grep -qw _libiconv; then
+            echo "Bundling GNU libiconv from $dep as libgnuiconv.2.dylib"
+            cp -L "$dep" "$out/lib/libgnuiconv.2.dylib"
+            chmod u+w "$out/lib/libgnuiconv.2.dylib"
           fi
         done
       done
@@ -400,23 +403,32 @@ stdenv.mkDerivation {
       # This makes the bundle portable across macOS systems for Supabase CLI
       for bin in $out/bin/.*-wrapped; do
         if [ -f "$bin" ] && file "$bin" | grep -q "Mach-O"; then
-          # Get all dylib dependencies from Nix store. Phases run under
-          # pipefail: capture with a fallback — a binary with no store refs
-          # left must not abort the build.
-          bin_deps="$(otool -L "$bin" | grep /nix/store | awk '{print $1}' || true)"
+          # Get all dylib dependencies from the Nix store, plus any
+          # libiconv/libcharset reference in @rpath form. Phases run under
+          # pipefail: capture with a fallback — a binary with no matching
+          # refs must not abort the build.
+          bin_deps="$(otool -L "$bin" | awk 'NR > 1 {print $1}' | grep -E '^/nix/store/|^@rpath/libiconv|^@rpath/libcharset' || true)"
           echo "$bin_deps" | while read dep; do
             [ -n "$dep" ] || continue
             libname=$(basename "$dep")
-            # libiconv/libcharset: only the GNU provider is bundled (see
-            # installPhase); Apple-SDK consumers go to the OS copies.
+            # libiconv/libcharset: two incompatible families share these
+            # basenames. GNU-family refs (target exports _libiconv) go to
+            # the bundled libgnuiconv.2.dylib; everything else — the Apple
+            # SDK dylibs and @rpath leftovers (Apple provenance, compat 7)
+            # — goes to the OS copies.
             if [ "''${libname#libcharset}" != "$libname" ]; then
               echo "Patching $bin: $dep -> /usr/lib/libcharset.1.dylib"
               install_name_tool -change "$dep" "/usr/lib/libcharset.1.dylib" "$bin" 2>/dev/null || true
               continue
             fi
-            if [ "''${libname#libiconv}" != "$libname" ] && ! nm -gU "$dep" 2>/dev/null | grep -qw _libiconv; then
-              echo "Patching $bin: $dep -> /usr/lib/libiconv.2.dylib"
-              install_name_tool -change "$dep" "/usr/lib/libiconv.2.dylib" "$bin" 2>/dev/null || true
+            if [ "''${libname#libiconv}" != "$libname" ]; then
+              if nm -gU "$dep" 2>/dev/null | grep -qw _libiconv; then
+                echo "Patching $bin: $dep -> @rpath/libgnuiconv.2.dylib"
+                install_name_tool -change "$dep" "@rpath/libgnuiconv.2.dylib" "$bin" 2>/dev/null || true
+              else
+                echo "Patching $bin: $dep -> /usr/lib/libiconv.2.dylib"
+                install_name_tool -change "$dep" "/usr/lib/libiconv.2.dylib" "$bin" 2>/dev/null || true
+              fi
               continue
             fi
             # Check if we have this library in our lib directory
@@ -445,20 +457,25 @@ stdenv.mkDerivation {
           # all /usr/lib (e.g. the bundled GNU libiconv, which links only
           # libSystem) makes this grep match NOTHING — capture with a
           # fallback so pipefail does not abort the phase.
-          lib_deps="$(otool -L "$lib" | grep /nix/store | awk '{print $1}' || true)"
+          lib_deps="$(otool -L "$lib" | awk 'NR > 1 {print $1}' | grep -E '^/nix/store/|^@rpath/libiconv|^@rpath/libcharset' || true)"
           echo "$lib_deps" | while read dep; do
             [ -n "$dep" ] || continue
             deplibname=$(basename "$dep")
-            # libiconv/libcharset: only the GNU provider is bundled (see
-            # installPhase); Apple-SDK consumers go to the OS copies.
+            # libiconv/libcharset: two incompatible families share these
+            # basenames — same routing as the binary loop above.
             if [ "''${deplibname#libcharset}" != "$deplibname" ]; then
               echo "Patching $lib: $dep -> /usr/lib/libcharset.1.dylib"
               install_name_tool -change "$dep" "/usr/lib/libcharset.1.dylib" "$lib" 2>/dev/null || true
               continue
             fi
-            if [ "''${deplibname#libiconv}" != "$deplibname" ] && ! nm -gU "$dep" 2>/dev/null | grep -qw _libiconv; then
-              echo "Patching $lib: $dep -> /usr/lib/libiconv.2.dylib"
-              install_name_tool -change "$dep" "/usr/lib/libiconv.2.dylib" "$lib" 2>/dev/null || true
+            if [ "''${deplibname#libiconv}" != "$deplibname" ]; then
+              if nm -gU "$dep" 2>/dev/null | grep -qw _libiconv; then
+                echo "Patching $lib: $dep -> @rpath/libgnuiconv.2.dylib"
+                install_name_tool -change "$dep" "@rpath/libgnuiconv.2.dylib" "$lib" 2>/dev/null || true
+              else
+                echo "Patching $lib: $dep -> /usr/lib/libiconv.2.dylib"
+                install_name_tool -change "$dep" "/usr/lib/libiconv.2.dylib" "$lib" 2>/dev/null || true
+              fi
               continue
             fi
             if [ -f "$out/lib/$deplibname" ]; then
