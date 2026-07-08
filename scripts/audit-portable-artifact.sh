@@ -30,9 +30,11 @@ bad_symlinks="$(
   find "$rootfs" -type l 2>/dev/null \
     | while IFS= read -r link_path; do
         target="$(readlink "$link_path")"
-        case "$target" in
-          /*) printf '%s -> %s\n' "$link_path" "$target" ;;
-        esac
+        # No case statement here: the pattern-closing paren inside a command
+        # substitution is a parse error on macOS bash 3.2.
+        if [[ "$target" == /* ]]; then
+          printf '%s -> %s\n' "$link_path" "$target"
+        fi
       done
 )"
 if [[ -n "$bad_symlinks" ]]; then
