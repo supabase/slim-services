@@ -242,6 +242,30 @@ stdenv.mkDerivation {
       fi
     done
 
+    # slim-services overlay: the darwin closure contains TWO providers of
+    # libiconv.2.dylib/libcharset.1.dylib — GNU libiconv-1.x (exports
+    # _libiconv; what libidn2 and friends import) and the Apple SDK stub
+    # (exports _iconv, reexports its own libcharset). The flat basename
+    # copies above let whichever is traversed last clobber the other, so
+    # which provider shipped depended on enumeration order (latestOnly
+    # flipped it: pg_net -> libidn2 -> "Symbol not found: _libiconv").
+    # Bundle exactly the GNU copy; postFixup routes Apple-SDK references to
+    # the OS libraries in the dyld shared cache instead.
+    if [ "$(uname)" = "Darwin" ]; then
+      rm -f $out/lib/libiconv* $out/lib/libcharset*
+      for macho in $out/bin/.* $out/bin/* $out/lib/*; do
+        [ -f "$macho" ] || continue
+        file "$macho" 2>/dev/null | grep -q "Mach-O" || continue
+        otool -L "$macho" 2>/dev/null | awk '{print $1}' | grep '^/nix/store/.*libiconv' | while read -r dep; do
+          if [ ! -e "$out/lib/libiconv.2.dylib" ] && nm -gU "$dep" 2>/dev/null | grep -qw _libiconv; then
+            echo "Bundling GNU libiconv from $dep"
+            cp -L "$dep" "$out/lib/libiconv.2.dylib"
+            chmod u+w "$out/lib/libiconv.2.dylib"
+          fi
+        done
+      done
+    fi
+
     # Copy share directory
     if [ -d ${psql_17_cli.bin}/share ]; then
       cp -rL ${psql_17_cli.bin}/share/* $out/share/ 2>/dev/null || true
@@ -374,6 +398,18 @@ stdenv.mkDerivation {
           # Get all dylib dependencies from Nix store
           otool -L "$bin" | grep /nix/store | awk '{print $1}' | while read dep; do
             libname=$(basename "$dep")
+            # libiconv/libcharset: only the GNU provider is bundled (see
+            # installPhase); Apple-SDK consumers go to the OS copies.
+            if [ "''${libname#libcharset}" != "$libname" ]; then
+              echo "Patching $bin: $dep -> /usr/lib/libcharset.1.dylib"
+              install_name_tool -change "$dep" "/usr/lib/libcharset.1.dylib" "$bin" 2>/dev/null || true
+              continue
+            fi
+            if [ "''${libname#libiconv}" != "$libname" ] && ! nm -gU "$dep" 2>/dev/null | grep -qw _libiconv; then
+              echo "Patching $bin: $dep -> /usr/lib/libiconv.2.dylib"
+              install_name_tool -change "$dep" "/usr/lib/libiconv.2.dylib" "$bin" 2>/dev/null || true
+              continue
+            fi
             # Check if we have this library in our lib directory
             if [ -f "$out/lib/$libname" ]; then
               echo "Patching $bin: $dep -> @rpath/$libname"
@@ -398,6 +434,18 @@ stdenv.mkDerivation {
           # Then fix references to other libraries
           otool -L "$lib" | grep /nix/store | awk '{print $1}' | while read dep; do
             deplibname=$(basename "$dep")
+            # libiconv/libcharset: only the GNU provider is bundled (see
+            # installPhase); Apple-SDK consumers go to the OS copies.
+            if [ "''${deplibname#libcharset}" != "$deplibname" ]; then
+              echo "Patching $lib: $dep -> /usr/lib/libcharset.1.dylib"
+              install_name_tool -change "$dep" "/usr/lib/libcharset.1.dylib" "$lib" 2>/dev/null || true
+              continue
+            fi
+            if [ "''${deplibname#libiconv}" != "$deplibname" ] && ! nm -gU "$dep" 2>/dev/null | grep -qw _libiconv; then
+              echo "Patching $lib: $dep -> /usr/lib/libiconv.2.dylib"
+              install_name_tool -change "$dep" "/usr/lib/libiconv.2.dylib" "$lib" 2>/dev/null || true
+              continue
+            fi
             if [ -f "$out/lib/$deplibname" ]; then
               echo "Patching $lib: $dep -> @rpath/$deplibname"
               install_name_tool -change "$dep" "@rpath/$deplibname" "$lib" 2>/dev/null || true
