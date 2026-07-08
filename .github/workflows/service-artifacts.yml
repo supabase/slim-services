@@ -32,6 +32,11 @@ name: Service artifacts
         description: Space-separated targets (linux-arm64 linux-amd64 darwin-arm64).
         required: false
         default: linux-arm64 linux-amd64 darwin-arm64
+      force:
+        description: Rebuild even when an identical artifact is already cached.
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -97,35 +102,6 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Checkout service source
-        run: |
-          set -euo pipefail
-          git submodule update --init --depth 1 "sources/${{ matrix.service }}"
-
-      # Nix drives every native build (BEAM packages, Node/libpq pins, and
-      # the Docker-free harness postgres on macOS).
-      - name: Install Nix
-        uses: nixbuild/nix-quick-install-action@v34
-
-      - name: Restore/save Nix store cache
-        uses: nix-community/cache-nix-action@v7
-        with:
-          primary-key: nix-host-native-${{ matrix.service }}-${{ matrix.platform_dir }}-${{ hashFiles(format('services/{0}/recipe.env', matrix.service), format('services/{0}/nix/**', matrix.service), format('services/{0}/build-host.sh', matrix.service), 'scripts/nixpkgs-pin.sh') }}
-          restore-prefixes-first-match: |
-            nix-host-native-${{ matrix.service }}-${{ matrix.platform_dir }}-
-          gc-max-store-size-linux: 8G
-          gc-max-store-size-macos: 8G
-
-      - name: Set up Docker Buildx
-        if: matrix.target_os == 'linux'
-        uses: docker/setup-buildx-action@v3
-
-      - name: Set up Go
-        if: matrix.service == 'auth'
-        uses: actions/setup-go@v5
-        with:
-          go-version: stable
-
       - name: Prepare target variables
         id: vars
         shell: bash
@@ -137,12 +113,82 @@ jobs:
             printf "%s" "$SOURCE_REF"
           ')"
           artifact_dir="artifacts/${{ matrix.service }}/${version}/${{ matrix.platform_dir }}"
+          # Content fingerprint of everything that determines this artifact:
+          # the service dir (recipe, overlay, Dockerfile.slim, smoke, nix
+          # overlay, build-host), the source submodule pin, the shared
+          # scripts/, and this workflow. Same fingerprint => identical
+          # artifact => the build/smoke below can be skipped and the cached
+          # archive re-uploaded.
+          fingerprint="$(
+            {
+              git rev-parse "HEAD:services/${{ matrix.service }}"
+              git ls-tree HEAD "sources/${{ matrix.service }}"
+              git rev-parse "HEAD:scripts"
+              git rev-parse "HEAD:.github/workflows/service-artifacts.yml"
+            } | shasum -a 256 | cut -d' ' -f1
+          )"
           {
             printf 'version=%s\n' "$version"
             printf 'artifact_dir=%s\n' "$artifact_dir"
+            printf 'fingerprint=%s\n' "$fingerprint"
           } >> "$GITHUB_OUTPUT"
 
+      # Content-addressed skip: if this exact (service, target, fingerprint)
+      # was already built and smoked on any previous run, restore the
+      # finished archive + manifest instead of rebuilding. `force: true`
+      # bypasses the lookup and rebuilds (GitHub cache entries are
+      # immutable, so the rebuild cannot replace an existing entry — bump
+      # the artifact-v1 prefix if a cached artifact must be invalidated by
+      # hand).
+      - name: Restore identical artifact from cache
+        id: artifact-cache
+        if: ${{ !inputs.force }}
+        uses: actions/cache/restore@v4
+        with:
+          key: artifact-v1-${{ matrix.service }}-${{ matrix.platform_dir }}-${{ steps.vars.outputs.fingerprint }}
+          path: |
+            ${{ steps.vars.outputs.artifact_dir }}/*.tar.zst
+            ${{ steps.vars.outputs.artifact_dir }}/SHA256SUMS
+            ${{ steps.vars.outputs.artifact_dir }}/manifest.json
+
+      - name: Report skip
+        if: steps.artifact-cache.outputs.cache-hit == 'true'
+        run: echo "identical artifact already built (fingerprint ${{ steps.vars.outputs.fingerprint }}); skipping build and smoke, re-uploading the cached archive"
+
+      - name: Checkout service source
+        if: steps.artifact-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          git submodule update --init --depth 1 "sources/${{ matrix.service }}"
+
+      # Nix drives every native build (BEAM packages, Node/libpq pins, and
+      # the Docker-free harness postgres on macOS).
+      - name: Install Nix
+        if: steps.artifact-cache.outputs.cache-hit != 'true'
+        uses: nixbuild/nix-quick-install-action@v34
+
+      - name: Restore/save Nix store cache
+        if: steps.artifact-cache.outputs.cache-hit != 'true'
+        uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-host-native-${{ matrix.service }}-${{ matrix.platform_dir }}-${{ hashFiles(format('services/{0}/recipe.env', matrix.service), format('services/{0}/nix/**', matrix.service), format('services/{0}/build-host.sh', matrix.service), 'scripts/nixpkgs-pin.sh') }}
+          restore-prefixes-first-match: |
+            nix-host-native-${{ matrix.service }}-${{ matrix.platform_dir }}-
+          gc-max-store-size-linux: 8G
+          gc-max-store-size-macos: 8G
+
+      - name: Set up Docker Buildx
+        if: matrix.target_os == 'linux' && steps.artifact-cache.outputs.cache-hit != 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Set up Go
+        if: matrix.service == 'auth' && steps.artifact-cache.outputs.cache-hit != 'true'
+        uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
       - name: Build, audit, smoke, and package
+        if: steps.artifact-cache.outputs.cache-hit != 'true'
         shell: bash
         env:
           TARGET_OS: ${{ matrix.target_os }}
@@ -157,13 +203,23 @@ jobs:
       # The image smoke above covers the Docker flavor; this covers the CLI's
       # no-Docker mode with the same artifact running as a host process.
       - name: Smoke artifact as a host process (linux)
-        if: matrix.target_os == 'linux'
+        if: matrix.target_os == 'linux' && steps.artifact-cache.outputs.cache-hit != 'true'
         shell: bash
         env:
           SLIM_DIRECT_LINUX_ARTIFACT_SMOKE: "1"
         run: |
           set -euo pipefail
           scripts/smoke.sh "${{ matrix.service }}" --artifact "${{ steps.vars.outputs.artifact_dir }}/rootfs"
+
+      - name: Save artifact to cache
+        if: steps.artifact-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          key: artifact-v1-${{ matrix.service }}-${{ matrix.platform_dir }}-${{ steps.vars.outputs.fingerprint }}
+          path: |
+            ${{ steps.vars.outputs.artifact_dir }}/*.tar.zst
+            ${{ steps.vars.outputs.artifact_dir }}/SHA256SUMS
+            ${{ steps.vars.outputs.artifact_dir }}/manifest.json
 
       - name: Upload archive + checksums + manifest
         uses: actions/upload-artifact@v4
