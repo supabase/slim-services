@@ -81,6 +81,8 @@ def verneed_names(data):
     for sh_type, off, size, link in sections:
         if sh_type != SHT_GNU_VERNEED or link >= len(sections):
             continue
+        if off + size > len(data):  # malformed sh_offset/sh_size: skip, don't crash
+            continue
         str_off = sections[link][1]
         pos = off
         end = off + size
@@ -135,17 +137,22 @@ for dirpath, _dirs, files in os.walk(rootfs):
             saw_loader = True
         if GLIBC_OWN.match(fname):
             continue
-        names = verneed_names(data)
-        if not names:
-            continue
-        for name in names:
-            m = GLIBC_RE.match(name)
-            if not m:
+        # A malformed/truncated ELF must never crash the scan; treat it as
+        # contributing no requirements.
+        try:
+            names = verneed_names(data)
+            if not names:
                 continue
-            v = m.group(1)
-            if floor is None or vkey(v) > vkey(floor):
-                floor = v
-                offender = os.path.relpath(path, rootfs)
+            for name in names:
+                m = GLIBC_RE.match(name)
+                if not m:
+                    continue
+                v = m.group(1)
+                if floor is None or vkey(v) > vkey(floor):
+                    floor = v
+                    offender = os.path.relpath(path, rootfs)
+        except (struct.error, ValueError, IndexError):
+            continue
 
 print(json.dumps({
     "kind": "glibc",
