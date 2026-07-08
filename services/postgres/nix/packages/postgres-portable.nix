@@ -366,29 +366,6 @@ stdenv.mkDerivation {
         done
       done
     ''
-    + ''
-      # slim-services overlay: the upstream tree reaches this package as a
-      # symlink farm, and the `cp -rL` copies above expand every alias into a
-      # full copy — postgis ships ~130 identical 8-MiB upgrade scripts, and
-      # every extension exists as both name.so and name-<version>.so. Replace
-      # identical siblings with relative symlinks (same directory only).
-      for dedup_dir in "$out/share/postgresql/extension" "$out/lib"; do
-        [ -d "$dedup_dir" ] || continue
-        (
-          cd "$dedup_dir"
-          declare -A seen_hash
-          while IFS= read -r f; do
-            f="''${f#./}"
-            h="$(sha256sum "$f" | cut -d' ' -f1)"
-            if [ -n "''${seen_hash[$h]:-}" ]; then
-              ln -sf "''${seen_hash[$h]}" "$f"
-            else
-              seen_hash[$h]="$f"
-            fi
-          done < <(find . -maxdepth 1 -type f -size +1M | LC_ALL=C sort)
-        )
-      done
-    ''
     + lib.optionalString stdenv.isDarwin ''
       # On macOS, patch binaries to use relative library paths
       # This makes the bundle portable across macOS systems for Supabase CLI
@@ -450,6 +427,40 @@ stdenv.mkDerivation {
           install_name_tool -delete_rpath "$rpath" "$macho" 2>/dev/null || true
         done
         codesign --force --sign - "$macho" 2>/dev/null || true
+      done
+    ''
+    + ''
+      # slim-services overlay: the upstream tree reaches this package as a
+      # symlink farm, and the `cp -rL` copies above expand every alias into a
+      # full copy — postgis ships ~130 identical 8-MiB upgrade scripts, and
+      # every extension exists as both name.so and name-<version>.so. Replace
+      # identical siblings with relative symlinks (same directory only).
+      # Runs LAST so it can never hand a symlink to the patchelf or
+      # install_name_tool loops above (mutating a canonical file once per
+      # alias name corrupts it). lib/ is deduped on Linux only: ELF sonames
+      # are symlink-friendly by design, but Mach-O two-level namespace binds
+      # symbols to each dylib's LC_ID_DYLIB, so aliasing dylibs whose IDs
+      # were just rewritten per-name breaks symbol lookup (seen as
+      # "Symbol not found: _libiconv" loading pg_net on darwin).
+      dedup_dirs="$out/share/postgresql/extension"
+      if [ "$(uname)" = "Linux" ]; then
+        dedup_dirs="$dedup_dirs $out/lib"
+      fi
+      for dedup_dir in $dedup_dirs; do
+        [ -d "$dedup_dir" ] || continue
+        (
+          cd "$dedup_dir"
+          declare -A seen_hash
+          while IFS= read -r f; do
+            f="''${f#./}"
+            h="$(sha256sum "$f" | cut -d' ' -f1)"
+            if [ -n "''${seen_hash[$h]:-}" ]; then
+              ln -sf "''${seen_hash[$h]}" "$f"
+            else
+              seen_hash[$h]="$f"
+            fi
+          done < <(find . -maxdepth 1 -type f -size +1M | LC_ALL=C sort)
+        )
       done
     '';
 
