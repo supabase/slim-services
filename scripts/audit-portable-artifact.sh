@@ -81,7 +81,8 @@ case "$mode" in
     fi
     # Host floor gate: highest Mach-O deployment target shipped must stay
     # within the supported macOS policy (CI_MATRIX.md).
-    floor_json="$("$ROOT_DIR/scripts/os-floor.sh" --darwin "$rootfs")"
+    floor_json="$("$ROOT_DIR/scripts/os-floor.sh" --darwin "$rootfs")" \
+      || fail "os-floor scan failed for $rootfs"
     log "darwin floor: $floor_json"
     macos_floor_max="${MACOS_FLOOR_MAX:-${SLIM_MACOS_FLOOR_MAX:-13.0}}"
     python3 - "$floor_json" "$macos_floor_max" <<'PY' || fail "Darwin artifact exceeds the macOS floor policy"
@@ -155,7 +156,7 @@ PY
                 | awk -v file="$file_path" -v ok="$allowed_interp" '
                     /Requesting program interpreter/ {
                       line = $0
-                      sub(/^.*\[/, "", line)
+                      sub(/^.*interpreter: /, "", line)
                       sub(/\].*$/, "", line)
                       if (line != ok) print file " -> " line
                     }'
@@ -171,7 +172,8 @@ PY
     # (CI_MATRIX.md). Artifacts that bundle their own libc + loader pair are
     # a different (hermetic) contract and are proven by the floor-container
     # execution check instead.
-    floor_json="$("$ROOT_DIR/scripts/os-floor.sh" --linux "$rootfs")"
+    floor_json="$("$ROOT_DIR/scripts/os-floor.sh" --linux "$rootfs")" \
+      || fail "os-floor scan failed for $rootfs"
     log "linux floor: $floor_json"
     glibc_floor_max="${GLIBC_FLOOR_MAX:-${SLIM_GLIBC_FLOOR_MAX:-2.38}}"
     python3 - "$floor_json" "$glibc_floor_max" <<'PY' || fail "Linux artifact exceeds the glibc floor policy"
