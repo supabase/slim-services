@@ -201,6 +201,8 @@ manifest = {
     "version": "$VERSION",
     "platform": "$PLATFORM",
     "arch": "$ARCH",
+    "target": "$(artifact_platform_dir "$TARGET_OS" "$ARCH")",
+    "libc": "glibc" if "$TARGET_OS" == "linux" else None,
     "source_dir": "$SOURCE_DIR",
     "source_ref": "$SOURCE_REF",
     "source_commit": "$actual_ref",

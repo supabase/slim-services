@@ -162,6 +162,8 @@ manifest = {
     "version": "$VERSION",
     "platform": "$PLATFORM",
     "arch": "$ARCH",
+    "target": "$(artifact_platform_dir "$TARGET_OS" "$ARCH")",
+    "libc": "glibc" if "$TARGET_OS" == "linux" else None,
     "source_image": "$SOURCE_IMAGE",
     "base_image": "$BASE_IMAGE",
     "entrypoint": json.loads("""$ENTRYPOINT_JSON"""),

@@ -48,6 +48,12 @@ manifest="$artifact_dir/manifest.json"
 
 log "CI target: service=$service version=$version target=$TARGET_OS/$ARCH"
 
+# Recipe-level policy knobs for the audit and the floor check below
+# (GLIBC_FLOOR_MAX, MACOS_FLOOR_MAX, FLOOR_CHECK_CMD are plain recipe vars).
+load_recipe "$service"
+export GLIBC_FLOOR_MAX="${GLIBC_FLOOR_MAX:-}"
+export MACOS_FLOOR_MAX="${MACOS_FLOOR_MAX:-}"
+
 merge_runtime_metrics() {
   local manifest_file="$1"
   local metrics_file="$2"
@@ -88,6 +94,28 @@ if [[ "$artifact_portable" == "true" && "$TARGET_OS" == "$(host_os)" ]]; then
   [[ "$TARGET_OS" == "darwin" ]] && audit_mode="--darwin"
   log "auditing portable artifact ($audit_mode)"
   "$ROOT_DIR/scripts/audit-portable-artifact.sh" "$audit_mode" "$rootfs"
+fi
+
+# Record the measured OS floor in the manifest so distribution consumers
+# (the CLI) can pre-flight host compatibility with a clear error instead of
+# a loader crash.
+if [[ "$artifact_portable" == "true" && "$TARGET_OS" == "$(host_os)" ]]; then
+  floor_mode="--linux"
+  [[ "$TARGET_OS" == "darwin" ]] && floor_mode="--darwin"
+  os_floor_json="$("$ROOT_DIR/scripts/os-floor.sh" "$floor_mode" "$rootfs")"
+  log "recording os floor in manifest: $os_floor_json"
+  python3 - "$manifest" "$os_floor_json" <<'PY'
+import json
+import sys
+
+manifest_path, floor_raw = sys.argv[1:]
+with open(manifest_path, "r", encoding="utf-8") as fh:
+    data = json.load(fh)
+data["os_floor"] = json.loads(floor_raw)
+with open(manifest_path, "w", encoding="utf-8") as fh:
+    json.dump(data, fh, indent=2)
+    fh.write("\n")
+PY
 fi
 
 # On Linux the artifact smoke would build a temporary image from the exact
