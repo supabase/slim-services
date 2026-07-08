@@ -13,7 +13,7 @@ FROM debian:trixie-slim AS tools
 RUN apt-get update -y && apt-get install -y --no-install-recommends busybox bash ca-certificates \
   && mkdir -p /out/usr/bin /out/usr/lib /out/etc/ssl/certs /out/usr/local/share/postgres /pgdata-skel/data \
   && cp /usr/bin/busybox /out/usr/bin/busybox \
-  && for applet in sh basename cat chmod cp cut date dirname env grep gunzip head id mkdir readlink rm sed sleep tr uname wc; do \
+  && for applet in sh basename cat chmod cp cut date dirname env grep gunzip head id mkdir od readlink rm sed sleep tr uname wc; do \
        ln -sf busybox "/out/usr/bin/${applet}"; \
      done \
   # The bundle's supabase-postgres-init.sh is bash; bring bash + its one

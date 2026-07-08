@@ -238,7 +238,15 @@
 
       # CLI packages - minimal PostgreSQL + supautils only for Supabase CLI
       cliPackages = {
-        psql_17_cli = makePostgres "17" { variant = "cli"; };
+        psql_17_cli = makePostgres "17" {
+          variant = "cli";
+          # slim-services overlay: ship only the LATEST version of each
+          # extension. The default builds every historical version (16x
+          # wrappers, 17x pg_graphql, ... — mostly large pgrx cdylibs), which
+          # ballooned the portable rootfs to ~5 GiB. latestOnly also bundles
+          # glibcLocalesMinimal on Linux (initdb locale support).
+          latestOnly = true;
+        };
       };
 
       binPackages = lib.mapAttrs' (name: value: {
