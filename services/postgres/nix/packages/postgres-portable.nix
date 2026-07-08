@@ -242,6 +242,38 @@ stdenv.mkDerivation {
       fi
     done
 
+    # slim-services overlay: the darwin closure contains TWO libiconv
+    # FAMILIES at once — GNU libiconv-1.x (exports _libiconv; libidn2-2.3.8
+    # and gettext-0.25.1 import that) and the Apple SDK libiconv (exports
+    # _iconv; libidn2-2.3.7 and gettext-0.21.1 import that) — and both ship
+    # dylibs named libiconv(.2).dylib/libcharset.1.dylib. The flat basename
+    # copies above let whichever was traversed last clobber the other, and
+    # NO single file can satisfy both symbol sets. Ship the GNU library
+    # under a NON-COLLIDING name: the bin wrappers set DYLD_LIBRARY_PATH,
+    # which redirects ANY matching leafname into lib/ (even /usr/lib
+    # references), so no bundled file may be named libiconv*/libcharset*.
+    # postFixup routes GNU-family references to the bundled copy and
+    # Apple-family references to the OS copies in the dyld shared cache.
+    if [ "$(uname)" = "Darwin" ]; then
+      rm -f $out/lib/libiconv* $out/lib/libcharset*
+      for macho in $out/bin/.* $out/bin/* $out/lib/*; do
+        [ -f "$macho" ] || continue
+        file "$macho" 2>/dev/null | grep -q "Mach-O" || continue
+        # Phases run under pipefail: a no-match grep must not abort the
+        # build, so capture with an explicit fallback instead of piping
+        # straight into the loop.
+        iconv_refs="$(otool -L "$macho" 2>/dev/null | awk '{print $1}' | grep '^/nix/store/.*libiconv' || true)"
+        [ -n "$iconv_refs" ] || continue
+        echo "$iconv_refs" | while read -r dep; do
+          if [ ! -e "$out/lib/libgnuiconv.2.dylib" ] && nm -gU "$dep" 2>/dev/null | grep -qw _libiconv; then
+            echo "Bundling GNU libiconv from $dep as libgnuiconv.2.dylib"
+            cp -L "$dep" "$out/lib/libgnuiconv.2.dylib"
+            chmod u+w "$out/lib/libgnuiconv.2.dylib"
+          fi
+        done
+      done
+    fi
+
     # Copy share directory
     if [ -d ${psql_17_cli.bin}/share ]; then
       cp -rL ${psql_17_cli.bin}/share/* $out/share/ 2>/dev/null || true
@@ -299,6 +331,17 @@ stdenv.mkDerivation {
         exit 1
       fi
 
+      # slim-services overlay: the pgrx extensions ship unstripped (wrappers
+      # alone is 128 MiB; ~30 MiB stripped). Strip BEFORE patchelf — GNU
+      # strip can corrupt binaries whose section layout patchelf already
+      # rewrote, the reverse order is safe.
+      for elf in $out/bin/.*-wrapped $out/lib/*.so*; do
+        [ -f "$elf" ] || continue
+        [ -L "$elf" ] && continue
+        file "$elf" | grep -q ELF || continue
+        strip --strip-unneeded "$elf" 2>/dev/null || true
+      done
+
       # On Linux, patch binaries to use system interpreter and relative library paths
       # This makes the bundle portable across Linux systems for Supabase CLI
       for bin in $out/bin/.*-wrapped; do
@@ -323,15 +366,71 @@ stdenv.mkDerivation {
           patchelf --shrink-rpath "$lib" 2>/dev/null || true
         fi
       done
+
+      # slim-services overlay: nixpkgs proj/gdal link libsqlite3 by ABSOLUTE
+      # store path (CMake full-path linking), which an ldd audit on a build
+      # machine cannot catch — its /nix/store resolves the reference. Bundle
+      # any such dependency next to the other libs and rewrite the NEEDED
+      # entry to its basename; loop until a pass adds nothing new (bundled
+      # deps can bring their own absolute references).
+      changed=1
+      while [ "$changed" = 1 ]; do
+        changed=0
+        for so in $out/lib/*.so*; do
+          [ -f "$so" ] || continue
+          [ -L "$so" ] && continue
+          file "$so" | grep -q ELF || continue
+          for needed in $(patchelf --print-needed "$so" 2>/dev/null); do
+            case "$needed" in
+              /nix/store/*)
+                base="$(basename "$needed")"
+                if [ ! -e "$out/lib/$base" ]; then
+                  cp -L "$needed" "$out/lib/$base"
+                  chmod u+w "$out/lib/$base"
+                  strip --strip-unneeded "$out/lib/$base" 2>/dev/null || true
+                  patchelf --set-rpath '$ORIGIN' "$out/lib/$base" 2>/dev/null || true
+                  changed=1
+                fi
+                patchelf --replace-needed "$needed" "$base" "$so"
+                ;;
+            esac
+          done
+        done
+      done
     ''
     + lib.optionalString stdenv.isDarwin ''
       # On macOS, patch binaries to use relative library paths
       # This makes the bundle portable across macOS systems for Supabase CLI
       for bin in $out/bin/.*-wrapped; do
         if [ -f "$bin" ] && file "$bin" | grep -q "Mach-O"; then
-          # Get all dylib dependencies from Nix store
-          otool -L "$bin" | grep /nix/store | awk '{print $1}' | while read dep; do
+          # Get all dylib dependencies from the Nix store, plus any
+          # libiconv/libcharset reference in @rpath form. Phases run under
+          # pipefail: capture with a fallback — a binary with no matching
+          # refs must not abort the build.
+          bin_deps="$(otool -L "$bin" | awk 'NR > 1 {print $1}' | grep -E '^/nix/store/|^@rpath/libiconv|^@rpath/libcharset' || true)"
+          echo "$bin_deps" | while read dep; do
+            [ -n "$dep" ] || continue
             libname=$(basename "$dep")
+            # libiconv/libcharset: two incompatible families share these
+            # basenames. GNU-family refs (target exports _libiconv) go to
+            # the bundled libgnuiconv.2.dylib; everything else — the Apple
+            # SDK dylibs and @rpath leftovers (Apple provenance, compat 7)
+            # — goes to the OS copies.
+            if [ "''${libname#libcharset}" != "$libname" ]; then
+              echo "Patching $bin: $dep -> /usr/lib/libcharset.1.dylib"
+              install_name_tool -change "$dep" "/usr/lib/libcharset.1.dylib" "$bin" 2>/dev/null || true
+              continue
+            fi
+            if [ "''${libname#libiconv}" != "$libname" ]; then
+              if nm -gU "$dep" 2>/dev/null | grep -qw _libiconv; then
+                echo "Patching $bin: $dep -> @rpath/libgnuiconv.2.dylib"
+                install_name_tool -change "$dep" "@rpath/libgnuiconv.2.dylib" "$bin" 2>/dev/null || true
+              else
+                echo "Patching $bin: $dep -> /usr/lib/libiconv.2.dylib"
+                install_name_tool -change "$dep" "/usr/lib/libiconv.2.dylib" "$bin" 2>/dev/null || true
+              fi
+              continue
+            fi
             # Check if we have this library in our lib directory
             if [ -f "$out/lib/$libname" ]; then
               echo "Patching $bin: $dep -> @rpath/$libname"
@@ -353,9 +452,32 @@ stdenv.mkDerivation {
           # Add @rpath to the library itself so it can find other libraries
           install_name_tool -add_rpath "@loader_path" "$lib" 2>/dev/null || true
 
-          # Then fix references to other libraries
-          otool -L "$lib" | grep /nix/store | awk '{print $1}' | while read dep; do
+          # Then fix references to other libraries. The -id rewrite above
+          # removes the store ID line, so a dylib whose remaining deps are
+          # all /usr/lib (e.g. the bundled GNU libiconv, which links only
+          # libSystem) makes this grep match NOTHING — capture with a
+          # fallback so pipefail does not abort the phase.
+          lib_deps="$(otool -L "$lib" | awk 'NR > 1 {print $1}' | grep -E '^/nix/store/|^@rpath/libiconv|^@rpath/libcharset' || true)"
+          echo "$lib_deps" | while read dep; do
+            [ -n "$dep" ] || continue
             deplibname=$(basename "$dep")
+            # libiconv/libcharset: two incompatible families share these
+            # basenames — same routing as the binary loop above.
+            if [ "''${deplibname#libcharset}" != "$deplibname" ]; then
+              echo "Patching $lib: $dep -> /usr/lib/libcharset.1.dylib"
+              install_name_tool -change "$dep" "/usr/lib/libcharset.1.dylib" "$lib" 2>/dev/null || true
+              continue
+            fi
+            if [ "''${deplibname#libiconv}" != "$deplibname" ]; then
+              if nm -gU "$dep" 2>/dev/null | grep -qw _libiconv; then
+                echo "Patching $lib: $dep -> @rpath/libgnuiconv.2.dylib"
+                install_name_tool -change "$dep" "@rpath/libgnuiconv.2.dylib" "$lib" 2>/dev/null || true
+              else
+                echo "Patching $lib: $dep -> /usr/lib/libiconv.2.dylib"
+                install_name_tool -change "$dep" "/usr/lib/libiconv.2.dylib" "$lib" 2>/dev/null || true
+              fi
+              continue
+            fi
             if [ -f "$out/lib/$deplibname" ]; then
               echo "Patching $lib: $dep -> @rpath/$deplibname"
               install_name_tool -change "$dep" "@rpath/$deplibname" "$lib" 2>/dev/null || true
@@ -385,6 +507,40 @@ stdenv.mkDerivation {
           install_name_tool -delete_rpath "$rpath" "$macho" 2>/dev/null || true
         done
         codesign --force --sign - "$macho" 2>/dev/null || true
+      done
+    ''
+    + ''
+      # slim-services overlay: the upstream tree reaches this package as a
+      # symlink farm, and the `cp -rL` copies above expand every alias into a
+      # full copy — postgis ships ~130 identical 8-MiB upgrade scripts, and
+      # every extension exists as both name.so and name-<version>.so. Replace
+      # identical siblings with relative symlinks (same directory only).
+      # Runs LAST so it can never hand a symlink to the patchelf or
+      # install_name_tool loops above (mutating a canonical file once per
+      # alias name corrupts it). lib/ is deduped on Linux only: ELF sonames
+      # are symlink-friendly by design, but Mach-O two-level namespace binds
+      # symbols to each dylib's LC_ID_DYLIB, so aliasing dylibs whose IDs
+      # were just rewritten per-name breaks symbol lookup (seen as
+      # "Symbol not found: _libiconv" loading pg_net on darwin).
+      dedup_dirs="$out/share/postgresql/extension"
+      if [ "$(uname)" = "Linux" ]; then
+        dedup_dirs="$dedup_dirs $out/lib"
+      fi
+      for dedup_dir in $dedup_dirs; do
+        [ -d "$dedup_dir" ] || continue
+        (
+          cd "$dedup_dir"
+          declare -A seen_hash
+          while IFS= read -r f; do
+            f="''${f#./}"
+            h="$(sha256sum "$f" | cut -d' ' -f1)"
+            if [ -n "''${seen_hash[$h]:-}" ]; then
+              ln -sf "''${seen_hash[$h]}" "$f"
+            else
+              seen_hash[$h]="$f"
+            fi
+          done < <(find . -maxdepth 1 -type f -size +1M | LC_ALL=C sort)
+        )
       done
     '';
 

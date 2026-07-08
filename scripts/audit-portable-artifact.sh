@@ -22,6 +22,26 @@ mode="$1"
 rootfs="$2"
 [[ -d "$rootfs" ]] || fail "rootfs directory not found: $rootfs"
 
+# Symlinks must stay relative on every platform: an absolute target (a Nix
+# store leak, or any host path) breaks the moment the artifact is extracted
+# somewhere else. Relative links are also what the dedup pass in portable
+# packaging emits, so this doubles as its regression check.
+bad_symlinks="$(
+  find "$rootfs" -type l 2>/dev/null \
+    | while IFS= read -r link_path; do
+        target="$(readlink "$link_path")"
+        # No case statement here: the pattern-closing paren inside a command
+        # substitution is a parse error on macOS bash 3.2.
+        if [[ "$target" == /* ]]; then
+          printf '%s -> %s\n' "$link_path" "$target"
+        fi
+      done
+)"
+if [[ -n "$bad_symlinks" ]]; then
+  printf '%s\n' "$bad_symlinks" >&2
+  fail "artifact contains absolute symlinks (not relocatable)"
+fi
+
 case "$mode" in
   --darwin)
     require_cmd file
@@ -58,6 +78,7 @@ case "$mode" in
   --linux)
     require_cmd file
     require_cmd ldd
+    require_cmd readelf
     # Resolve against the artifact's own library dirs first (including Debian
     # multiarch dirs) so bundled libs don't get checked against older host
     # copies of the same soname.
@@ -76,6 +97,13 @@ case "$mode" in
               LD_LIBRARY_PATH="$lib_path:${LD_LIBRARY_PATH:-}" \
                 ldd "$file_path" 2>/dev/null \
                 | awk -v file="$file_path" '/not found/ { print file " -> " $0 }' \
+                || true
+              # Absolute store paths in NEEDED/RPATH RESOLVE on a build
+              # machine (its /nix/store exists), so the ldd pass above cannot
+              # catch them — reject the strings themselves. (Real leak seen:
+              # nixpkgs proj/gdal carry an absolute NEEDED for libsqlite3.)
+              readelf -d "$file_path" 2>/dev/null \
+                | awk -v file="$file_path" '/NEEDED|RUNPATH|RPATH/ && /\/nix\/store\// { print file " -> " $0 }' \
                 || true
             fi
           done

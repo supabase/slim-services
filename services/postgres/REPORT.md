@@ -162,3 +162,14 @@ target — an accepted divergence from upstream supabase/postgres bundling:
 Verification happens in CI (`service-artifacts.yml`) per the directive —
 no local build for this step; the portable artifact underneath is the one
 already verified above.
+
+First CI run findings (run 28898115404): darwin passed with the full set
+(including the pgrx extensions — the platform worry didn't materialize);
+Linux failed twice-over and both fixes live in the packaging: the image
+tools stage was missing the `od` busybox applet that
+`pgsodium_getkey.sh` needs (server died with "invalid secret key"), and the
+default upstream build ships EVERY historical version of every extension
+(16x wrappers, 17x pg_graphql — mostly large pgrx cdylibs), inflating the
+rootfs to ~5.3 GiB. The overlay now passes upstream's `latestOnly = true`,
+which ships only the latest of each extension and additionally bundles
+glibcLocalesMinimal on Linux.

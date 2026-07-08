@@ -31,7 +31,7 @@ RUN nix --extra-experimental-features "nix-command flakes" build \
       --accept-flake-config \
       --out-link /result \
   && mkdir -p /rootfs \
-  && cp -RL /result/. /rootfs/ \
+  && cp -RP /result/. /rootfs/ \
   && chmod -R u+w /rootfs
 
 FROM scratch AS artifact

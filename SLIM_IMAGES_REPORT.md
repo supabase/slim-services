@@ -35,8 +35,8 @@ local-dev profile baked as overridable image ENV.
 | Metric | Compressed size |
 |---|---:|
 | Upstream ARM64 images total (10 services) | `2166.9 MiB` |
-| Current slim images total | `765.1 MiB` |
-| Current total reduction vs upstream | `1401.8 MiB / 64.7%` |
+| Current slim images total | `746.9 MiB` |
+| Current total reduction vs upstream | `1420.0 MiB / 65.5%` |
 <!-- generated:totals:end -->
 
 Postgres keeps EVERY extension the upstream image ships (`supabase/postgres`
@@ -55,14 +55,14 @@ rebuilding services.
 |---|---:|---:|---:|---:|---:|---:|---|
 | Postgres | `17.6.1.143` (all extensions) | `349.8 MiB` | `293.9 MiB` | `16.0%` | `66.1 MiB` | `0.01%` | [report](services/postgres/REPORT.md) |
 | PostgREST | `v14.14` | `145.3 MiB` | `20.3 MiB` | `86.0%` | `29.4 MiB` | `0.13%` | [report](services/postgrest/REPORT.md) |
-| Auth | `v2.192.0` | `25.8 MiB` | `11.2 MiB` | `56.6%` | `8.2 MiB` | `0.01%` | [report](services/auth/REPORT.md) |
-| Realtime | `v2.112.6` | `114.7 MiB` | `28.4 MiB` | `75.2%` | `166.6 MiB` | `0.14%` | [report](services/realtime/REPORT.md) |
+| Auth | `v2.192.0` | `25.8 MiB` | `11.4 MiB` | `55.8%` | `8.0 MiB` | `0.03%` | [report](services/auth/REPORT.md) |
+| Realtime | `v2.112.6` | `114.7 MiB` | `26.6 MiB` | `76.8%` | `162.8 MiB` | `0.20%` | [report](services/realtime/REPORT.md) |
 | Storage | `v1.62.6` | `223.5 MiB` | `55.6 MiB` | `75.1%` | `211.5 MiB` | `0.19%` | [report](services/storage/REPORT.md) |
 | Edge Runtime | `v1.74.2` (no-AI) | `360.6 MiB` | `52.7 MiB` | `85.4%` | `14.7 MiB` | `0.04%` | [report](services/edge-runtime/REPORT.md) |
 | Studio | `2026.06.29-sha-20290c7` | `304.7 MiB` | `136.3 MiB` | `55.3%` | `201.4 MiB` | `0.00%` | [report](services/studio/REPORT.md) |
-| Analytics | `v1.46.0` | `258.9 MiB` | `89.7 MiB` | `65.3%` | `546.7 MiB` | `0.35%` | [report](services/analytics/REPORT.md) |
+| Analytics | `v1.46.0` | `258.9 MiB` | `58.4 MiB` | `77.4%` | `479.7 MiB` | `0.45%` | [report](services/analytics/REPORT.md) |
 | PgMeta | `v0.96.6` | `94.2 MiB` | `52.7 MiB` | `44.1%` | `79.4 MiB` | `0.70%` | [report](services/pgmeta/REPORT.md) |
-| Pooler | `v2.9.10` | `289.4 MiB`* | `24.3 MiB` | `91.6%`* | `155.6 MiB` | `0.18%` | [report](services/pooler/REPORT.md) |
+| Pooler | `v2.9.10` | `289.4 MiB`* | `39.0 MiB` | `86.5%`* | `159.0 MiB` | `0.12%` | [report](services/pooler/REPORT.md) |
 
 `*` Upstream comparison uses `UPSTREAM_COMPARE_IMAGE` from the recipe (the exact tag is not published on Docker Hub), so the percentage is directional.
 <!-- generated:results:end -->
@@ -124,10 +124,12 @@ Measured steady-state RSS with the pass-3 runtime profiles:
    cannot be built locally from macOS: the Node duo's Linux artifacts and the
    linux-amd64 BEAM/Node cells. postgres and studio (docker-image backend)
    still need a workflow.
-2. Regenerate the Linux results tables after that pass — the committed image
-   numbers for storage/pgmeta/postgrest/studio/postgres predate the
-   native-first convergence (realtime/pooler/analytics/auth were re-measured
-   locally: 26.6/39.0/58.4/11.4 MiB gzip).
+2. Table regeneration is automated: every service-artifacts.yml run ends
+   with an update-tables job that merges fresh rows into the results tables
+   and opens a docs PR when numbers changed. Rows for
+   storage/pgmeta/postgrest/postgres refresh on their first full CI pass
+   (studio and edge-runtime rows refresh from local builds or their own
+   workflow's artifacts).
 3. CLI-level follow-ups surfaced by the runtime measurements: run `analytics`
    and `studio` as shared singletons (or default-off) for parallel stacks;
    wire memory limits through `container.HostConfig.Resources`.
