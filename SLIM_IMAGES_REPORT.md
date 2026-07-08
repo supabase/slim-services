@@ -35,8 +35,8 @@ local-dev profile baked as overridable image ENV.
 | Metric | Compressed size |
 |---|---:|
 | Upstream ARM64 images total (10 services) | `2166.9 MiB` |
-| Current slim images total | `746.9 MiB` |
-| Current total reduction vs upstream | `1420.0 MiB / 65.5%` |
+| Current slim images total | `585.7 MiB` |
+| Current total reduction vs upstream | `1581.2 MiB / 73.0%` |
 <!-- generated:totals:end -->
 
 Postgres keeps EVERY extension the upstream image ships (`supabase/postgres`
@@ -53,7 +53,7 @@ rebuilding services.
 <!-- generated:results:begin -->
 | Service | Version | Upstream ARM64 | Current slim | Reduction | Idle RSS | Idle CPU | Report |
 |---|---:|---:|---:|---:|---:|---:|---|
-| Postgres | `17.6.1.143` (all extensions) | `349.8 MiB` | `293.9 MiB` | `16.0%` | `66.1 MiB` | `0.01%` | [report](services/postgres/REPORT.md) |
+| Postgres | `17.6.1.143` (all PG17 extensions, minimal preload) | `349.8 MiB` | `132.7 MiB` | `62.1%` | `46.9 MiB` | `0.01%` | [report](services/postgres/REPORT.md) |
 | PostgREST | `v14.14` | `145.3 MiB` | `20.3 MiB` | `86.0%` | `29.4 MiB` | `0.13%` | [report](services/postgrest/REPORT.md) |
 | Auth | `v2.192.0` | `25.8 MiB` | `11.4 MiB` | `55.8%` | `8.0 MiB` | `0.03%` | [report](services/auth/REPORT.md) |
 | Realtime | `v2.112.6` | `114.7 MiB` | `26.6 MiB` | `76.8%` | `162.8 MiB` | `0.20%` | [report](services/realtime/REPORT.md) |
