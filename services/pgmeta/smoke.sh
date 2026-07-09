@@ -24,7 +24,7 @@ start_postgres pgmeta_smoke
 if [[ -n "$artifact_rootfs" ]]; then
   # Host-process smoke. The artifact does not bundle Node (shared-runtime
   # contract); provide it exactly the way the CLI will, via SUPABASE_NODE,
-  # pinned to the same major as the Docker runtime image (node 20).
+  # pinned to the same major as the build runtime (node 24).
   require_cmd python3
   # shellcheck source=scripts/nixpkgs-pin.sh
   source "$ROOT_DIR/scripts/nixpkgs-pin.sh"
@@ -39,8 +39,8 @@ if [[ -n "$artifact_rootfs" ]]; then
   [[ -x "$pgmeta_bin" ]] || fail "pgmeta artifact launcher not found or not executable: $pgmeta_bin"
 
   if [[ -z "${SUPABASE_NODE:-}" ]]; then
-    log "resolving nodejs_20 from pinned nixpkgs for the smoke runtime"
-    SUPABASE_NODE="$(nixpkgs_build_attr nodejs_20)/bin/node"
+    log "resolving nodejs_24 from pinned nixpkgs for the smoke runtime"
+    SUPABASE_NODE="$(nixpkgs_build_attr nodejs_24)/bin/node"
   fi
 
   pg_port="$(postgres_port)"

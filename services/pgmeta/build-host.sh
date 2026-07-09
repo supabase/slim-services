@@ -21,9 +21,9 @@ source "$ROOT_DIR/scripts/nixpkgs-pin.sh"
 
 require_cmd tar
 
-# Same Node major as the Docker builder (node:20).
-log "resolving nodejs_20 from pinned nixpkgs"
-node_store="$(nixpkgs_build_attr nodejs_20)"
+# Latest Node LTS, same major as the bundled runtime (nix/portable-node).
+log "resolving nodejs_24 from pinned nixpkgs"
+node_store="$(nixpkgs_build_attr nodejs_24)"
 export PATH="$node_store/bin:$PATH"
 log "using $(node --version) / npm $(npm --version)"
 
