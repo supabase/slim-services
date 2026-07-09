@@ -151,9 +151,14 @@ CLI — per the standing decision.
   new checks; also run once with the tzdata copy deliberately removed to see
   the TZ check FAIL (guard against a vacuous check).
 - Node duo: linux cells cannot build on this Mac — gated by a forced
-  `service-artifacts.yml` dispatch (`-f services="realtime pooler analytics storage pgmeta" -f force=true`).
-- Darwin: BEAM artifact smokes locally (env.sh append must not break darwin
-  even though TZDIR dir is absent there — the `-d` guard covers it).
+  `service-artifacts.yml` dispatch (`-f services="realtime pooler analytics storage pgmeta postgrest" -f force=true`).
+  postgrest is in the list because its recipe changed (gconv payload) and its
+  local darwin-host rebuild skipped the linux audit/floor gates — the
+  dispatch is where the changed artifact first meets them.
+- Darwin: untouched by construction — every new nix line lives inside the
+  `lib.optionalString pkgs.stdenv.isLinux` half, so darwin env.sh never
+  gains the append (the `-d` guard is bare-host belt-and-suspenders on
+  linux, not the darwin protection).
 - Results tables refreshed locally via `scripts/update-results-tables.sh
   --merge` after quarantining stale local `artifacts/` dirs (storage/pgmeta
   darwin fixtures currently present — the known `--merge` trap).
@@ -174,7 +179,11 @@ CLI — per the standing decision.
 Ran the verification sweep from Design §3 against the four linux-arm64 rootfs
 trees available (`artifacts/{pooler,realtime,analytics,postgrest}/*/linux-arm64/rootfs`;
 postgrest's tree was built for this sweep — image-derived, no compile,
-`SOURCE_REF=v14.14`).
+`SOURCE_REF=v14.14`). The unscanned artifacts (node duo, postgres, auth,
+edge-runtime) are covered by the host-glibc decision rule, not by
+measurement: postgrest is the only bundled-glibc artifact, so for every
+other service an iconv import would resolve against the matched host
+libc + host gconv pair.
 
 Scan command (`ubuntu:24.04`, `binutils`+`file`, `readelf --dyn-syms`):
 

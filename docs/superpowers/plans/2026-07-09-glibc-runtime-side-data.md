@@ -368,7 +368,7 @@ Run the standard subagent-driven final review of the whole branch diff (`git dif
 ```bash
 git push -u origin claude/glibc-runtime-side-data-f0b0fb
 gh workflow run service-artifacts.yml --ref claude/glibc-runtime-side-data-f0b0fb \
-  -f services="pooler realtime analytics storage pgmeta" -f force=true
+  -f services="pooler realtime analytics storage pgmeta postgrest" -f force=true
 ```
 
 - [ ] **Step 2: Watch the run to completion (poll in-turn)**
@@ -386,10 +386,9 @@ Quarantine first (the `--merge` trap: it refreshes EVERY service with a local `a
 
 ```bash
 mkdir -p /tmp/artifacts-quarantine
-# postgrest was built locally only for the sweep — its row must not refresh:
-mv artifacts/postgrest /tmp/artifacts-quarantine/ 2>/dev/null || true
-# anything else present that this PR did not touch: quarantine it too; keep
-# pooler, realtime, analytics, storage, pgmeta.
+# anything present that this PR did not touch: quarantine it; keep
+# pooler, realtime, analytics, storage, pgmeta, postgrest (all six are
+# rebuilt by the dispatch, so their rows refresh from CI manifests).
 ls artifacts/
 ```
 
