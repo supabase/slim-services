@@ -127,6 +127,12 @@ fi
 # container whose glibc IS the floor. Linux-only (needs Docker) and only
 # where the host matches the target (native rootfs).
 if [[ "$artifact_portable" == "true" && "$TARGET_OS" == "linux" && "$(host_os)" == "linux" ]]; then
+  # A bundled-glibc artifact skips the audit's static floor gate — the
+  # execution proof is its ONLY floor enforcement, so it must exist.
+  bundled_glibc="$(python3 -c 'import json,sys; print("true" if json.loads(sys.argv[1]).get("bundled_glibc") else "false")' "$os_floor_json")"
+  if [[ "$bundled_glibc" == "true" && -z "${FLOOR_CHECK_CMD:-}" ]]; then
+    fail "$service bundles its own glibc but declares no FLOOR_CHECK_CMD; the floor-container execution proof is mandatory for bundled-glibc artifacts"
+  fi
   "$ROOT_DIR/scripts/floor-check-linux.sh" "$service" "$rootfs"
 fi
 
