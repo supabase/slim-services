@@ -211,6 +211,16 @@ Original decision framing:
 - Smoke: host-process branches; storage runs the full bucket/upload/download
   round-trip on the file backend.
 
+> **2026-07-09 — Decision reversed.** storage and pg-meta now bundle the
+> pinned nixpkgs Node 24 runtime inside each archive (`<rootfs>/node/`, built
+> by `nix/portable-node/default.nix`); the wrapper resolves `SUPABASE_NODE` →
+> bundled node → PATH. Self-containedness won over disk size (~+30 MiB
+> compressed per archive, accepted). `runtime_requires` is dropped from the
+> manifests, both recipes carry a `FLOOR_CHECK_CMD` execution proof, and the
+> Docker images derive from the bundled runtime on
+> `gcr.io/distroless/base-debian13` (single node provenance). The CLI-side
+> shared-runtime download is retired.
+
 ## Phase 5 — Distribution hygiene (P2, before anything ships to users)
 
 Status 2026-07-07:

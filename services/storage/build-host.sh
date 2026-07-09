@@ -6,10 +6,10 @@ set -euo pipefail
 # Mirrors services/storage/Dockerfile.artifact.rolldown on the host: npm ci,
 # upstream build, rolldown bundle with the repo overlay config, bundle-dist
 # preparation, non-runtime pruning. Native modules (fs-xattr) compile for
-# darwin during npm ci. The Node runtime is NOT bundled (HOST_NATIVE_PLAN.md
-# Phase 4, Option A): the artifact ships a thin bin/storage wrapper that
-# resolves SUPABASE_NODE -> ../../node/bin/node -> PATH, and the manifest
-# records runtime_requires=node>=20 (Docker runtime uses node 24).
+# darwin during npm ci.
+# The pinned Node runtime IS bundled (nix/portable-node) at rootfs node/;
+# bin/storage resolves SUPABASE_NODE -> bundled node -> PATH. The archive is
+# fully self-contained (no runtime_requires).
 
 # shellcheck source=scripts/lib.sh
 source "$ROOT_DIR/scripts/lib.sh"
@@ -82,15 +82,35 @@ cp -R dist-bundle/static "$ROOTFS/app/dist/static"
 cp -R dist-bundle/node_modules "$ROOTFS/app/node_modules"
 cp -R migrations "$ROOTFS/app/migrations"
 
+log "bundling portable node runtime (nix/portable-node)"
+node_bundle="$(nixpkgs_build_file "$ROOT_DIR/nix/portable-node/default.nix")"
+mkdir -p "$ROOTFS/node"
+cp -R "$node_bundle"/. "$ROOTFS/node/"
+chmod -R u+w "$ROOTFS/node"
+if [[ "$TARGET_OS" == "darwin" ]]; then
+  # Nix sandbox codesigning can emit signatures that fail OFF the build
+  # machine (the libiconv incident); verify and repair with the host's real
+  # codesign, mirroring scripts/build-artifact-from-nix.sh.
+  find "$ROOTFS/node" -type f | while IFS= read -r macho; do
+    file "$macho" 2>/dev/null | grep -q 'Mach-O' || continue
+    if ! /usr/bin/codesign --verify "$macho" >/dev/null 2>&1; then
+      # Non-fatal: a failed repair leaves a bad signature for the darwin
+      # audit to reject, with the reason visible here.
+      /usr/bin/codesign --force --sign - "$macho" 2>/dev/null \
+        && log "re-signed: ${macho#"$ROOTFS"/}" \
+        || log "WARN: re-sign failed: ${macho#"$ROOTFS"/}"
+    fi
+  done
+fi
+
 cat > "$ROOTFS/bin/storage" <<'WRAPPER'
 #!/bin/sh
-# Thin launcher: JS bundle + shared Node runtime (HOST_NATIVE_PLAN.md Phase 4
-# Option A). Runtime resolution: SUPABASE_NODE, then the CLI's shared runtime
-# next to the artifact, then PATH.
+# Thin launcher for the self-contained artifact. Runtime resolution:
+# SUPABASE_NODE (explicit override), then the bundled runtime, then PATH.
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 NODE_BIN="${SUPABASE_NODE:-}"
-if [ -z "$NODE_BIN" ] && [ -x "$SCRIPT_DIR/../../node/bin/node" ]; then
-  NODE_BIN="$SCRIPT_DIR/../../node/bin/node"
+if [ -z "$NODE_BIN" ] && [ -x "$SCRIPT_DIR/../node/bin/node" ]; then
+  NODE_BIN="$SCRIPT_DIR/../node/bin/node"
 fi
 if [ -z "$NODE_BIN" ]; then
   NODE_BIN="$(command -v node || true)"

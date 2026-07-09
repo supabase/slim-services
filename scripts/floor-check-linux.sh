@@ -17,8 +17,7 @@ must exercise the main binary far enough to prove the dynamic loader
 resolves everything: exec + link + NIF/dlopen load. No network is available.
 
 A recipe without FLOOR_CHECK_CMD is skipped WITH A LOG LINE — silence must
-never read as coverage (Node-runtime services are checked by the CLI's
-runtime_requires contract instead).
+never read as coverage; every service that bundles a runtime must set one.
 EOF
 }
 

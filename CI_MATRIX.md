@@ -84,9 +84,10 @@ mode — on top of the derived-image smoke.
 Native-first (HOST_NATIVE_PLAN.md): the archive on every target is the
 host-native artifact — relocatable, audit-clean, runnable straight from the
 extracted archive (only the glibc family assumed on Linux, libSystem on
-macOS; the Node duo resolves the shared Node runtime per `runtime_requires`).
-The Docker image for Linux targets is derived from that same rootfs by
-`Dockerfile.slim` (base + artifact + entry wiring). `darwin-amd64` is not
+macOS; the Node duo bundles its Node runtime inside the archive — the
+wrapper prefers `node/bin/node`, no external runtime, `runtime_requires` is
+null). The Docker image for Linux targets is derived from that same rootfs
+by `Dockerfile.slim` (base + artifact + entry wiring). `darwin-amd64` is not
 built — see below.
 
 The workflow installs Nix with `nixbuild/nix-quick-install-action` and caches
