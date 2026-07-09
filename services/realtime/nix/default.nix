@@ -136,6 +136,25 @@ in
       rootfs="$out"
       dylib_dir="$rootfs/dylib"
       mkdir -p "$dylib_dir"
+      # Runtime side-data: bundle zoneinfo and point TZDIR at it from the
+      # release env.sh. Minimal hosts may lack /usr/share/zoneinfo and glibc
+      # silently falls back to UTC. NSS/gconv/locale need NO bundling at the
+      # glibc 2.39 floor (nss_files/nss_dns are compiled into libc >= 2.34,
+      # gconv ships with the host libc, C.UTF-8 is built in >= 2.35) — see
+      # docs/superpowers/specs/2026-07-09-glibc-runtime-side-data-design.md.
+      mkdir -p "$rootfs/share"
+      cp -RL ${pkgs.tzdata}/share/zoneinfo "$rootfs/share/zoneinfo"
+      chmod -R u+w "$rootfs/share/zoneinfo"
+      # posix/ duplicates the top-level zones; right/ is the TAI variant.
+      rm -rf "$rootfs/share/zoneinfo/posix" "$rootfs/share/zoneinfo/right"
+      for envsh in "$rootfs"/releases/*/env.sh; do
+        [ -f "$envsh" ] || continue
+        {
+          printf '\n## Portable artifact: prefer bundled zoneinfo (see nix package)\n'
+          printf 'if [ -z "''${TZDIR:-}" ] && [ -d "$RELEASE_ROOT/share/zoneinfo" ]; then\n'
+          printf '  export TZDIR="$RELEASE_ROOT/share/zoneinfo"\nfi\n'
+        } >> "$envsh"
+      done
 
       case "$(uname -m)" in
         aarch64) interp="/lib/ld-linux-aarch64.so.1" ;;

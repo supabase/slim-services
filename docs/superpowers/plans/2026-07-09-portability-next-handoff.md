@@ -43,14 +43,34 @@ Acceptance: both services' archives pass floor-check in ubuntu:24.04 with NOTHIN
 
 ## PR 2 — glibc runtime side-data (close the last host-file dependencies)
 
-**Goal:** no service silently depends on host NSS/gconv/locale/tzdata files.
+**Status: done.** Tasks 1/2/4 below were written before the evidence existed;
+task 3's open point is resolved. Full record, evidence, and sweep results:
+`docs/superpowers/specs/2026-07-09-glibc-runtime-side-data-design.md`.
 
-1. Extend the pooler NSS fix (bundled `libnss_dns`/`libnss_files`, see services/pooler REPORT/nix) to realtime and analytics (same BEAM playbook block in each `services/<svc>/nix/default.nix`).
-2. Bundle gconv modules + set `GCONV_PATH`; bundle tzdata + `TZDIR`; locale: postgres already bundles `glibcLocalesMinimal` on linux (check `latestOnly`/makePostgres notes) — verify the others only need `C.UTF-8` or bundle a minimal locale archive + `LOCPATH`. Launcher env goes in the artifact wrappers/entry scripts, NOT the CLI.
-3. Extend `FLOOR_CHECK_CMD`s to exercise the paths: a DNS resolution (needs rethinking `--network none` — maybe `--add-host` a fake name and resolve it via NSS files/dns path), a `TZ=America/New_York` date formatting, and an iconv conversion in the BEAM evals. Keep checks cheap.
-4. Audit idea from the earlier design discussion: os-floor.sh or the audit could WARN when an artifact links `libnss_*` consumers but bundles no NSS modules — optional, brainstorm.
-
-Gotcha: glibc dlopens NSS modules — invisible to `ldd`; the pooler `:nxdomain` incident is the proof this class is real.
+Outcomes:
+- No NSS bundling anywhere — NSS `files`/`dns` are compiled into libc at the
+  2.39 floor; bundling host-glibc modules would add cross-glibc coupling.
+  Floor-check gained an execution proof instead (below).
+- tzdata bundled for the BEAM trio only (realtime, pooler, analytics), with a
+  `TZDIR` guard appended to each release's `env.sh`; Node duo and postgres
+  carry their own tz data and need nothing.
+- No gconv bundling for host-glibc artifacts — their only iconv importer,
+  `libstdc++.so.6`, reads host gconv. postgrest (the one bundled-glibc
+  artifact) does import iconv itself; fixed by shipping its own source
+  image's gconv modules via `OPTIONAL_INCLUDE_PATHS` — no wrapper, no
+  `GCONV_PATH` (the sweep found this; the plan's original wrapper sketch
+  didn't hold up).
+- No locale bundling: stock glibc ignores `LOCALE_ARCHIVE` (a Nix-glibc
+  patch) and `LOCPATH` can't read archive files; `C.UTF-8` is built in.
+- No audit WARN for side-data (execution proof over static heuristics, per
+  PR #14 philosophy).
+- `FLOOR_CHECK_CMD` extended on all five affected recipes — BEAM trio: NSS
+  resolution (`:inet.gethostbyname`) + a >=3h TZ delta; Node duo:
+  `dns.lookup`. The BEAM trio's checks are proven green on linux-arm64
+  locally (built on this Mac), including a non-vacuous tamper test on
+  pooler; the Node duo's linux cells can't build on this Mac, so their
+  `dns.lookup` check is validated by the forced `service-artifacts.yml`
+  dispatch, not yet run.
 
 ## PR 3 — BEAM floor 2.39 → 2.38 (drop libsystemd) + upstream nudge for postgres
 
@@ -112,3 +132,14 @@ gh workflow run service-artifacts.yml --ref <branch> -f services="storage pgmeta
 - stale local `artifacts/` trees may predate native-first — check `manifest.json`'s `build_backend`/`portable` before trusting them as fixtures.
 - `git submodule update --depth 1` misses recipe tags → `resolve_source_ref` shallow-fetches; keep it.
 - Killing a docker buildx client does not cancel the server-side build (OrbStack recovery: `orb restart docker`).
+- glibc >= 2.34 compiles nss_files/nss_dns into libc: bundling NSS modules
+  for host-glibc artifacts is wrong (cross-glibc `dlopen`), not just
+  unnecessary.
+- Stock glibc ignores `LOCALE_ARCHIVE` (a Nix-glibc patch) and `LOCPATH`
+  cannot read archive files — a bundled locale archive is inert for
+  host-glibc artifacts.
+- Erlang never calls glibc iconv (pure-ERTS unicode): an iconv floor-check
+  in a BEAM eval is unimplementable without a NIF.
+- On a darwin host, `ci-build-service.sh` skips its in-build audit/floor-check
+  steps for linux targets (host-OS gate, pre-existing) — run
+  `scripts/floor-check-linux.sh` directly for local linux proofs.
