@@ -94,8 +94,11 @@ if [[ "$TARGET_OS" == "darwin" ]]; then
   find "$ROOTFS/node" -type f | while IFS= read -r macho; do
     file "$macho" 2>/dev/null | grep -q 'Mach-O' || continue
     if ! /usr/bin/codesign --verify "$macho" >/dev/null 2>&1; then
+      # Non-fatal: a failed repair leaves a bad signature for the darwin
+      # audit to reject, with the reason visible here.
       /usr/bin/codesign --force --sign - "$macho" 2>/dev/null \
-        && log "re-signed: ${macho#"$ROOTFS"/}"
+        && log "re-signed: ${macho#"$ROOTFS"/}" \
+        || log "WARN: re-sign failed: ${macho#"$ROOTFS"/}"
     fi
   done
 fi
