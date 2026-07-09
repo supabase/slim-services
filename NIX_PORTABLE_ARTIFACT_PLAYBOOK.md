@@ -125,6 +125,34 @@ require bundling glibc, loader, NSS/DNS files, and CA certificates, then adding
 broader DNS/TLS smoke coverage. For Edge Runtime the expected compressed gain
 was not worth the extra production responsibility.
 
+At the glibc floor, NSS `files`/`dns` lookups and gconv modules are compiled
+into or shipped alongside the host's libc — do not bundle them. Bundling NSS
+modules for a host-glibc artifact is a correctness bug (cross-glibc `dlopen`),
+not merely redundant. Stock glibc also ignores `LOCALE_ARCHIVE` (a Nix-glibc
+patch) and `LOCPATH` cannot read archive files, so a bundled locale archive is
+inert for host-glibc artifacts too; `C.UTF-8` is built into glibc >= 2.35 and
+needs no locale files at all. The one genuine gap is tzdata: minimal hosts
+have no `/usr/share/zoneinfo`, and glibc degrades silently to UTC on a
+bad/missing `TZ`. For services that need it (the BEAM trio: realtime, pooler,
+analytics), copy the pinned nixpkgs `tzdata`'s `share/zoneinfo` into the
+rootfs and set `TZDIR` from the release env script, guarded so a user-set
+`TZDIR` wins:
+
+```sh
+if [ -z "${TZDIR:-}" ] && [ -d "$RELEASE_ROOT/share/zoneinfo" ]; then
+  export TZDIR="$RELEASE_ROOT/share/zoneinfo"
+fi
+```
+
+The one real gconv mismatch is a bundled-glibc artifact (postgrest's
+`SPLIT_BUNDLED_GLIBC`): its compiled-in gconv path is empty inside the scratch
+Docker image, so it ships its own source image's gconv modules via
+`OPTIONAL_INCLUDE_PATHS` — no wrapper, no `GCONV_PATH`. Host-glibc artifacts
+never need this; their only iconv importer (`libstdc++.so.6`) reads host
+gconv, which ships with host libc. Full evidence, decision rules, and sweep
+results:
+`docs/superpowers/specs/2026-07-09-glibc-runtime-side-data-design.md`.
+
 ## macOS Dynamic Linking
 
 For Darwin artifacts, complete the dylib closure and remove all Nix store

@@ -367,3 +367,21 @@ analytics) and the `wrappers` postgres extension, both at GLIBC_2.39, and
 minos 14.0 Mach-Os across postgres/postgrest/edge-runtime. Lowering the
 floor below 2.39 means trimming libsystemd from the BEAM closures and is
 deferred until demand.
+
+**2026-07-09 — glibc runtime side-data closed by evidence.** At the 2.39
+floor, NSS `files`/`dns` resolution and gconv modules are guaranteed present
+on the host (compiled into libc since 2.33/2.34, or shipped with it); bundling
+either for a host-glibc artifact was rejected (cross-glibc `dlopen` for NSS,
+redundant for gconv), and no audit WARN was added (execution proof over
+static heuristics, per PR #14 philosophy). Locale bundling was rejected too:
+stock glibc ignores `LOCALE_ARCHIVE` (a Nix-glibc patch) and `LOCPATH` cannot
+read archive files. tzdata is the one genuine gap — bare hosts have no
+`/usr/share/zoneinfo` and glibc degrades silently to UTC — so it is now
+bundled for the BEAM trio (realtime, pooler, analytics) with a `TZDIR` guard
+in each release's `env.sh`; Node duo and postgres carry their own tz data and
+need nothing. `FLOOR_CHECK_CMD` was extended for all five (BEAM: NSS
+resolution + a >=3h TZ delta; Node duo: `dns.lookup`), proven green on
+linux-arm64. One iconv-importing bundled-glibc artifact turned up in the
+sweep — postgrest — fixed by shipping the source image's own gconv modules
+via `OPTIONAL_INCLUDE_PATHS`, not a wrapper or env var. Full record:
+`docs/superpowers/specs/2026-07-09-glibc-runtime-side-data-design.md`.
