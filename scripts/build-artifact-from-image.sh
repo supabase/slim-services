@@ -129,6 +129,80 @@ if [[ -n "${elf_list:-}" ]]; then
     '
 fi
 
+# Some ELF-deps closures bundle their own glibc family (libc/libm/loader/...)
+# alongside their non-glibc deps in one directory. Run bare on a host, the
+# dynamic loader looks for that glibc family at its own standard search path
+# (lib/<triplet>), not wherever the closure happens to keep it — so split the
+# glibc family out into lib/<triplet> and rpath the binaries at the
+# non-glibc closure dir. This keeps both contracts working without env vars:
+# a bare host run gets a matched host-loader/host-glibc pair plus the
+# bundled non-glibc deps via rpath, and the scratch Docker image (which has
+# no host glibc to fall back to) finds the bundled loader+glibc at the
+# standard path and the rest via rpath. Requires patchelf, which only runs
+# on Linux, so this happens inside the SOURCE_IMAGE-derived container, never
+# on the macOS build host.
+if [[ "${SPLIT_BUNDLED_GLIBC:-false}" == "true" && -n "${elf_list:-}" ]]; then
+  log "splitting bundled glibc runtime out of the ELF-deps closure for $service"
+  docker run --rm --platform "$PLATFORM" \
+    --user 0:0 \
+    --entrypoint /bin/sh \
+    -v "$rootfs:/artifact-rootfs" \
+    -e "AUTO_ELF_BINARIES=$elf_list" \
+    "$SOURCE_IMAGE" \
+    -lc '
+      set -eu
+
+      apt-get -qq update >/dev/null 2>&1
+      apt-get -qq install -y patchelf >/dev/null 2>&1
+      command -v patchelf >/dev/null 2>&1 || {
+        echo "patchelf unavailable in the SOURCE_IMAGE-derived container (apt-get install failed)" >&2
+        exit 1
+      }
+
+      triplet="$(uname -m)-linux-gnu"
+      bundle_dir="/artifact-rootfs/usr/lib/$triplet"
+      glibc_dir="/artifact-rootfs/lib/$triplet"
+
+      if [ -d "$bundle_dir" ]; then
+        mkdir -p "$glibc_dir"
+        for pattern in \
+          "libc.so*" "libc-*.so*" "libm.so*" "libm-*.so*" "libmvec.so*" \
+          "libpthread.so*" "libpthread-*.so*" "libdl.so*" "libdl-*.so*" \
+          "libresolv.so*" "libresolv-*.so*" "librt.so*" "librt-*.so*" \
+          "libutil.so*" "libutil-*.so*" "libnss_*.so*" "libanl.so*" \
+          "libthread_db.so*" "libnsl.so*" "libBrokenLocale.so*" "ld-linux*.so*"
+        do
+          for f in "$bundle_dir"/$pattern; do
+            [ -e "$f" ] || continue
+            mv "$f" "$glibc_dir/"
+          done
+        done
+      fi
+
+      # DT_RUNPATH is not transitive: it only guides resolution of the
+      # object that carries it, not of that object'\''s own dependencies.
+      # libpq.so.5 needs libgssapi_krb5.so.2 et al from the same bundle dir,
+      # so every shared object left in the bundle dir needs its own
+      # self-referencing rpath too, not just the main binary.
+      if [ -d "$bundle_dir" ]; then
+        for so in "$bundle_dir"/*.so*; do
+          [ -e "$so" ] || continue
+          patchelf --set-rpath '\''$ORIGIN'\'' "$so"
+        done
+      fi
+
+      printf "%s\n" "$AUTO_ELF_BINARIES" | while IFS= read -r binary; do
+        [ -n "$binary" ] || continue
+        target="/artifact-rootfs$binary"
+        [ -e "$target" ] || {
+          echo "rpath target not found: $binary" >&2
+          exit 1
+        }
+        patchelf --set-rpath "\$ORIGIN/../usr/lib/$triplet" "$target"
+      done
+    '
+fi
+
 if [[ -n "${WRAPPED_BINARY_SOURCE:-}" && -n "${WRAPPED_BINARY_DEST:-}" ]]; then
   [[ -e "$rootfs$WRAPPED_BINARY_SOURCE" ]] || fail "wrapped binary source was not copied: $WRAPPED_BINARY_SOURCE"
   mkdir -p "$rootfs$(dirname "$WRAPPED_BINARY_DEST")"
@@ -172,6 +246,7 @@ manifest = {
     "include_paths": ${INCLUDE_PATHS_JSON:-[]},
     "auto_elf_deps": "$AUTO_ELF_DEPS" == "true",
     "auto_elf_binaries": ${AUTO_ELF_BINARIES_JSON:-[]},
+    "split_bundled_glibc": "${SPLIT_BUNDLED_GLIBC:-false}" == "true",
     "portable": "$portable" == "true",
     "assumed_host_libs": json.loads("""$assumed_host_libs_json"""),
     "excluded_file_classes": [
