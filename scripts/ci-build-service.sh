@@ -102,7 +102,8 @@ fi
 if [[ "$artifact_portable" == "true" && "$TARGET_OS" == "$(host_os)" ]]; then
   floor_mode="--linux"
   [[ "$TARGET_OS" == "darwin" ]] && floor_mode="--darwin"
-  os_floor_json="$("$ROOT_DIR/scripts/os-floor.sh" "$floor_mode" "$rootfs")"
+  os_floor_json="$("$ROOT_DIR/scripts/os-floor.sh" "$floor_mode" "$rootfs")" \
+    || fail "os-floor scan failed for $rootfs"
   log "recording os floor in manifest: $os_floor_json"
   python3 - "$manifest" "$os_floor_json" <<'PY'
 import json
@@ -116,6 +117,13 @@ with open(manifest_path, "w", encoding="utf-8") as fh:
     json.dump(data, fh, indent=2)
     fh.write("\n")
 PY
+fi
+
+# Execution proof at the glibc floor: run the recipe's FLOOR_CHECK_CMD in a
+# container whose glibc IS the floor. Linux-only (needs Docker) and only
+# where the host matches the target (native rootfs).
+if [[ "$artifact_portable" == "true" && "$TARGET_OS" == "linux" && "$(host_os)" == "linux" ]]; then
+  "$ROOT_DIR/scripts/floor-check-linux.sh" "$service" "$rootfs"
 fi
 
 # On Linux the artifact smoke would build a temporary image from the exact
