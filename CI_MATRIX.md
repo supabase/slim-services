@@ -20,6 +20,23 @@ artifacts/<service>/<version>/linux-amd64/<service>.tar.zst
 artifacts/<service>/<version>/darwin-arm64/<service>.tar.zst
 ```
 
+`linux-<arch>` archives are glibc artifacts. The libc flavor is part of the
+target name only when it is not glibc: future Alpine targets will publish
+`linux-<arch>-musl` archives (`TARGET_LIBC=musl`, reserved — no musl builds
+exist yet). There is deliberately no `-gnu` suffix.
+
+## Host Floor Policy
+
+Portable linux archives may require at most **glibc 2.39** from the host
+(`GLIBC_2.x` Verneed max across all shipped ELFs; measured and gated by
+`scripts/audit-portable-artifact.sh`, recorded as `os_floor` in the
+manifest). Supported hosts: Ubuntu 24.04+, Debian 13+, Fedora 40+ (any
+distro with glibc >= 2.39). Every linux artifact is additionally executed
+inside `ubuntu:24.04` (glibc 2.39 exactly) by `scripts/floor-check-linux.sh`.
+Darwin archives may require at most **macOS 14.0** (Mach-O minos, same
+audit). Per-service overrides: `GLIBC_FLOOR_MAX` / `MACOS_FLOOR_MAX` in
+`recipe.env`; global: `SLIM_GLIBC_FLOOR_MAX` / `SLIM_MACOS_FLOOR_MAX`.
+
 `darwin/amd64` is intentionally out of scope for now: GitHub-hosted Intel
 macOS runners are gone from the free tier (`macos-14`+ are arm64-only; Intel
 survives only as paid `-large` runners), so there is no runner to build or —

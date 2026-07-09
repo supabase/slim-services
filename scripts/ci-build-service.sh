@@ -48,6 +48,16 @@ manifest="$artifact_dir/manifest.json"
 
 log "CI target: service=$service version=$version target=$TARGET_OS/$ARCH"
 
+# Recipe-level policy knobs for the audit and the floor check below
+# (GLIBC_FLOOR_MAX, MACOS_FLOOR_MAX, FLOOR_CHECK_CMD are plain recipe vars).
+load_recipe "$service"
+export GLIBC_FLOOR_MAX="${GLIBC_FLOOR_MAX:-}"
+export MACOS_FLOOR_MAX="${MACOS_FLOOR_MAX:-}"
+
+if [[ "$TARGET_OS" == "linux" && "${TARGET_LIBC:-glibc}" != "glibc" ]]; then
+  fail "TARGET_LIBC=${TARGET_LIBC} is a reserved target flavor; no musl builds are implemented yet"
+fi
+
 merge_runtime_metrics() {
   local manifest_file="$1"
   local metrics_file="$2"
@@ -88,6 +98,42 @@ if [[ "$artifact_portable" == "true" && "$TARGET_OS" == "$(host_os)" ]]; then
   [[ "$TARGET_OS" == "darwin" ]] && audit_mode="--darwin"
   log "auditing portable artifact ($audit_mode)"
   "$ROOT_DIR/scripts/audit-portable-artifact.sh" "$audit_mode" "$rootfs"
+fi
+
+# Record the measured OS floor in the manifest so distribution consumers
+# (the CLI) can pre-flight host compatibility with a clear error instead of
+# a loader crash.
+if [[ "$artifact_portable" == "true" && "$TARGET_OS" == "$(host_os)" ]]; then
+  floor_mode="--linux"
+  [[ "$TARGET_OS" == "darwin" ]] && floor_mode="--darwin"
+  os_floor_json="$("$ROOT_DIR/scripts/os-floor.sh" "$floor_mode" "$rootfs")" \
+    || fail "os-floor scan failed for $rootfs"
+  log "recording os floor in manifest: $os_floor_json"
+  python3 - "$manifest" "$os_floor_json" <<'PY'
+import json
+import sys
+
+manifest_path, floor_raw = sys.argv[1:]
+with open(manifest_path, "r", encoding="utf-8") as fh:
+    data = json.load(fh)
+data["os_floor"] = json.loads(floor_raw)
+with open(manifest_path, "w", encoding="utf-8") as fh:
+    json.dump(data, fh, indent=2)
+    fh.write("\n")
+PY
+fi
+
+# Execution proof at the glibc floor: run the recipe's FLOOR_CHECK_CMD in a
+# container whose glibc IS the floor. Linux-only (needs Docker) and only
+# where the host matches the target (native rootfs).
+if [[ "$artifact_portable" == "true" && "$TARGET_OS" == "linux" && "$(host_os)" == "linux" ]]; then
+  # A bundled-glibc artifact skips the audit's static floor gate — the
+  # execution proof is its ONLY floor enforcement, so it must exist.
+  bundled_glibc="$(python3 -c 'import json,sys; print("true" if json.loads(sys.argv[1]).get("bundled_glibc") else "false")' "$os_floor_json")"
+  if [[ "$bundled_glibc" == "true" && -z "${FLOOR_CHECK_CMD:-}" ]]; then
+    fail "$service bundles its own glibc but declares no FLOOR_CHECK_CMD; the floor-container execution proof is mandatory for bundled-glibc artifacts"
+  fi
+  "$ROOT_DIR/scripts/floor-check-linux.sh" "$service" "$rootfs"
 fi
 
 # On Linux the artifact smoke would build a temporary image from the exact

@@ -94,6 +94,14 @@ If the Linux artifact excludes glibc and the dynamic loader, it is not universal
 Linux. It is a glibc-based Linux ARM64 artifact validated against the chosen
 Distroless base.
 
+That contract now has a number: shipped ELFs may reference at most
+`GLIBC_2.39` (the floor of the shared nixpkgs pin's toolchain output — e.g.
+the BEAM services' bundled libsystemd requires exactly 2.39).
+`scripts/os-floor.sh --linux` measures it, the portable audit gates it, and
+`scripts/floor-check-linux.sh` proves it by executing the launcher inside
+ubuntu:24.04. Raising the shared pin can raise this floor silently — the gate
+exists to catch exactly that.
+
 For Edge Runtime, we intentionally excluded core system libraries:
 
 ```text
