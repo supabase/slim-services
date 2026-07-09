@@ -35,8 +35,8 @@ local-dev profile baked as overridable image ENV.
 | Metric | Compressed size |
 |---|---:|
 | Upstream ARM64 images total (10 services) | `2166.9 MiB` |
-| Current slim images total | `585.1 MiB` |
-| Current total reduction vs upstream | `1581.8 MiB / 73.0%` |
+| Current slim images total | `584.1 MiB` |
+| Current total reduction vs upstream | `1582.8 MiB / 73.0%` |
 <!-- generated:totals:end -->
 
 Postgres keeps EVERY extension the upstream image ships (`supabase/postgres`
@@ -57,11 +57,11 @@ rebuilding services.
 | PostgREST | `v14.14` | `145.3 MiB` | `20.3 MiB` | `86.0%` | `89.9 MiB` | `0.08%` | [report](services/postgrest/REPORT.md) |
 | Auth | `v2.192.0` | `25.8 MiB` | `11.4 MiB` | `55.8%` | `9.7 MiB` | `0.00%` | [report](services/auth/REPORT.md) |
 | Realtime | `v2.112.6` | `114.7 MiB` | `26.6 MiB` | `76.8%` | `169.9 MiB` | `0.20%` | [report](services/realtime/REPORT.md) |
-| Storage | `v1.62.6` | `223.5 MiB` | `55.6 MiB` | `75.1%` | `223.3 MiB` | `0.02%` | [report](services/storage/REPORT.md) |
+| Storage | `v1.62.6` | `223.5 MiB` | `51.2 MiB` | `77.1%` | `222.1 MiB` | `0.03%` | [report](services/storage/REPORT.md) |
 | Edge Runtime | `v1.74.2` (no-AI) | `360.6 MiB` | `52.7 MiB` | `85.4%` | `14.7 MiB` | `0.04%` | [report](services/edge-runtime/REPORT.md) |
 | Studio | `2026.06.29-sha-20290c7` | `304.7 MiB` | `136.3 MiB` | `55.3%` | `201.4 MiB` | `0.00%` | [report](services/studio/REPORT.md) |
 | Analytics | `v1.46.0` | `258.9 MiB` | `58.4 MiB` | `77.4%` | `486.2 MiB` | `0.31%` | [report](services/analytics/REPORT.md) |
-| PgMeta | `v0.96.6` | `94.2 MiB` | `52.1 MiB` | `44.7%` | `81.4 MiB` | `0.35%` | [report](services/pgmeta/REPORT.md) |
+| PgMeta | `v0.96.6` | `94.2 MiB` | `55.5 MiB` | `41.1%` | `106.9 MiB` | `0.33%` | [report](services/pgmeta/REPORT.md) |
 | Pooler | `v2.9.10` | `289.4 MiB`* | `39.0 MiB` | `86.5%`* | `162.5 MiB` | `0.11%` | [report](services/pooler/REPORT.md) |
 
 `*` Upstream comparison uses `UPSTREAM_COMPARE_IMAGE` from the recipe (the exact tag is not published on Docker Hub), so the percentage is directional.
