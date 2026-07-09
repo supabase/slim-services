@@ -13,7 +13,7 @@ Usage:
 
 Fail if a portable artifact still has unresolved or host-specific runtime
 deps, ships an ELF with a non-standard program interpreter, or exceeds the
-OS floor policy (glibc 2.38 on Linux, macOS 13.0 on darwin; override with
+OS floor policy (glibc 2.39 on Linux, macOS 14.0 on darwin; override with
 GLIBC_FLOOR_MAX / MACOS_FLOOR_MAX or SLIM_GLIBC_FLOOR_MAX /
 SLIM_MACOS_FLOOR_MAX).
 EOF
@@ -84,7 +84,7 @@ case "$mode" in
     floor_json="$("$ROOT_DIR/scripts/os-floor.sh" --darwin "$rootfs")" \
       || fail "os-floor scan failed for $rootfs"
     log "darwin floor: $floor_json"
-    macos_floor_max="${MACOS_FLOOR_MAX:-${SLIM_MACOS_FLOOR_MAX:-13.0}}"
+    macos_floor_max="${MACOS_FLOOR_MAX:-${SLIM_MACOS_FLOOR_MAX:-14.0}}"
     python3 - "$floor_json" "$macos_floor_max" <<'PY' || fail "Darwin artifact exceeds the macOS floor policy"
 import json
 import sys
@@ -175,7 +175,7 @@ PY
     floor_json="$("$ROOT_DIR/scripts/os-floor.sh" --linux "$rootfs")" \
       || fail "os-floor scan failed for $rootfs"
     log "linux floor: $floor_json"
-    glibc_floor_max="${GLIBC_FLOOR_MAX:-${SLIM_GLIBC_FLOOR_MAX:-2.38}}"
+    glibc_floor_max="${GLIBC_FLOOR_MAX:-${SLIM_GLIBC_FLOOR_MAX:-2.39}}"
     python3 - "$floor_json" "$glibc_floor_max" <<'PY' || fail "Linux artifact exceeds the glibc floor policy"
 import json
 import sys

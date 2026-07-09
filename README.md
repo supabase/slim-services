@@ -105,8 +105,8 @@ changed; for local rebuilds use `scripts/update-results-tables.sh
 --host-native-only` (darwin) or `--merge`.
 
 Linux archives are glibc artifacts with a measured, CI-gated host floor
-(glibc >= 2.38: Ubuntu 24.04+, Debian 13+, Fedora 39+ — see CI_MATRIX.md);
-macOS archives require macOS 13+. The manifest records the exact floor as
+(glibc >= 2.39: Ubuntu 24.04+, Debian 13+, Fedora 40+ — see CI_MATRIX.md);
+macOS archives require macOS 14+. The manifest records the exact floor as
 `os_floor`.
 
 <!-- generated:host-native:begin -->

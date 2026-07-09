@@ -27,13 +27,13 @@ exist yet). There is deliberately no `-gnu` suffix.
 
 ## Host Floor Policy
 
-Portable linux archives may require at most **glibc 2.38** from the host
+Portable linux archives may require at most **glibc 2.39** from the host
 (`GLIBC_2.x` Verneed max across all shipped ELFs; measured and gated by
 `scripts/audit-portable-artifact.sh`, recorded as `os_floor` in the
-manifest). Supported hosts: Ubuntu 24.04+, Debian 13+, Fedora 39+ (any
-distro with glibc >= 2.38). Every linux artifact is additionally executed
-inside `fedora:39` (glibc 2.38 exactly) by `scripts/floor-check-linux.sh`.
-Darwin archives may require at most **macOS 13.0** (Mach-O minos, same
+manifest). Supported hosts: Ubuntu 24.04+, Debian 13+, Fedora 40+ (any
+distro with glibc >= 2.39). Every linux artifact is additionally executed
+inside `ubuntu:24.04` (glibc 2.39 exactly) by `scripts/floor-check-linux.sh`.
+Darwin archives may require at most **macOS 14.0** (Mach-O minos, same
 audit). Per-service overrides: `GLIBC_FLOOR_MAX` / `MACOS_FLOOR_MAX` in
 `recipe.env`; global: `SLIM_GLIBC_FLOOR_MAX` / `SLIM_MACOS_FLOOR_MAX`.
 
