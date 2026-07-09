@@ -4,10 +4,10 @@ set -euo pipefail
 # with SERVICE/VERSION/TARGET_OS/ARCH/SOURCE_DIR/ROOTFS/ROOT_DIR set).
 #
 # Mirrors services/pgmeta/Dockerfile.artifact on the host: npm clean-install,
-# tsc build, npm prune, non-runtime file pruning. The Node runtime is NOT
-# bundled (HOST_NATIVE_PLAN.md Phase 4, Option A): the artifact ships a thin
-# bin/pgmeta wrapper that resolves SUPABASE_NODE -> ../../node/bin/node ->
-# PATH, and the manifest records runtime_requires=node>=20.
+# tsc build, npm prune, non-runtime file pruning.
+# The pinned Node runtime IS bundled (nix/portable-node) at rootfs node/;
+# bin/pgmeta resolves SUPABASE_NODE -> bundled node -> PATH. The archive is
+# fully self-contained (no runtime_requires).
 
 # shellcheck source=scripts/lib.sh
 source "$ROOT_DIR/scripts/lib.sh"
@@ -64,15 +64,32 @@ cp package.json "$ROOTFS/app/package.json"
 cp -R dist "$ROOTFS/app/dist"
 cp -R node_modules "$ROOTFS/app/node_modules"
 
+log "bundling portable node runtime (nix/portable-node)"
+node_bundle="$(nixpkgs_build_file "$ROOT_DIR/nix/portable-node/default.nix")"
+mkdir -p "$ROOTFS/node"
+cp -R "$node_bundle"/. "$ROOTFS/node/"
+chmod -R u+w "$ROOTFS/node"
+if [[ "$TARGET_OS" == "darwin" ]]; then
+  # Nix sandbox codesigning can emit signatures that fail OFF the build
+  # machine (the libiconv incident); verify and repair with the host's real
+  # codesign, mirroring scripts/build-artifact-from-nix.sh.
+  find "$ROOTFS/node" -type f | while IFS= read -r macho; do
+    file "$macho" 2>/dev/null | grep -q 'Mach-O' || continue
+    if ! /usr/bin/codesign --verify "$macho" >/dev/null 2>&1; then
+      /usr/bin/codesign --force --sign - "$macho" 2>/dev/null \
+        && log "re-signed: ${macho#"$ROOTFS"/}"
+    fi
+  done
+fi
+
 cat > "$ROOTFS/bin/pgmeta" <<'WRAPPER'
 #!/bin/sh
-# Thin launcher: JS bundle + shared Node runtime (HOST_NATIVE_PLAN.md Phase 4
-# Option A). Runtime resolution: SUPABASE_NODE, then the CLI's shared runtime
-# next to the artifact, then PATH.
+# Thin launcher for the self-contained artifact. Runtime resolution:
+# SUPABASE_NODE (explicit override), then the bundled runtime, then PATH.
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 NODE_BIN="${SUPABASE_NODE:-}"
-if [ -z "$NODE_BIN" ] && [ -x "$SCRIPT_DIR/../../node/bin/node" ]; then
-  NODE_BIN="$SCRIPT_DIR/../../node/bin/node"
+if [ -z "$NODE_BIN" ] && [ -x "$SCRIPT_DIR/../node/bin/node" ]; then
+  NODE_BIN="$SCRIPT_DIR/../node/bin/node"
 fi
 if [ -z "$NODE_BIN" ]; then
   NODE_BIN="$(command -v node || true)"
