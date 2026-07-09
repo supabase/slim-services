@@ -114,6 +114,11 @@ CLI — per the standing decision.
 
 ### 3. Verification sweep (plan tasks with decision rules)
 
+> Superseded in part by the Sweep results section below: postgrest DID import
+> iconv, and the implemented fix bundles the source image's gconv modules with
+> no wrapper/env var (the wrapper sketch below assumed bare-host consumption
+> of the bundled libc, which the split-glibc design disproves).
+
 - Scan every service's artifact ELFs for dynamic imports of `iconv_open` (and
   `iconv`, `iconv_close`). Expected: none.
   - If none: bundle no gconv anywhere; record the scan result in docs.
@@ -157,7 +162,9 @@ CLI — per the standing decision.
 
 ## Non-goals
 
-- NSS/gconv/locale bundling (evidence-based; see Decisions).
+- NSS/locale bundling (evidence-based; see Decisions). gconv: revised for
+  postgrest only — its artifact ships the source image's own gconv modules
+  (see Sweep results); no gconv bundling anywhere else.
 - Audit WARN for side-data (skipped by user decision).
 - Darwin side-data work, musl targets, studio (standing non-goals).
 - BEAM floor 2.39 → 2.38 (that is PR 3).
