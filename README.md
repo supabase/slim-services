@@ -66,15 +66,15 @@ sampled by each service's smoke test (`docker stats`, recorded per build in
 | Service | Version | Upstream ARM64 | Current slim | Reduction | Idle RSS | Idle CPU | Report |
 |---|---:|---:|---:|---:|---:|---:|---|
 | Postgres | `17.6.1.143` (all PG17 extensions, minimal preload) | `349.8 MiB` | `132.7 MiB` | `62.1%` | `47.5 MiB` | `0.01%` | [report](services/postgres/REPORT.md) |
-| PostgREST | `v14.14` | `145.3 MiB` | `20.3 MiB` | `86.0%` | `89.9 MiB` | `0.08%` | [report](services/postgrest/REPORT.md) |
+| PostgREST | `v14.14` | `145.3 MiB` | `23.6 MiB` | `83.8%` | `91.0 MiB` | `0.08%` | [report](services/postgrest/REPORT.md) |
 | Auth | `v2.192.0` | `25.8 MiB` | `11.4 MiB` | `55.8%` | `9.7 MiB` | `0.00%` | [report](services/auth/REPORT.md) |
-| Realtime | `v2.112.6` | `114.7 MiB` | `26.6 MiB` | `76.8%` | `169.9 MiB` | `0.20%` | [report](services/realtime/REPORT.md) |
-| Storage | `v1.62.6` | `223.5 MiB` | `51.2 MiB` | `77.1%` | `222.1 MiB` | `0.03%` | [report](services/storage/REPORT.md) |
+| Realtime | `v2.112.6` | `114.7 MiB` | `26.8 MiB` | `76.6%` | `169.9 MiB` | `0.20%` | [report](services/realtime/REPORT.md) |
+| Storage | `v1.62.6` | `223.5 MiB` | `51.2 MiB` | `77.1%` | `221.5 MiB` | `0.03%` | [report](services/storage/REPORT.md) |
 | Edge Runtime | `v1.74.2` (no-AI) | `360.6 MiB` | `52.7 MiB` | `85.4%` | `14.7 MiB` | `0.04%` | [report](services/edge-runtime/REPORT.md) |
 | Studio | `2026.06.29-sha-20290c7` | `304.7 MiB` | `136.3 MiB` | `55.3%` | `201.4 MiB` | `0.00%` | [report](services/studio/REPORT.md) |
-| Analytics | `v1.46.0` | `258.9 MiB` | `58.4 MiB` | `77.4%` | `486.2 MiB` | `0.31%` | [report](services/analytics/REPORT.md) |
-| PgMeta | `v0.96.6` | `94.2 MiB` | `55.5 MiB` | `41.1%` | `106.9 MiB` | `0.33%` | [report](services/pgmeta/REPORT.md) |
-| Pooler | `v2.9.10` | `289.4 MiB`* | `39.0 MiB` | `86.5%`* | `162.5 MiB` | `0.11%` | [report](services/pooler/REPORT.md) |
+| Analytics | `v1.46.0` | `258.9 MiB` | `58.7 MiB` | `77.3%` | `491.5 MiB` | `0.24%` | [report](services/analytics/REPORT.md) |
+| PgMeta | `v0.96.6` | `94.2 MiB` | `55.5 MiB` | `41.1%` | `99.7 MiB` | `0.54%` | [report](services/pgmeta/REPORT.md) |
+| Pooler | `v2.9.10` | `289.4 MiB`* | `39.3 MiB` | `86.4%`* | `162.8 MiB` | `0.10%` | [report](services/pooler/REPORT.md) |
 
 `*` Upstream comparison uses `UPSTREAM_COMPARE_IMAGE` from the recipe (the exact tag is not published on Docker Hub), so the percentage is directional.
 <!-- generated:results:end -->
@@ -114,14 +114,14 @@ macOS archives require macOS 14+. The manifest records the exact floor as
 | Service | Version | Archive | rootfs | Idle RSS | Idle CPU | Portable | Report |
 |---|---:|---:|---:|---:|---:|---|---|
 | Postgres | `17.6.1.143` | `103.0 MiB` | `662.6 MiB` | `71.5 MiB` | `0.00%` | yes | [report](services/postgres/REPORT.md) |
-| PostgREST | `v14.14` | `13.0 MiB` | `84.0 MiB` | `45.3 MiB` | `0.00%` | yes | [report](services/postgrest/REPORT.md) |
+| PostgREST | `v14.14` | `13.0 MiB` | `84.0 MiB` | `44.6 MiB` | `0.00%` | yes | [report](services/postgrest/REPORT.md) |
 | Auth | `v2.192.0` | `9.4 MiB` | `33.5 MiB` | `28.9 MiB` | `0.00%` | yes | [report](services/auth/REPORT.md) |
-| Realtime | `v2.112.6` | `11.7 MiB` | `40.8 MiB` | `202.1 MiB` | `0.77%` | yes | [report](services/realtime/REPORT.md) |
-| Storage | `v1.62.6` | `36.2 MiB` | `144.7 MiB` | `48.8 MiB` | `0.03%` | yes | [report](services/storage/REPORT.md) |
+| Realtime | `v2.112.6` | `11.7 MiB` | `40.8 MiB` | `195.8 MiB` | `1.37%` | yes | [report](services/realtime/REPORT.md) |
+| Storage | `v1.62.6` | `36.2 MiB` | `144.7 MiB` | `240.6 MiB` | `1.07%` | yes | [report](services/storage/REPORT.md) |
 | Edge Runtime | `v1.74.2` | `39.9 MiB` | `161.2 MiB` | `57.9 MiB` | `0.00%` | yes | [report](services/edge-runtime/REPORT.md) |
-| Analytics | `v1.46.0` | `33.1 MiB` | `137.9 MiB` | `517.8 MiB` | `0.10%` | yes | [report](services/analytics/REPORT.md) |
-| PgMeta | `v0.96.6` | `37.3 MiB` | `172.7 MiB` | `170.2 MiB` | `0.40%` | yes | [report](services/pgmeta/REPORT.md) |
-| Pooler | `v2.9.10` | `23.5 MiB` | `52.4 MiB` | `200.5 MiB` | `0.07%` | yes | [report](services/pooler/REPORT.md) |
+| Analytics | `v1.46.0` | `33.1 MiB` | `137.9 MiB` | `493.9 MiB` | `0.87%` | yes | [report](services/analytics/REPORT.md) |
+| PgMeta | `v0.96.6` | `37.2 MiB` | `172.7 MiB` | `176.5 MiB` | `0.40%` | yes | [report](services/pgmeta/REPORT.md) |
+| Pooler | `v2.9.10` | `23.5 MiB` | `52.4 MiB` | `202.3 MiB` | `0.03%` | yes | [report](services/pooler/REPORT.md) |
 <!-- generated:host-native:end -->
 
 See [SLIM_IMAGES_REPORT.md](SLIM_IMAGES_REPORT.md) for the global summary.
