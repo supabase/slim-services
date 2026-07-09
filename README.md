@@ -93,9 +93,10 @@ Every Supabase-owned service ships a self-contained, relocatable `tar.zst`
 archive per target ([HOST_NATIVE_PLAN.md](HOST_NATIVE_PLAN.md)) that the CLI
 can download to `~/.supabase/bin/<service>/<version>/` and run without
 Docker — on macOS and on Linux (only the glibc family is assumed from a
-Linux host; the Node duo resolves the shared Node runtime recorded in the
-manifest's `runtime_requires`). The Linux Docker images are derived from
-these same artifacts. The table below shows the darwin-arm64 numbers; Idle
+Linux host; the Node duo bundles its Node runtime inside the archive — the
+wrapper prefers `node/bin/node`, no external runtime, `runtime_requires` is
+null). The Linux Docker images are derived from these same artifacts. The
+table below shows the darwin-arm64 numbers; Idle
 RSS and Idle CPU are sampled from the artifact running as a real host
 process with `runtime.env` applied (`ps`-based, recorded in the darwin
 `manifest.json`). CI refreshes both results tables automatically — every
