@@ -162,6 +162,144 @@ CLI — per the standing decision.
 - Darwin side-data work, musl targets, studio (standing non-goals).
 - BEAM floor 2.39 → 2.38 (that is PR 3).
 
+## Sweep results (2026-07-09)
+
+Ran the verification sweep from Design §3 against the four linux-arm64 rootfs
+trees available (`artifacts/{pooler,realtime,analytics,postgrest}/*/linux-arm64/rootfs`;
+postgrest's tree was built for this sweep — image-derived, no compile,
+`SOURCE_REF=v14.14`).
+
+Scan command (`ubuntu:24.04`, `binutils`+`file`, `readelf --dyn-syms`):
+
+```bash
+docker run --rm -v "$PWD":/repo -w /repo ubuntu:24.04 bash -c '
+  apt-get -qq update >/dev/null && apt-get -qq install -y binutils file >/dev/null
+  hits=0
+  for rootfs in artifacts/pooler/*/linux-arm64/rootfs artifacts/realtime/*/linux-arm64/rootfs artifacts/analytics/*/linux-arm64/rootfs artifacts/postgrest/*/linux-arm64/rootfs; do
+    [ -d "$rootfs" ] || continue
+    echo "== $rootfs"
+    find "$rootfs" -type f | while read -r f; do
+      file -b "$f" | grep -q "^ELF" || continue
+      if readelf --dyn-syms -W "$f" 2>/dev/null | grep -E "UND +iconv(_open|_close)?(@|$)" >/dev/null; then
+        echo "ICONV-IMPORT: $f"
+      fi
+    done
+  done
+  echo "scan complete"'
+```
+
+Per-rootfs results:
+
+- **pooler** (2.9.10, host-glibc artifact): one hit, `dylib/libstdc++.so.6`
+  (libstdc++'s locale-facet code imports iconv, not the pooler binary). Host
+  gconv ships with host libc (evidence #2) → no bundling.
+- **realtime** (2.112.6, host-glibc artifact): same hit, same file
+  (`dylib/libstdc++.so.6`), same reasoning → no bundling.
+- **analytics** (1.46.0, host-glibc artifact): same hit, same file
+  (`dylib/libstdc++.so.6`), same reasoning → no bundling.
+- **postgrest** (v14.14, the one bundled-glibc artifact): hit in `bin/postgrest`
+  itself — `iconv@GLIBC_2.17`, `iconv_open@GLIBC_2.17`, `iconv_close@GLIBC_2.17`,
+  all `UND` (confirmed with a targeted `readelf --dyn-syms -W` follow-up). This
+  is the one real mismatch case flagged in Design §3.
+
+### Architectural correction (supersedes the Design §3 wrapper/`GCONV_PATH` sketch)
+
+The sketch in Design §3 assumed a bare-host run of the bundled glibc would need
+`GCONV_PATH` pointed at a same-image gconv copy via a new
+`services/postgrest/wrapper.sh`. That assumption doesn't hold, per the
+`SPLIT_BUNDLED_GLIBC` comment block in `scripts/build-artifact-from-image.sh:132-143`:
+on a bare host, the **host loader pairs with the host glibc** (the split step's
+whole purpose — `lib/<triplet>` is the loader's own standard search path, so a
+bare-host run never touches the bundled libc at all). Host gconv is already
+present there (evidence #2) — no gap. The actual gap is scratch-image-only:
+inside the Docker image, the *bundled* libc is what runs, and its compiled-in
+gconv path (`/usr/lib/<triplet>/gconv`) is a path inside the artifact itself
+once extracted at `/` — where no gconv modules existed before this fix. No env
+var, no wrapper: the fix is to make that exact path resolve to real modules.
+
+### Implemented fix
+
+`services/postgrest/recipe.env`: added `/usr/lib/aarch64-linux-gnu/gconv` and
+`/usr/lib/x86_64-linux-gnu/gconv` to `OPTIONAL_INCLUDE_PATHS` (optional because
+the amd64 upstream image is a static-binary scratch image with no gconv dir —
+must not fail the build there; confirmed this build only found the aarch64
+copy, as expected when building the arm64 target). `OPTIONAL_INCLUDE_PATHS` has
+no `_JSON` twin in this or any other recipe — `scripts/build-artifact-from-image.sh`
+never reads one (only `INCLUDE_PATHS_JSON`/`AUTO_ELF_BINARIES_JSON` feed the
+manifest), so none was added.
+
+This ships the gconv modules from `SOURCE_IMAGE` itself — the exact same glibc
+build as the bundled libc, so provenance matches exactly (no cross-glibc
+coupling, unlike the rejected NSS-bundling idea in Decisions #1). Verified
+`scripts/prune-runtime-tree.sh` does not touch it: it only deletes specific
+extensions (`*.map/*.d.ts/*.debug/*.a/*.la/...`, none matching `.so` modules or
+the extension-less `gconv-modules` config files) and specific directory names
+(`.cache/.git/test/docs/examples/benchmark/...`, not `gconv`). Verified
+`SPLIT_BUNDLED_GLIBC`'s glibc-family move (`scripts/build-artifact-from-image.sh:162-180`)
+only moves specific `lib*.so*`/`ld-linux*.so*` filenames out of
+`usr/lib/<triplet>`, not directories — the `gconv/` subdirectory is untouched
+and stays at `usr/lib/aarch64-linux-gnu/gconv`, its compiled-in path.
+
+Rebuilt postgrest linux-arm64 (`TARGET_OS=linux ARCH=arm64
+scripts/ci-build-service.sh postgrest v14.14`): full green cell (artifact
+build, distribution archive, checksums, Docker image build, image smoke —
+`postgrest smoke passed` — runtime metrics, gzip size measurement). Confirmed
+in the rebuilt rootfs: `usr/lib/aarch64-linux-gnu/gconv/` contains 256 entries
+— `gconv-modules` (3.8K config), `gconv-modules.cache` (26.4K), the
+`gconv-modules.d/` directory, and 253 `.so` conversion modules (e.g.
+`BIG5.so`, `CP1252.so`) — and the split step's loader/libc family
+(`lib/ld-linux-aarch64.so.1`, `lib/aarch64-linux-gnu/libc.so.6`) landed at its
+usual split location, confirming the gconv dir was left alone at its own path.
+
+Artifact size delta (linux-arm64, from `manifest.json` before/after):
+uncompressed rootfs 95.5 → 114.8 MiB (+19.3 MiB, matching the source image's
+gconv closure size); zstd archive 14.4 → 15.9 MiB (+1.5 MiB compressed);
+gzip-compressed Docker image 20.3 → 23.6 MiB (+3.3 MiB).
+
+**This fix cannot be exercised by `FLOOR_CHECK_CMD` by design.** Floor-check
+runs the bare-host path (`"$ROOTFS/bin/postgrest" --example`), which — per the
+architectural correction above — pairs the host loader with host glibc and
+never touches the bundled modules at all. The bundled gconv only serves the
+scratch Docker image path, which floor-check does not exercise. Correctness
+here rests on same-image provenance (the modules come from the identical
+glibc build as the bundled libc that dlopens them) plus the presence check
+performed during this sweep, not on an executable proof.
+
+### Postgres facts (Design §3, second bullet)
+
+```
+$ grep -n "with-system-tzdata" sources/postgres/nix/postgresql/generic.nix
+181:      ++ lib.optionals (!portable) [ "--with-system-tzdata=${tzdata}/share/zoneinfo" ]
+
+$ grep -n "glibcLocalesMinimal" services/postgres/nix/packages/postgres.nix | head -3
+7:      glibcLocalesMinimal = pkgs.glibcLocales.override {
+197:            glibcLocalesMinimal
+247:          # glibcLocalesMinimal on Linux (initdb locale support).
+
+$ grep -rn "LOCALE_ARCHIVE\|LOCPATH" services/postgres/ || echo "no locale env wiring (expected)"
+no locale env wiring (expected)
+```
+
+Confirms the Evidence-section claims: `--with-system-tzdata` is skipped for the
+portable variant (guarded by `(!portable)`, so PG ships its own
+`share/postgresql/timezone{,sets}`); `glibcLocalesMinimal` is present in the
+Nix expression but unwired (no `LOCALE_ARCHIVE`/`LOCPATH` env anywhere under
+`services/postgres/`).
+
+### Resulting decision
+
+- No gconv bundling for the BEAM trio or for any other host-glibc artifact —
+  their only iconv importer is `libstdc++.so.6`, which reads host gconv
+  (evidence #2, unaffected by any nixpkgs pin skew since it's the *host's*
+  gconv, not a bundled one).
+- postgrest ships its own gconv modules (same-image provenance, via
+  `OPTIONAL_INCLUDE_PATHS`) to close the one real mismatch: its bundled libc's
+  compiled-in gconv path is otherwise empty inside the scratch Docker image.
+  No wrapper, no `GCONV_PATH`, no other env var — supersedes the Design §3
+  sketch.
+- Postgres needs nothing further: it owns its own tzdata and never wires
+  `glibcLocalesMinimal` into anything glibc would read.
+
 ## Risks
 
 - Erlang `native` lookup assumption: `:inet.gethostbyname` must go through
