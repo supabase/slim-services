@@ -98,10 +98,19 @@ target_arch() {
   normalize_arch "${ARCH:-$(host_arch)}"
 }
 
+# linux-<arch> is the glibc target (the default, no suffix). Alternative
+# libc flavors get a suffix: TARGET_LIBC=musl -> linux-<arch>-musl
+# (reserved for future Alpine targets; no builds produce it yet).
 artifact_platform_dir() {
-  local os="$1"
-  local arch="$2"
-  printf '%s-%s' "$(normalize_os "$os")" "$(normalize_arch "$arch")"
+  local os arch libc
+  os="$(normalize_os "$1")"
+  arch="$(normalize_arch "$2")"
+  libc="${TARGET_LIBC:-glibc}"
+  if [[ "$os" == "linux" && "$libc" != "glibc" ]]; then
+    printf '%s-%s-%s' "$os" "$arch" "$libc"
+  else
+    printf '%s-%s' "$os" "$arch"
+  fi
 }
 
 docker_platform() {

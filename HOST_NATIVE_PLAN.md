@@ -338,3 +338,19 @@ scripts/ci-build-service.sh <service> <version>` on a Mac must build, smoke as
 a host process (with runtime.env applied), audit clean, and record runtime
 metrics in the manifest — then untar the archive into a scratch directory and
 run the same smoke against it to prove relocatability.
+
+## Host Floor Contract (2026-07)
+
+Decision: archives must be as portable as possible out of the box — no
+CLI-side relocation/patching. Since an ELF interpreter path is absolute and
+baked at link time, "one artifact for every Linux" is impossible; instead
+the libc contract is part of the target name (`linux-<arch>` = glibc,
+`linux-<arch>-musl` reserved) and the glibc contract carries an explicit,
+measured, CI-gated floor: glibc 2.38 (Ubuntu 24.04+/Debian 13+/Fedora 39+),
+macOS 13.0 on darwin (measured ERTS minos: 11.3). Enforced by
+scripts/os-floor.sh + audit gates + a fedora:39 execution proof
+(scripts/floor-check-linux.sh); recorded as `target`, `libc`, `os_floor`
+in every manifest so the CLI can pre-flight hosts with a clear error.
+NixOS is served by the Nix packages themselves, not archives. Lowering the
+floor below 2.38 (Ubuntu 22.04/RHEL 9) would require linking against an
+older glibc (old-stdenv rebuilds of OTP/deps) — deferred until demand.

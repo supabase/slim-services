@@ -54,6 +54,10 @@ load_recipe "$service"
 export GLIBC_FLOOR_MAX="${GLIBC_FLOOR_MAX:-}"
 export MACOS_FLOOR_MAX="${MACOS_FLOOR_MAX:-}"
 
+if [[ "$TARGET_OS" == "linux" && "${TARGET_LIBC:-glibc}" != "glibc" ]]; then
+  fail "TARGET_LIBC=${TARGET_LIBC} is a reserved target flavor; no musl builds are implemented yet"
+fi
+
 merge_runtime_metrics() {
   local manifest_file="$1"
   local metrics_file="$2"
