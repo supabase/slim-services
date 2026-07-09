@@ -41,7 +41,11 @@ floor_image="${SLIM_FLOOR_IMAGE:-ubuntu:24.04}"
 rootfs_abs="$(cd "$rootfs" && pwd)"
 
 log "floor check: $service in $floor_image"
+# Release launchers (e.g. supavisor's mix release script) may call `hostname -f`;
+# give the container a self-resolving hostname so that doesn't fail under --network none.
 if ! docker run --rm --network none \
+  --hostname slim-floor-check \
+  --add-host slim-floor-check=127.0.0.1 \
   -v "$rootfs_abs":/rootfs:ro \
   -e ROOTFS=/rootfs \
   -e HOME=/tmp \
