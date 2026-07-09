@@ -22,12 +22,10 @@ fi
 start_postgres pgmeta_smoke
 
 if [[ -n "$artifact_rootfs" ]]; then
-  # Host-process smoke. The artifact does not bundle Node (shared-runtime
-  # contract); provide it exactly the way the CLI will, via SUPABASE_NODE,
-  # pinned to the same major as the build runtime (node 24).
+  # Host-process smoke. The artifact bundles its Node runtime; the wrapper
+  # must find it with no help — SUPABASE_NODE stays unset and PATH is
+  # sanitized so a host node cannot mask a broken bundle.
   require_cmd python3
-  # shellcheck source=scripts/nixpkgs-pin.sh
-  source "$ROOT_DIR/scripts/nixpkgs-pin.sh"
 
   cleanup_pgmeta_smoke() {
     rm -f "${pgmeta_log:-}"
@@ -38,10 +36,8 @@ if [[ -n "$artifact_rootfs" ]]; then
   pgmeta_bin="$artifact_rootfs/bin/pgmeta"
   [[ -x "$pgmeta_bin" ]] || fail "pgmeta artifact launcher not found or not executable: $pgmeta_bin"
 
-  if [[ -z "${SUPABASE_NODE:-}" ]]; then
-    log "resolving nodejs_24 from pinned nixpkgs for the smoke runtime"
-    SUPABASE_NODE="$(nixpkgs_build_attr nodejs_24)/bin/node"
-  fi
+  [[ -x "$artifact_rootfs/node/bin/node" ]] \
+    || fail "pgmeta artifact does not bundle a node runtime: $artifact_rootfs/node/bin/node"
 
   pg_port="$(postgres_port)"
   port="$(python3 - <<'PY'
@@ -56,7 +52,8 @@ PY
 
   log "smoke testing pgmeta host process on port $port"
   start_host_service pgmeta "$pgmeta_log" \
-    SUPABASE_NODE="$SUPABASE_NODE" \
+    SUPABASE_NODE= \
+    PATH=/usr/bin:/bin \
     PG_META_PORT="$port" \
     PG_META_HOST=127.0.0.1 \
     PG_META_DB_HOST=127.0.0.1 \
