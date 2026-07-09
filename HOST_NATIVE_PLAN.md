@@ -380,8 +380,11 @@ read archive files. tzdata is the one genuine gap — bare hosts have no
 bundled for the BEAM trio (realtime, pooler, analytics) with a `TZDIR` guard
 in each release's `env.sh`; Node duo and postgres carry their own tz data and
 need nothing. `FLOOR_CHECK_CMD` was extended for all five (BEAM: NSS
-resolution + a >=3h TZ delta; Node duo: `dns.lookup`), proven green on
-linux-arm64. One iconv-importing bundled-glibc artifact turned up in the
+resolution + a >=3h TZ delta; Node duo: `dns.lookup`); the BEAM trio's checks
+are proven green on linux-arm64 locally (builds on this Mac), while the Node
+duo's `dns.lookup` check awaits the forced `service-artifacts.yml` linux
+dispatch (those cells cannot build on this Mac). One iconv-importing
+bundled-glibc artifact turned up in the
 sweep — postgrest — fixed by shipping the source image's own gconv modules
 via `OPTIONAL_INCLUDE_PATHS`, not a wrapper or env var. Full record:
 `docs/superpowers/specs/2026-07-09-glibc-runtime-side-data-design.md`.

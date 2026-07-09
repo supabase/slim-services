@@ -66,8 +66,11 @@ Outcomes:
   PR #14 philosophy).
 - `FLOOR_CHECK_CMD` extended on all five affected recipes — BEAM trio: NSS
   resolution (`:inet.gethostbyname`) + a >=3h TZ delta; Node duo:
-  `dns.lookup` — proven green on linux-arm64, including a non-vacuous tamper
-  test on pooler.
+  `dns.lookup`. The BEAM trio's checks are proven green on linux-arm64
+  locally (built on this Mac), including a non-vacuous tamper test on
+  pooler; the Node duo's linux cells can't build on this Mac, so their
+  `dns.lookup` check is validated by the forced `service-artifacts.yml`
+  dispatch, not yet run.
 
 ## PR 3 — BEAM floor 2.39 → 2.38 (drop libsystemd) + upstream nudge for postgres
 
