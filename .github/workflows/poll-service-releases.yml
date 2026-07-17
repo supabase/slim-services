@@ -1,0 +1,39 @@
+name: Poll upstream service releases
+
+"on":
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      service:
+        description: Optional enabled service to poll; empty polls all enabled services.
+        required: false
+        type: string
+        default: ""
+      dry_run:
+        description: Report releases without dispatching builds.
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: poll-upstream-service-releases
+  cancel-in-progress: false
+
+jobs:
+  poll:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Poll latest stable releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          POLL_SERVICE: ${{ inputs.service }}
+          POLL_DRY_RUN: ${{ inputs.dry_run && '1' || '0' }}
+        run: scripts/poll-service-releases.sh

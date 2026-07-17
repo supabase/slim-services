@@ -1,0 +1,452 @@
+name: Release service artifacts and image
+
+"on":
+  workflow_dispatch:
+    inputs:
+      service:
+        description: Service to release.
+        required: true
+        type: choice
+        options:
+          - auth
+          - postgrest
+          - realtime
+          - pooler
+          - analytics
+          - storage
+          - pgmeta
+          - postgres
+      version:
+        description: Upstream release tag/ref and published version.
+        required: true
+        type: string
+      force:
+        description: Rebuild and replace assets when the release already exists.
+        required: false
+        type: boolean
+        default: false
+  workflow_call:
+    inputs:
+      service:
+        required: true
+        type: string
+      version:
+        required: true
+        type: string
+      force:
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  GH_REPO: ${{ github.repository }}
+
+concurrency:
+  group: service-release-${{ inputs.service }}-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: plan ${{ inputs.service }} ${{ inputs.version }}
+    runs-on: ubuntu-24.04
+    outputs:
+      image_repository: ${{ steps.plan.outputs.image_repository }}
+      matrix: ${{ steps.plan.outputs.matrix }}
+      publish: ${{ steps.plan.outputs.publish }}
+      release_tag: ${{ steps.plan.outputs.release_tag }}
+    steps:
+      - name: Validate inputs and check existing release
+        id: plan
+        shell: bash
+        env:
+          FORCE: ${{ inputs.force }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SERVICE: ${{ inputs.service }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+
+          case "$SERVICE" in
+            auth|postgrest|realtime|pooler|analytics|storage|pgmeta|postgres) ;;
+            *)
+              printf 'unsupported release service: %s\n' "$SERVICE" >&2
+              exit 1
+              ;;
+          esac
+
+          if [[ ! "$VERSION" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]]; then
+            printf 'version is not a valid Docker tag or simple git ref: %s\n' "$VERSION" >&2
+            exit 1
+          fi
+
+          release_tag="$SERVICE-$VERSION"
+          image_repository="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/cli/$SERVICE"
+          publish=true
+          if [[ "$FORCE" != "true" ]] && gh release view "$release_tag" >/dev/null 2>&1; then
+            publish=false
+            printf 'release %s already exists; skipping (use force=true to replace it)\n' "$release_tag"
+          fi
+
+          matrix='{"include":[{"target_os":"linux","arch":"arm64","platform_dir":"linux-arm64","runner":"large-linux-arm"},{"target_os":"linux","arch":"amd64","platform_dir":"linux-amd64","runner":"large-linux-x86"},{"target_os":"darwin","arch":"arm64","platform_dir":"darwin-arm64","runner":"macos-14"}]}'
+          {
+            printf 'image_repository=%s\n' "$image_repository"
+            printf 'matrix=%s\n' "$matrix"
+            printf 'publish=%s\n' "$publish"
+            printf 'release_tag=%s\n' "$release_tag"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    name: ${{ inputs.service }} ${{ matrix.target_os }}/${{ matrix.arch }}
+    needs: plan
+    if: needs.plan.outputs.publish == 'true'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - name: Checkout packaging repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Checkout requested upstream release
+        id: source
+        shell: bash
+        env:
+          ARCH: ${{ matrix.arch }}
+          SERVICE: ${{ inputs.service }}
+          SOURCE_REF: ${{ inputs.version }}
+          TARGET_OS: ${{ matrix.target_os }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+
+          source_dir="$(bash -c '
+            source scripts/lib.sh
+            load_recipe "$SERVICE" >/dev/null
+            printf "%s" "$SOURCE_DIR"
+          ')"
+          git submodule update --init --depth 1 "$source_dir"
+
+          if ! git -C "$source_dir" rev-parse --verify --quiet "$VERSION^{commit}" >/dev/null; then
+            git -C "$source_dir" fetch --force --depth 1 origin \
+              "refs/tags/$VERSION:refs/tags/$VERSION" || \
+              git -C "$source_dir" fetch --force --depth 1 origin "$VERSION"
+          fi
+          source_sha="$(git -C "$source_dir" rev-parse "$VERSION^{commit}" 2>/dev/null || git -C "$source_dir" rev-parse FETCH_HEAD)"
+          git -C "$source_dir" checkout --detach "$source_sha"
+          [[ -z "$(git -C "$source_dir" status --porcelain)" ]] || {
+            printf 'source checkout is dirty: %s\n' "$source_dir" >&2
+            exit 1
+          }
+
+          {
+            printf 'source_dir=%s\n' "$source_dir"
+            printf 'source_sha=%s\n' "$source_sha"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Install Nix
+        uses: nixbuild/nix-quick-install-action@v34
+
+      - name: Restore/save Nix store cache
+        uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: release-${{ inputs.service }}-${{ matrix.platform_dir }}-${{ hashFiles(format('services/{0}/recipe.env', inputs.service), format('services/{0}/nix/**', inputs.service), format('services/{0}/build-host.sh', inputs.service), 'scripts/nixpkgs-pin.sh') }}
+          restore-prefixes-first-match: |
+            release-${{ inputs.service }}-${{ matrix.platform_dir }}-
+          gc-max-store-size-linux: 8G
+          gc-max-store-size-macos: 8G
+
+      - name: Set up Docker Buildx
+        if: matrix.target_os == 'linux'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Set up Go
+        if: inputs.service == 'auth'
+        uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - name: Build, audit, smoke, and package
+        shell: bash
+        env:
+          ARCH: ${{ matrix.arch }}
+          IMAGE_TAG: local/${{ inputs.service }}:${{ inputs.version }}-${{ matrix.platform_dir }}
+          OCI_REVISION: ${{ github.sha }}
+          OCI_SOURCE: https://github.com/${{ github.repository }}
+          OCI_VERSION: ${{ inputs.version }}
+          SLIM_SMOKE_HOST_POSTGRES: ${{ matrix.target_os == 'darwin' && '1' || '0' }}
+          SOURCE_REF: ${{ inputs.version }}
+          TARGET_OS: ${{ matrix.target_os }}
+        run: |
+          set -euo pipefail
+          scripts/ci-build-service.sh "${{ inputs.service }}" "${{ inputs.version }}"
+
+      - name: Smoke artifact as a host process
+        if: matrix.target_os == 'linux'
+        shell: bash
+        env:
+          ARCH: ${{ matrix.arch }}
+          SLIM_DIRECT_LINUX_ARTIFACT_SMOKE: "1"
+          SOURCE_REF: ${{ inputs.version }}
+          TARGET_OS: ${{ matrix.target_os }}
+        run: |
+          set -euo pipefail
+          scripts/smoke.sh "${{ inputs.service }}" \
+            --artifact "artifacts/${{ inputs.service }}/${{ inputs.version }}/${{ matrix.platform_dir }}/rootfs"
+
+      - name: Stage release assets
+        id: stage
+        shell: bash
+        env:
+          PLATFORM_DIR: ${{ matrix.platform_dir }}
+          SERVICE: ${{ inputs.service }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          artifact_dir="artifacts/$SERVICE/$VERSION/$PLATFORM_DIR"
+          release_dir="release-assets"
+          mkdir -p "$release_dir"
+
+          archive="$(find "$artifact_dir" -maxdepth 1 -type f \( -name '*.tar.zst' -o -name '*.tar.gz' -o -name '*.tar' \) -print -quit)"
+          [[ -n "$archive" ]] || {
+            printf 'distribution archive not found in %s\n' "$artifact_dir" >&2
+            exit 1
+          }
+          cp "$archive" "$release_dir/"
+          cp "$artifact_dir/manifest.json" \
+            "$release_dir/$SERVICE-$VERSION-$PLATFORM_DIR.manifest.json"
+          cp "$artifact_dir/SHA256SUMS" \
+            "$release_dir/$SERVICE-$VERSION-$PLATFORM_DIR.SHA256SUMS"
+
+      - name: Save exact smoked image for publication
+        if: matrix.target_os == 'linux'
+        shell: bash
+        env:
+          ARCH: ${{ matrix.arch }}
+          LOCAL_IMAGE: local/${{ inputs.service }}:${{ inputs.version }}-${{ matrix.platform_dir }}
+          PLATFORM: linux/${{ matrix.arch }}
+          SERVICE: ${{ inputs.service }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p release-image
+          image_archive="$SERVICE-$VERSION-linux-$ARCH.image.tar.gz"
+          docker image inspect "$LOCAL_IMAGE" >/dev/null
+          docker save "$LOCAL_IMAGE" | gzip -1 > "release-image/$image_archive"
+          python3 - "$LOCAL_IMAGE" "$PLATFORM" "$image_archive" \
+            "release-image/$SERVICE-$VERSION-linux-$ARCH.image.json" <<'PY'
+          import json
+          import sys
+
+          local_image, platform, archive, output = sys.argv[1:]
+          with open(output, "w", encoding="utf-8") as fh:
+              json.dump({
+                  "archive": archive,
+                  "local_image": local_image,
+                  "platform": platform,
+              }, fh, indent=2)
+              fh.write("\n")
+          PY
+
+      - name: Upload release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-assets-${{ inputs.service }}-${{ inputs.version }}-${{ matrix.platform_dir }}
+          if-no-files-found: error
+          path: release-assets/
+
+      - name: Upload exact smoked image
+        if: matrix.target_os == 'linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-image-${{ inputs.service }}-${{ inputs.version }}-${{ matrix.arch }}
+          if-no-files-found: error
+          compression-level: 0
+          path: release-image/
+
+  publish-image:
+    name: publish ${{ inputs.service }} multi-platform image
+    needs:
+      - plan
+      - build
+    if: needs.plan.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Download exact smoked images
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-image-${{ inputs.service }}-${{ inputs.version }}-*
+          path: release-images
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push platform images and publish manifest
+        id: publish
+        shell: bash
+        env:
+          IMAGE_REPOSITORY: ${{ needs.plan.outputs.image_repository }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          refs=()
+
+          while IFS= read -r metadata_file; do
+            metadata="$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1]))))' "$metadata_file")"
+            archive="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["archive"])' "$metadata")"
+            local_image="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["local_image"])' "$metadata")"
+            platform="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["platform"])' "$metadata")"
+            platform_tag="${IMAGE_REPOSITORY}:${VERSION}-${platform//\//-}"
+
+            gzip -dc "$(dirname "$metadata_file")/$archive" | docker load
+            docker tag "$local_image" "$platform_tag"
+            docker push "$platform_tag"
+
+            digest="$(docker buildx imagetools inspect "$platform_tag" | awk '$1 == "Digest:" { print $2; exit }')"
+            [[ "$digest" == sha256:* ]] || {
+              printf 'could not resolve digest for %s\n' "$platform_tag" >&2
+              exit 1
+            }
+            refs+=("$IMAGE_REPOSITORY@$digest")
+          done < <(find release-images -name '*.image.json' -type f | sort)
+
+          if [[ "${#refs[@]}" -ne 2 ]]; then
+            printf 'expected two platform images, got %s\n' "${#refs[@]}" >&2
+            exit 1
+          fi
+
+          image_tag="$IMAGE_REPOSITORY:$VERSION"
+          docker buildx imagetools create -t "$image_tag" "${refs[@]}"
+          docker buildx imagetools inspect "$image_tag"
+          digest="$(docker buildx imagetools inspect "$image_tag" | awk '$1 == "Digest:" { print $2; exit }')"
+          [[ "$digest" == sha256:* ]] || {
+            printf 'could not resolve digest for %s\n' "$image_tag" >&2
+            exit 1
+          }
+
+          {
+            printf 'digest=%s\n' "$digest"
+            printf 'image_tag=%s\n' "$image_tag"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Record published image
+        shell: bash
+        env:
+          DIGEST: ${{ steps.publish.outputs.digest }}
+          IMAGE_TAG: ${{ steps.publish.outputs.image_tag }}
+        run: |
+          python3 - "$IMAGE_TAG" "$DIGEST" <<'PY'
+          import json
+          import sys
+
+          with open("published-image.json", "w", encoding="utf-8") as fh:
+              json.dump({"image": sys.argv[1], "digest": sys.argv[2]}, fh, indent=2)
+              fh.write("\n")
+          PY
+
+      - name: Upload published image metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: published-image-${{ inputs.service }}-${{ inputs.version }}
+          path: published-image.json
+
+  publish-release:
+    name: publish ${{ inputs.service }} release
+    needs:
+      - plan
+      - build
+      - publish-image
+    if: needs.plan.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download portable artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-assets-${{ inputs.service }}-${{ inputs.version }}-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Download published image metadata
+        uses: actions/download-artifact@v4
+        with:
+          name: published-image-${{ inputs.service }}-${{ inputs.version }}
+
+      - name: Prepare checksums and release notes
+        shell: bash
+        env:
+          SERVICE: ${{ inputs.service }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          find release-assets -name '*.SHA256SUMS' -type f -print0 \
+            | sort -z \
+            | xargs -0 cat \
+            | sort -k2 > release-assets/SHA256SUMS
+          find release-assets -name '*.SHA256SUMS' -type f \
+            ! -path 'release-assets/SHA256SUMS' -delete
+
+          image="$(python3 -c 'import json; print(json.load(open("published-image.json"))["image"])')"
+          digest="$(python3 -c 'import json; print(json.load(open("published-image.json"))["digest"])')"
+          cat > release-notes.md <<EOF
+          Portable, smoke-tested runtime artifacts for **$SERVICE $VERSION**.
+
+          Targets:
+
+          - linux/amd64
+          - linux/arm64
+          - darwin/arm64
+
+          Multi-platform Docker image:
+
+          \`$image\`
+
+          Immutable image reference:
+
+          \`$image@$digest\`
+
+          Verify a downloaded archive with the attached \`SHA256SUMS\` file.
+          EOF
+
+      - name: Create or update GitHub release
+        shell: bash
+        env:
+          FORCE: ${{ inputs.force }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.plan.outputs.release_tag }}
+          SERVICE: ${{ inputs.service }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            [[ "$FORCE" == "true" ]] || {
+              printf 'release appeared while this run was building: %s\n' "$RELEASE_TAG" >&2
+              exit 1
+            }
+            gh release upload "$RELEASE_TAG" release-assets/* --clobber
+            gh release edit "$RELEASE_TAG" \
+              --title "$SERVICE $VERSION" \
+              --notes-file release-notes.md
+          else
+            gh release create "$RELEASE_TAG" release-assets/* \
+              --target "$GITHUB_SHA" \
+              --title "$SERVICE $VERSION" \
+              --notes-file release-notes.md
+          fi
