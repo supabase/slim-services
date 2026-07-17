@@ -326,7 +326,7 @@ gh workflow run service-release.yml \
 ```
 
 `.github/workflows/poll-service-releases.yml` polls stable upstream GitHub
-releases every six hours and dispatches independent service-release runs for
+releases hourly and dispatches independent service-release runs for
 the newest version tag matching each service policy that does not yet have a
 corresponding GitHub release here. All configured services are enabled. The
 PostgreSQL policy accepts only plain `17.x.x.x` releases; PostgreSQL 15,
