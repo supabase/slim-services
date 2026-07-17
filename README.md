@@ -305,7 +305,9 @@ TARGET_OS=linux ARCH=arm64 scripts/ci-build-service.sh realtime v2.112.6
 ## Publishing Service Releases
 
 `.github/workflows/service-release.yml` publishes one upstream service release
-at a time. It checks out the requested upstream ref and builds the complete
+at a time. It verifies that the requested version is an exact, stable,
+published release tag in the configured upstream repository, checks out only
+that tag (never a branch such as `main`), and builds the complete
 `linux-amd64`, `linux-arm64`, and `darwin-arm64` artifact matrix. Publication
 only starts after every artifact and Docker smoke passes:
 
@@ -323,12 +325,18 @@ gh workflow run service-release.yml \
   -f force=false
 ```
 
-`.github/workflows/poll-service-releases.yml` polls latest stable upstream
-GitHub releases every six hours and dispatches independent service-release
-runs for versions that do not yet have a corresponding GitHub release here.
-Polling starts with Auth. Enable each additional service only after its
-version-specific build pins have been validated by setting `poll: true` in
-`.github/service-release-sources.json`.
+`.github/workflows/poll-service-releases.yml` polls stable upstream GitHub
+releases every six hours and dispatches independent service-release runs for
+the newest version tag matching each service policy that does not yet have a
+corresponding GitHub release here. All configured services are enabled. The
+PostgreSQL policy accepts only plain `17.x.x.x` releases; PostgreSQL 15,
+OrioleDB, architecture-specific, and other suffixed release tags are ignored.
+
+The release workflow rechecks the upstream release policy independently, so a
+manual dispatch cannot publish `main`, another branch, a draft/prerelease, or
+an unsupported tag. A newly triggered build can still fail safely when a
+service's version-specific dependency hashes need to be refreshed; no release
+or image is published unless every build and smoke test passes.
 
 ## Common Commands
 

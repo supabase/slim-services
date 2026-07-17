@@ -8,37 +8,37 @@
     "postgrest": {
       "repository": "PostgREST/postgrest",
       "tag_pattern": "^v[0-9]+\\.[0-9]+$",
-      "poll": false
+      "poll": true
     },
     "realtime": {
       "repository": "supabase/realtime",
       "tag_pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$",
-      "poll": false
+      "poll": true
     },
     "pooler": {
       "repository": "supabase/supavisor",
       "tag_pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$",
-      "poll": false
+      "poll": true
     },
     "analytics": {
       "repository": "Logflare/logflare",
       "tag_pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$",
-      "poll": false
+      "poll": true
     },
     "storage": {
       "repository": "supabase/storage",
       "tag_pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$",
-      "poll": false
+      "poll": true
     },
     "pgmeta": {
       "repository": "supabase/postgres-meta",
       "tag_pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$",
-      "poll": false
+      "poll": true
     },
     "postgres": {
       "repository": "supabase/postgres",
-      "tag_pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$",
-      "poll": false
+      "tag_pattern": "^17\\.[0-9]+\\.[0-9]+\\.[0-9]+$",
+      "poll": true
     }
   }
 }

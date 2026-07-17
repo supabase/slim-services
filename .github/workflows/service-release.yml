@@ -17,7 +17,7 @@ name: Release service artifacts and image
           - pgmeta
           - postgres
       version:
-        description: Upstream release tag/ref and published version.
+        description: Published stable upstream release tag.
         required: true
         type: string
       force:
@@ -58,6 +58,9 @@ jobs:
       publish: ${{ steps.plan.outputs.publish }}
       release_tag: ${{ steps.plan.outputs.release_tag }}
     steps:
+      - name: Checkout release policy
+        uses: actions/checkout@v4
+
       - name: Validate inputs and check existing release
         id: plan
         shell: bash
@@ -77,8 +80,41 @@ jobs:
               ;;
           esac
 
-          if [[ ! "$VERSION" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]]; then
-            printf 'version is not a valid Docker tag or simple git ref: %s\n' "$VERSION" >&2
+          config_line="$(python3 - "$SERVICE" <<'PY'
+          import json
+          import sys
+
+          with open(".github/service-release-sources.json", encoding="utf-8") as fh:
+              services = json.load(fh)["services"]
+
+          service = sys.argv[1]
+          config = services.get(service)
+          if config is None:
+              raise SystemExit(f"release policy not found for {service}")
+          print(config["repository"], config["tag_pattern"], sep="\t")
+          PY
+          )"
+          IFS=$'\t' read -r upstream_repository tag_pattern <<< "$config_line"
+
+          if [[ ! "$VERSION" =~ $tag_pattern ]]; then
+            printf 'version is not an allowed release tag for %s: %s (expected %s)\n' \
+              "$SERVICE" "$VERSION" "$tag_pattern" >&2
+            exit 1
+          fi
+
+          if ! upstream_release="$(
+            gh api "repos/$upstream_repository/releases/tags/$VERSION" \
+              --jq '[.tag_name, (.draft | tostring), (.prerelease | tostring)] | @tsv'
+          )"; then
+            printf '%s is not a published upstream release of %s\n' \
+              "$VERSION" "$upstream_repository" >&2
+            exit 1
+          fi
+          IFS=$'\t' read -r upstream_tag upstream_draft upstream_prerelease \
+            <<< "$upstream_release"
+          if [[ "$upstream_tag" != "$VERSION" || "$upstream_draft" != "false" || "$upstream_prerelease" != "false" ]]; then
+            printf '%s must be an exact, stable, published upstream release of %s\n' \
+              "$VERSION" "$upstream_repository" >&2
             exit 1
           fi
 
@@ -134,10 +170,9 @@ jobs:
 
           if ! git -C "$source_dir" rev-parse --verify --quiet "$VERSION^{commit}" >/dev/null; then
             git -C "$source_dir" fetch --force --depth 1 origin \
-              "refs/tags/$VERSION:refs/tags/$VERSION" || \
-              git -C "$source_dir" fetch --force --depth 1 origin "$VERSION"
+              "refs/tags/$VERSION:refs/tags/$VERSION"
           fi
-          source_sha="$(git -C "$source_dir" rev-parse "$VERSION^{commit}" 2>/dev/null || git -C "$source_dir" rev-parse FETCH_HEAD)"
+          source_sha="$(git -C "$source_dir" rev-parse "$VERSION^{commit}")"
           git -C "$source_dir" checkout --detach "$source_sha"
           [[ -z "$(git -C "$source_dir" status --porcelain)" ]] || {
             printf 'source checkout is dirty: %s\n' "$source_dir" >&2
