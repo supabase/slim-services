@@ -302,6 +302,34 @@ TARGET_OS=darwin ARCH=arm64 scripts/ci-build-service.sh edge-runtime v1.74.2
 TARGET_OS=linux ARCH=arm64 scripts/ci-build-service.sh realtime v2.112.6
 ```
 
+## Publishing Service Releases
+
+`.github/workflows/service-release.yml` publishes one upstream service release
+at a time. It checks out the requested upstream ref and builds the complete
+`linux-amd64`, `linux-arm64`, and `darwin-arm64` artifact matrix. Publication
+only starts after every artifact and Docker smoke passes:
+
+- Portable archives, platform manifests, and a combined `SHA256SUMS` are
+  attached to the GitHub release `<service>-<version>`.
+- The exact smoked Linux images are published as a multi-platform image at
+  `ghcr.io/supabase/cli/<service>:<version>`.
+
+Run a release manually with:
+
+```bash
+gh workflow run service-release.yml \
+  -f service=auth \
+  -f version=v2.193.0 \
+  -f force=false
+```
+
+`.github/workflows/poll-service-releases.yml` polls latest stable upstream
+GitHub releases every six hours and dispatches independent service-release
+runs for versions that do not yet have a corresponding GitHub release here.
+Polling starts with Auth. Enable each additional service only after its
+version-specific build pins have been validated by setting `poll: true` in
+`.github/service-release-sources.json`.
+
 ## Common Commands
 
 Build the selected backend for a service:

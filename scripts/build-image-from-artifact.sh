@@ -61,6 +61,10 @@ if [[ "${DOCKER_PUSH:-0}" == "1" ]]; then
 elif [[ "${DOCKER_LOAD:-1}" == "1" ]]; then
   output_args+=(--load)
 fi
+label_args=()
+[[ -n "${OCI_SOURCE:-}" ]] && label_args+=(--label "org.opencontainers.image.source=$OCI_SOURCE")
+[[ -n "${OCI_REVISION:-}" ]] && label_args+=(--label "org.opencontainers.image.revision=$OCI_REVISION")
+[[ -n "${OCI_VERSION:-}" ]] && label_args+=(--label "org.opencontainers.image.version=$OCI_VERSION")
 printf '%s\n' "$dockerfile_content" | docker buildx build \
   --builder "$docker_builder" \
   --platform "$PLATFORM" \
@@ -68,6 +72,7 @@ printf '%s\n' "$dockerfile_content" | docker buildx build \
   --build-arg "ARTIFACT_ROOT=$rel_rootfs" \
   --build-arg "BASE_IMAGE=$BASE_IMAGE" \
   -t "$tag" \
+  "${label_args[@]}" \
   "${output_args[@]}" \
   "$ROOT_DIR"
 
