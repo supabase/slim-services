@@ -41,7 +41,12 @@ for service, config in services.items():
     repository = config.get("repository", "")
     if not re.fullmatch(r"[^/]+/[^/]+", repository):
         raise SystemExit(f"invalid repository for {service}: {repository}")
-    re.compile(config.get("tag_pattern", ""))
+    tag_pattern = config.get("tag_pattern", "")
+    re.compile(tag_pattern)
+    if not tag_pattern.startswith("^") or not tag_pattern.endswith("$"):
+        raise SystemExit(f"tag pattern must be anchored for {service}: {tag_pattern}")
+    if not isinstance(config.get("poll"), bool):
+        raise SystemExit(f"poll must be a boolean for {service}")
 
 print(f"validated {len(services)} service release sources")
 PY
@@ -56,10 +61,34 @@ fi
 while IFS=$'\t' read -r service upstream_repository tag_pattern; do
   [[ -z "$POLL_SERVICE" || "$service" == "$POLL_SERVICE" ]] || continue
 
-  version="$(gh api "repos/$upstream_repository/releases/latest" --jq .tag_name)"
-  if [[ ! "$version" =~ $tag_pattern ]]; then
-    printf 'ignoring %s latest release %s: does not match %s\n' \
-      "$service" "$version" "$tag_pattern" >&2
+  version=""
+  if latest_version="$(
+    gh api "repos/$upstream_repository/releases/latest" --jq .tag_name 2>/dev/null
+  )" && [[ "$latest_version" =~ $tag_pattern ]]; then
+    version="$latest_version"
+  fi
+
+  if [[ -z "$version" ]]; then
+    if ! release_tags="$(
+      gh api --paginate "repos/$upstream_repository/releases?per_page=100" \
+        --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name'
+    )"; then
+      printf 'could not query stable releases for %s (%s); continuing\n' \
+        "$service" "$upstream_repository" >&2
+      continue
+    fi
+
+    while IFS= read -r candidate; do
+      if [[ "$candidate" =~ $tag_pattern ]]; then
+        version="$candidate"
+        break
+      fi
+    done <<< "$release_tags"
+  fi
+
+  if [[ -z "$version" ]]; then
+    printf 'no stable release tag for %s matches %s\n' \
+      "$service" "$tag_pattern" >&2
     continue
   fi
 
@@ -70,12 +99,12 @@ while IFS=$'\t' read -r service upstream_repository tag_pattern; do
   fi
 
   if [[ "$POLL_DRY_RUN" == "1" ]]; then
-    printf 'would dispatch %s for %s %s on %s\n' \
+    printf 'would dispatch %s for %s stable release %s on %s\n' \
       "$TARGET_WORKFLOW" "$service" "$version" "$TARGET_REF"
     continue
   fi
 
-  printf 'dispatching %s for %s %s on %s\n' \
+  printf 'dispatching %s for %s stable release %s on %s\n' \
     "$TARGET_WORKFLOW" "$service" "$version" "$TARGET_REF"
   gh workflow run "$TARGET_WORKFLOW" \
     --repo "$TARGET_REPOSITORY" \

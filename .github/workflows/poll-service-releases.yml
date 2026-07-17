@@ -31,7 +31,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Poll latest stable releases
+      - name: Poll latest matching stable releases
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           POLL_SERVICE: ${{ inputs.service }}
