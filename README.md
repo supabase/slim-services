@@ -8,11 +8,11 @@ This repo asks a simple question, on three axes:
 > **CPU** — if we package only the runtime files it actually needs and ship it
 > with a low-footprint runtime profile?
 
-For the latest published Linux ARM64 release set (8 services), upstream images
-total **1501.6 MiB** compressed; the slim set totals **399.3 MiB** (**73.4%**
+For the latest published Linux ARM64 release set (9 services), upstream images
+total **1862.2 MiB** compressed; the slim set totals **452.2 MiB** (**75.7%**
 smaller — exact numbers below). Every published service also ships measured
 steady-state RSS and idle-CPU numbers, and a minimal core stack (postgres +
-auth + postgrest) idles at roughly **143 MiB of RSS per stack** with near-zero
+auth + postgrest) idles at roughly **145 MiB of RSS per stack** with near-zero
 idle CPU.
 
 ## Project Goals
@@ -67,11 +67,12 @@ override because its exact release tag is unavailable on Docker Hub.
 <!-- generated:results:begin -->
 | Service | Version | Upstream ARM64 | Published slim | Reduction | Idle RSS | Idle CPU | Sources |
 |---|---:|---:|---:|---:|---:|---:|---|
-| Postgres | `17.6.1.143` (all PG17 extensions, minimal preload) | `349.8 MiB` | `132.7 MiB` | `62.1%` | `46.8 MiB` | `0.01%` | [release](https://github.com/supabase/slim-services/releases/tag/postgres-17.6.1.143) · [report](services/postgres/REPORT.md) |
+| Postgres | `17.6.1.157` (all PG17 extensions, minimal preload) | `349.9 MiB` | `132.7 MiB` | `62.1%` | `47.5 MiB` | `0.01%` | [release](https://github.com/supabase/slim-services/releases/tag/postgres-17.6.1.157) · [report](services/postgres/REPORT.md) |
 | PostgREST | `v14.14` | `145.3 MiB` | `23.6 MiB` | `83.8%` | `88.0 MiB` | `0.12%` | [release](https://github.com/supabase/slim-services/releases/tag/postgrest-v14.14) · [report](services/postgrest/REPORT.md) |
-| Auth | `v2.193.0` | `25.8 MiB` | `11.4 MiB` | `55.8%` | `8.6 MiB` | `0.00%` | [release](https://github.com/supabase/slim-services/releases/tag/auth-v2.193.0) · [report](services/auth/REPORT.md) |
-| Realtime | `v2.112.6` | `114.7 MiB` | `26.9 MiB` | `76.5%` | `170.8 MiB` | `0.22%` | [release](https://github.com/supabase/slim-services/releases/tag/realtime-v2.112.6) · [report](services/realtime/REPORT.md) |
-| Storage | `v1.62.6` | `223.5 MiB` | `51.2 MiB` | `77.1%` | `222.6 MiB` | `0.02%` | [release](https://github.com/supabase/slim-services/releases/tag/storage-v1.62.6) · [report](services/storage/REPORT.md) |
+| Auth | `v2.194.0` | `26.0 MiB` | `11.4 MiB` | `56.2%` | `9.4 MiB` | `0.00%` | [release](https://github.com/supabase/slim-services/releases/tag/auth-v2.194.0) · [report](services/auth/REPORT.md) |
+| Realtime | `v2.121.2` | `115.0 MiB` | `27.0 MiB` | `76.5%` | `169.5 MiB` | `0.19%` | [release](https://github.com/supabase/slim-services/releases/tag/realtime-v2.121.2) · [report](services/realtime/REPORT.md) |
+| Storage | `v1.67.25` | `222.9 MiB` | `51.3 MiB` | `77.0%` | `225.5 MiB` | `0.01%` | [release](https://github.com/supabase/slim-services/releases/tag/storage-v1.67.25) · [report](services/storage/REPORT.md) |
+| Edge Runtime | `v1.74.2` (no-AI) | `360.6 MiB` | `52.7 MiB` | `85.4%` | `18.5 MiB` | `0.01%` | [release](https://github.com/supabase/slim-services/releases/tag/edge-runtime-v1.74.2) · [report](services/edge-runtime/REPORT.md) |
 | Analytics | `v1.46.0` | `258.9 MiB` | `58.7 MiB` | `77.3%` | `493.4 MiB` | `0.30%` | [release](https://github.com/supabase/slim-services/releases/tag/analytics-v1.46.0) · [report](services/analytics/REPORT.md) |
 | PgMeta | `v0.96.6` | `94.2 MiB` | `55.5 MiB` | `41.1%` | `100.7 MiB` | `0.59%` | [release](https://github.com/supabase/slim-services/releases/tag/pgmeta-v0.96.6) · [report](services/pgmeta/REPORT.md) |
 | Pooler | `v2.9.10` | `289.4 MiB`* | `39.3 MiB` | `86.4%`* | `162.4 MiB` | `0.11%` | [release](https://github.com/supabase/slim-services/releases/tag/pooler-v2.9.10) · [report](services/pooler/REPORT.md) |
@@ -79,9 +80,9 @@ override because its exact release tag is unavailable on Docker Hub.
 `*` Upstream comparison uses `UPSTREAM_COMPARE_IMAGE` from the recipe (the exact tag is not published on Docker Hub), so the percentage is directional.
 <!-- generated:results:end -->
 
-Edge Runtime and Studio measurements remain available in their service reports
-and in [SLIM_IMAGES_REPORT.md](SLIM_IMAGES_REPORT.md), but are omitted from the
-release-backed table until this repository publishes releases for them.
+Studio measurements remain available in its service report and in
+[SLIM_IMAGES_REPORT.md](SLIM_IMAGES_REPORT.md), but are omitted from the
+release-backed table until this repository publishes a Studio release.
 
 Postgres is native-first like everything else: the image is derived from the
 portable artifact, which ships every extension the upstream PG17 image
@@ -115,11 +116,12 @@ macOS archives require macOS 14+. The manifest records the exact floor as
 <!-- generated:host-native:begin -->
 | Service | Version | Archive | rootfs | Idle RSS | Idle CPU | Portable | Sources |
 |---|---:|---:|---:|---:|---:|---|---|
-| Postgres | `17.6.1.143` | `103.0 MiB` | `662.6 MiB` | `71.8 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/postgres-17.6.1.143) · [report](services/postgres/REPORT.md) |
+| Postgres | `17.6.1.157` | `103.0 MiB` | `662.6 MiB` | `71.5 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/postgres-17.6.1.157) · [report](services/postgres/REPORT.md) |
 | PostgREST | `v14.14` | `13.0 MiB` | `84.0 MiB` | `44.7 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/postgrest-v14.14) · [report](services/postgrest/REPORT.md) |
-| Auth | `v2.193.0` | `9.4 MiB` | `33.5 MiB` | `29.7 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/auth-v2.193.0) · [report](services/auth/REPORT.md) |
-| Realtime | `v2.112.6` | `11.7 MiB` | `40.8 MiB` | `194.9 MiB` | `0.53%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/realtime-v2.112.6) · [report](services/realtime/REPORT.md) |
-| Storage | `v1.62.6` | `36.2 MiB` | `144.7 MiB` | `295.6 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/storage-v1.62.6) · [report](services/storage/REPORT.md) |
+| Auth | `v2.194.0` | `9.5 MiB` | `33.8 MiB` | `29.4 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/auth-v2.194.0) · [report](services/auth/REPORT.md) |
+| Realtime | `v2.121.2` | `11.8 MiB` | `41.1 MiB` | `218.4 MiB` | `0.37%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/realtime-v2.121.2) · [report](services/realtime/REPORT.md) |
+| Storage | `v1.67.25` | `36.2 MiB` | `144.8 MiB` | `307.2 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/storage-v1.67.25) · [report](services/storage/REPORT.md) |
+| Edge Runtime | `v1.74.2` | `39.9 MiB` | `161.2 MiB` | `56.7 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/edge-runtime-v1.74.2) · [report](services/edge-runtime/REPORT.md) |
 | Analytics | `v1.46.0` | `33.1 MiB` | `137.9 MiB` | `505.2 MiB` | `0.53%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/analytics-v1.46.0) · [report](services/analytics/REPORT.md) |
 | PgMeta | `v0.96.6` | `37.2 MiB` | `172.7 MiB` | `175.2 MiB` | `0.30%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/pgmeta-v0.96.6) · [report](services/pgmeta/REPORT.md) |
 | Pooler | `v2.9.10` | `23.5 MiB` | `52.4 MiB` | `202.6 MiB` | `0.20%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/pooler-v2.9.10) · [report](services/pooler/REPORT.md) |
@@ -159,7 +161,7 @@ Memory and CPU are first-class optimization targets, not just disk:
   visible per build, exactly like size.
 - **The parallel-stacks view** — image layers are shared; RSS multiplies per
   stack. A minimal core stack (postgres + auth + postgrest) idles at roughly
-  143 MiB, so 25 parallel stacks cost ~3.5 GiB. Analytics (~500 MiB) and
+  145 MiB, so 25 parallel stacks cost ~3.5 GiB. Analytics (~500 MiB) and
   Studio (~200 MiB) dominate when run per-stack and are disabled by default
   in the minimal stack.
 
@@ -261,8 +263,8 @@ git submodule update --init --recursive
 Build one service artifact (host-native for your machine):
 
 ```bash
-TARGET_OS=darwin ARCH=arm64 scripts/build-artifact.sh auth v2.193.0
-TARGET_OS=linux ARCH=arm64 scripts/build-artifact.sh realtime v2.112.6
+TARGET_OS=darwin ARCH=arm64 scripts/build-artifact.sh auth v2.194.0
+TARGET_OS=linux ARCH=arm64 scripts/build-artifact.sh realtime v2.121.2
 ```
 
 Build the derived slim image from a Linux artifact:
@@ -270,14 +272,14 @@ Build the derived slim image from a Linux artifact:
 ```bash
 scripts/build-image-from-artifact.sh \
   realtime \
-  artifacts/realtime/v2.112.6/linux-arm64/rootfs \
-  local/realtime:slim-v2.112.6-arm64
+  artifacts/realtime/v2.121.2/linux-arm64/rootfs \
+  local/realtime:slim-v2.121.2-arm64
 ```
 
 Run the service smoke test against the image:
 
 ```bash
-scripts/smoke.sh realtime --image local/realtime:slim-v2.112.6-arm64
+scripts/smoke.sh realtime --image local/realtime:slim-v2.121.2-arm64
 ```
 
 Or smoke an artifact rootfs. On a matching darwin host this runs the service
@@ -286,9 +288,9 @@ through a temporary image by default, or as a host process on a matching
 Linux host with `SLIM_DIRECT_LINUX_ARTIFACT_SMOKE=1`:
 
 ```bash
-scripts/smoke.sh auth --artifact artifacts/auth/v2.193.0/darwin-arm64/rootfs
+scripts/smoke.sh auth --artifact artifacts/auth/v2.194.0/darwin-arm64/rootfs
 SLIM_DIRECT_LINUX_ARTIFACT_SMOKE=1 \
-  scripts/smoke.sh realtime --artifact artifacts/realtime/v2.112.6/linux-arm64/rootfs
+  scripts/smoke.sh realtime --artifact artifacts/realtime/v2.121.2/linux-arm64/rootfs
 ```
 
 Hosts without Docker (e.g. macOS CI runners) can run the harness postgres as
@@ -300,7 +302,7 @@ Docker image):
 
 ```bash
 TARGET_OS=darwin ARCH=arm64 scripts/ci-build-service.sh edge-runtime v1.74.2
-TARGET_OS=linux ARCH=arm64 scripts/ci-build-service.sh realtime v2.112.6
+TARGET_OS=linux ARCH=arm64 scripts/ci-build-service.sh realtime v2.121.2
 ```
 
 ## Publishing Service Releases
@@ -322,7 +324,7 @@ Run a release manually with:
 ```bash
 gh workflow run service-release.yml \
   -f service=auth \
-  -f version=v2.193.0 \
+  -f version=v2.194.0 \
   -f force=false
 ```
 
@@ -420,7 +422,7 @@ latest versions, postgres onboarding, `runtime.env` profiles, RSS/CPU
 measurement in every smoke), and the host-native pass (pass 4 —
 [HOST_NATIVE_PLAN.md](HOST_NATIVE_PLAN.md)). The release workflow has completed
 the full `darwin-arm64`, `linux-arm64`, and `linux-amd64` build-and-smoke matrix
-for all eight published services, attaching the portable archives to GitHub
+for all nine published services, attaching the portable archives to GitHub
 Releases and pushing the exact tested Linux images to GHCR. The legacy
 `.github/workflows/service-artifacts.yml` remains for experiments and services
 outside the release set. CLI-side integration (download/verify and
