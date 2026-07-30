@@ -40,7 +40,7 @@ let
   mixRelease = beamPackages.mixRelease.override { inherit elixir fetchMixDeps; };
 
   pname = "logflare";
-  version = "1.46.0";
+  version = lib.removeSuffix "\n" (builtins.readFile ../VERSION);
 
   src = lib.cleanSourceWith {
     src = ../.;
@@ -104,7 +104,7 @@ let
     mixFodDeps = fetchMixDeps {
       pname = "mix-deps-${pname}";
       inherit version src;
-      hash = "sha256-FZBKV1pYocd6RX+XS3fjt84V4MwrZEnSOflwArmz7OA=";
+      hash = "sha256-PyDeAKzRBGeplz528GO80T+Mr+4uTztxjANzUWoo8w0=";
       mixEnv = "prod";
     };
 
