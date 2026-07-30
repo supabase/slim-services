@@ -30,6 +30,11 @@
       "tag_pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$",
       "poll": true
     },
+    "edge-runtime": {
+      "repository": "supabase/edge-runtime",
+      "tag_pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$",
+      "poll": true
+    },
     "pgmeta": {
       "repository": "supabase/postgres-meta",
       "tag_pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$",
