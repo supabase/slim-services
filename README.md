@@ -422,8 +422,8 @@ measurement in every smoke), and the host-native pass (pass 4 —
 the full `darwin-arm64`, `linux-arm64`, and `linux-amd64` build-and-smoke matrix
 for all eight published services, attaching the portable archives to GitHub
 Releases and pushing the exact tested Linux images to GHCR. The legacy
-`.github/workflows/service-artifacts.yml` and Edge Runtime workflow remain for
-experiments and services outside the release set. CLI-side integration
-(download/verify and process-compose wiring) is the next step, tracked in
+`.github/workflows/service-artifacts.yml` remains for experiments and services
+outside the release set. CLI-side integration (download/verify and
+process-compose wiring) is the next step, tracked in
 [SLIM_IMAGES_REPORT.md](SLIM_IMAGES_REPORT.md) § Remaining Work and the plan's
 Phase 5 notes.

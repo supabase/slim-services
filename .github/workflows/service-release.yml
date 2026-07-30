@@ -14,6 +14,7 @@ name: Release service artifacts and image
           - pooler
           - analytics
           - storage
+          - edge-runtime
           - pgmeta
           - postgres
       version:
@@ -73,7 +74,7 @@ jobs:
           set -euo pipefail
 
           case "$SERVICE" in
-            auth|postgrest|realtime|pooler|analytics|storage|pgmeta|postgres) ;;
+            auth|postgrest|realtime|pooler|analytics|storage|edge-runtime|pgmeta|postgres) ;;
             *)
               printf 'unsupported release service: %s\n' "$SERVICE" >&2
               exit 1

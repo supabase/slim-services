@@ -17,17 +17,13 @@ name: Service artifacts
 # darwin-amd64 is intentionally absent: GitHub-hosted Intel macOS runners are
 # retired from the free tier (macos-14+ are arm64-only; Intel exists only as
 # paid `-large` runners), and CI_MATRIX.md keeps that target out of scope.
-#
-# Edge Runtime keeps its own workflow (edge-runtime-artifacts.yml), which
-# additionally publishes the multi-platform GHCR image.
-
 "on":
   workflow_dispatch:
     inputs:
       services:
         description: Space-separated services to build (default = all promoted).
         required: false
-        default: auth postgrest realtime pooler analytics storage pgmeta postgres
+        default: auth postgrest realtime pooler analytics storage edge-runtime pgmeta postgres
       targets:
         description: Space-separated targets (linux-arm64 linux-amd64 darwin-arm64).
         required: false
@@ -60,9 +56,9 @@ jobs:
           import json
           import os
 
-          # Same runner labels as edge-runtime-artifacts.yml: the repo is
-          # internal, so GitHub's free ubuntu-*-arm label (public repos only)
-          # is unavailable — the org's large runners provide arm64 Linux.
+          # The repo is internal, so GitHub's free ubuntu-*-arm label (public
+          # repos only) is unavailable; the org's large runners provide arm64
+          # Linux.
           runners = {
               "linux-arm64": "large-linux-arm",
               "linux-amd64": "large-linux-x86",
