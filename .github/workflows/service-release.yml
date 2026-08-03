@@ -54,6 +54,7 @@ jobs:
   plan:
     name: plan ${{ inputs.service }} ${{ inputs.version }}
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     outputs:
       image_repository: ${{ steps.plan.outputs.image_repository }}
       matrix: ${{ steps.plan.outputs.matrix }}
@@ -63,7 +64,9 @@ jobs:
       upstream_asset_url: ${{ steps.plan.outputs.upstream_asset_url }}
     steps:
       - name: Checkout release policy
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Validate inputs and check existing release
         id: plan
@@ -176,9 +179,10 @@ jobs:
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     steps:
       - name: Checkout packaging repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 1
+          persist-credentials: false
 
       - name: Checkout requested upstream release
         id: source
@@ -216,10 +220,10 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Install Nix
-        uses: nixbuild/nix-quick-install-action@v34
+        uses: nixbuild/nix-quick-install-action@2c9db80fb984ceb1bcaa77cdda3fdf8cfba92035 # v34
 
       - name: Restore/save Nix store cache
-        uses: nix-community/cache-nix-action@v7
+        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
         with:
           primary-key: release-${{ inputs.service }}-${{ matrix.platform_dir }}-${{ hashFiles(format('services/{0}/recipe.env', inputs.service), format('services/{0}/nix/**', inputs.service), format('services/{0}/build-host.sh', inputs.service), 'scripts/nix-build-with-derived-mix-hash.sh', 'scripts/nixpkgs-pin.sh') }}
           restore-prefixes-first-match: |
@@ -229,11 +233,11 @@ jobs:
 
       - name: Set up Docker Buildx
         if: matrix.target_os == 'linux'
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Set up Go
         if: inputs.service == 'auth'
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: stable
 
@@ -322,7 +326,7 @@ jobs:
           PY
 
       - name: Upload release assets
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-assets-${{ inputs.service }}-${{ inputs.version }}-${{ matrix.platform_dir }}
           if-no-files-found: error
@@ -330,7 +334,7 @@ jobs:
 
       - name: Upload exact smoked image
         if: matrix.target_os == 'linux'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-image-${{ inputs.service }}-${{ inputs.version }}-${{ matrix.arch }}
           if-no-files-found: error
@@ -344,22 +348,23 @@ jobs:
       - build
     if: needs.plan.outputs.publish == 'true'
     runs-on: ubuntu-24.04
+    timeout-minutes: 60
     permissions:
       contents: read
       packages: write
     steps:
       - name: Download exact smoked images
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: release-image-${{ inputs.service }}-${{ inputs.version }}-*
           path: release-images
           merge-multiple: true
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -429,7 +434,7 @@ jobs:
           PY
 
       - name: Upload published image metadata
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: published-image-${{ inputs.service }}-${{ inputs.version }}
           path: published-image.json
@@ -442,18 +447,19 @@ jobs:
       - publish-image
     if: needs.plan.outputs.publish == 'true'
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     permissions:
       contents: write
     steps:
       - name: Download portable artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: release-assets-${{ inputs.service }}-${{ inputs.version }}-*
           path: release-assets
           merge-multiple: true
 
       - name: Download published image metadata
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: published-image-${{ inputs.service }}-${{ inputs.version }}
 
