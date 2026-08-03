@@ -8,6 +8,7 @@ source "$ROOT_DIR/scripts/lib.sh"
 usage() {
   cat <<'EOF'
 Usage: scripts/update-results-tables.sh [--allow-missing] [--host-native-only]
+                                        [--merge] [--published]
 
 Regenerate the results tables in README.md and SLIM_IMAGES_REPORT.md from the
 latest artifacts/<service>/*/linux-arm64/manifest.json files (slim size, idle
@@ -17,6 +18,7 @@ darwin-arm64 table in README.md from darwin-arm64 manifests (services without
 one are simply omitted).
 
 Content is spliced between these marker comments, which must exist:
+  <!-- generated:release-summary:begin --> ... <!-- generated:release-summary:end -->
   <!-- generated:totals:begin -->      ... <!-- generated:totals:end -->
   <!-- generated:results:begin -->     ... <!-- generated:results:end -->
   <!-- generated:host-native:begin --> ... <!-- generated:host-native:end -->
@@ -36,6 +38,12 @@ artifacts locally plus registry access).
 existing table rows (and their upstream sizes) for everything else; totals are
 recomputed from the final row set. This is the CI mode: a partial
 service-artifacts.yml dispatch refreshes just the rows it rebuilt.
+--published updates only README.md, labels the table as published results, and
+links each generated row to its GitHub release. Use it with manifests downloaded
+from this repository's latest releases and --merge.
+
+Set RESULTS_ARTIFACTS_DIR to read manifests from a directory other than the
+repository's ignored artifacts/ directory.
 EOF
 }
 
@@ -43,17 +51,20 @@ EOF
 allow_missing=0
 host_native_only=0
 merge=0
+published=0
 for arg in "$@"; do
   case "$arg" in
     --allow-missing) allow_missing=1 ;;
     --host-native-only) host_native_only=1 ;;
     --merge) merge=1 ;;
+    --published) published=1 ;;
     *) usage >&2; exit 2 ;;
   esac
 done
 
 require_cmd python3
 [[ "$host_native_only" == "1" ]] || require_cmd docker
+ARTIFACTS_DIR="${RESULTS_ARTIFACTS_DIR:-$ROOT_DIR/artifacts}"
 
 # Table order and display names (core services first, opt-ins last).
 ordered_services=(postgres postgrest auth realtime storage edge-runtime studio analytics pgmeta pooler)
@@ -63,7 +74,21 @@ rows_tsv=""
 for i in "${!ordered_services[@]}"; do
   service="${ordered_services[$i]}"
   display="${display_names[$i]}"
+  manifest_version="$(python3 - "$ARTIFACTS_DIR" "$service" <<'PY'
+import glob
+import json
+import os
+import sys
+
+artifacts_dir, service = sys.argv[1:]
+manifests = glob.glob(os.path.join(artifacts_dir, service, "*", "linux-arm64", "manifest.json"))
+if manifests:
+    with open(max(manifests, key=os.path.getmtime), encoding="utf-8") as fh:
+        print(json.load(fh).get("version", ""))
+PY
+)"
   recipe_vars="$(
+    SOURCE_REF="$manifest_version"
     # shellcheck disable=SC1090
     source "$(recipe_file "$service")" >/dev/null 2>&1
     printf '%s\t%s\t%s\n' "${UPSTREAM_IMAGE:-}" "${UPSTREAM_COMPARE_IMAGE:-}" "${RESULTS_NOTE:-}"
@@ -73,7 +98,10 @@ done
 
 # Host-native darwin-arm64 table: driven by darwin manifests only; services
 # without one are omitted (or, with --merge, keep their existing row).
-ROWS_TSV="$rows_tsv" MERGE="$merge" python3 - "$ROOT_DIR" <<'PY'
+ROWS_TSV="$rows_tsv" MERGE="$merge" PUBLISHED="$published" \
+  ARTIFACTS_DIR="$ARTIFACTS_DIR" \
+  RESULTS_REPOSITORY="${RELEASE_RESULTS_REPOSITORY:-${GITHUB_REPOSITORY:-supabase/slim-services}}" \
+  python3 - "$ROOT_DIR" <<'PY'
 import glob
 import json
 import os
@@ -82,6 +110,9 @@ import sys
 
 root = sys.argv[1]
 merge = os.environ.get("MERGE") == "1"
+published = os.environ.get("PUBLISHED") == "1"
+results_repository = os.environ["RESULTS_REPOSITORY"]
+artifacts_dir = os.environ["ARTIFACTS_DIR"]
 
 def existing_rows(path, marker):
     """display name -> existing table row inside the marker block."""
@@ -106,7 +137,7 @@ for line in os.environ["ROWS_TSV"].splitlines():
         continue
     service, display = line.split("\t")[:2]
 
-    manifests = glob.glob(os.path.join(root, "artifacts", service, "*", "darwin-arm64", "manifest.json"))
+    manifests = glob.glob(os.path.join(artifacts_dir, service, "*", "darwin-arm64", "manifest.json"))
     if not manifests:
         if merge and display in kept:
             rows.append(kept[display])
@@ -129,15 +160,22 @@ for line in os.environ["ROWS_TSV"].splitlines():
     rss_cell = f"`{rss:.1f} MiB`" if rss is not None else "—"
     cpu_cell = f"`{cpu:.2f}%`" if cpu is not None else "—"
     portable_cell = "yes" if portable else "**no**"
+    sources = f"[report](services/{service}/REPORT.md)"
+    if published:
+        release_tag = f"{service}-{version}"
+        sources = (
+            f"[release](https://github.com/{results_repository}/releases/tag/{release_tag})"
+            f" · {sources}"
+        )
     rows.append(
         f"| {display} | `{version}` | {archive_cell} | {rootfs_cell} "
         f"| {rss_cell} | {cpu_cell} | {portable_cell} "
-        f"| [report](services/{service}/REPORT.md) |"
+        f"| {sources} |"
     )
 
 if rows:
     header = (
-        "| Service | Version | Archive | rootfs | Idle RSS | Idle CPU | Portable | Report |\n"
+        f"| Service | Version | Archive | rootfs | Idle RSS | Idle CPU | Portable | {'Sources' if published else 'Report'} |\n"
         "|---|---:|---:|---:|---:|---:|---|---|"
     )
     table = header + "\n" + "\n".join(rows)
@@ -166,7 +204,10 @@ fi
 
 # Rows travel via the environment: python reads its program from stdin (the
 # heredoc), so stdin cannot also carry the data.
-ROWS_TSV="$rows_tsv" MERGE="$merge" python3 - "$ROOT_DIR" "$allow_missing" <<'PY'
+ROWS_TSV="$rows_tsv" MERGE="$merge" PUBLISHED="$published" \
+  ARTIFACTS_DIR="$ARTIFACTS_DIR" \
+  RESULTS_REPOSITORY="${RELEASE_RESULTS_REPOSITORY:-${GITHUB_REPOSITORY:-supabase/slim-services}}" \
+  python3 - "$ROOT_DIR" "$allow_missing" <<'PY'
 import glob
 import json
 import os
@@ -176,6 +217,9 @@ import sys
 
 root, allow_missing = sys.argv[1], sys.argv[2] == "1"
 merge = os.environ.get("MERGE") == "1"
+published = os.environ.get("PUBLISHED") == "1"
+results_repository = os.environ["RESULTS_REPOSITORY"]
+artifacts_dir = os.environ["ARTIFACTS_DIR"]
 
 def existing_rows(path, marker):
     begin, end = f"<!-- generated:{marker}:begin -->", f"<!-- generated:{marker}:end -->"
@@ -232,7 +276,7 @@ for line in os.environ["ROWS_TSV"].splitlines():
         continue
     service, display, upstream_image, compare_image, note = (line.split("\t") + [""] * 5)[:5]
 
-    manifests = glob.glob(os.path.join(root, "artifacts", service, "*", "linux-arm64", "manifest.json"))
+    manifests = glob.glob(os.path.join(artifacts_dir, service, "*", "linux-arm64", "manifest.json"))
     if not manifests:
         if merge and display in kept:
             rows.append(kept[display])
@@ -271,10 +315,17 @@ for line in os.environ["ROWS_TSV"].splitlines():
     version_cell = f"`{version}`" + (f" ({note})" if note else "")
     rss_cell = f"`{rss:.1f} MiB`" if rss is not None else "—"
     cpu_cell = f"`{cpu:.2f}%`" if cpu is not None else "—"
+    sources = f"[report](services/{service}/REPORT.md)"
+    if published:
+        release_tag = f"{service}-{version}"
+        sources = (
+            f"[release](https://github.com/{results_repository}/releases/tag/{release_tag})"
+            f" · {sources}"
+        )
     rows.append(
         f"| {display} | {version_cell} | `{up:.1f} MiB`{star} | `{slim_mib:.1f} MiB` "
         f"| `{reduction:.1f}%`{star} | {rss_cell} | {cpu_cell} "
-        f"| [report](services/{service}/REPORT.md) |"
+        f"| {sources} |"
     )
 
 # Totals + the directional marker come from the FINAL row set (fresh and
@@ -289,7 +340,8 @@ for row in rows:
         directional = True
 
 header = (
-    "| Service | Version | Upstream ARM64 | Current slim | Reduction | Idle RSS | Idle CPU | Report |\n"
+    f"| Service | Version | Upstream ARM64 | {'Published slim' if published else 'Current slim'} "
+    f"| Reduction | Idle RSS | Idle CPU | {'Sources' if published else 'Report'} |\n"
     "|---|---:|---:|---:|---:|---:|---:|---|"
 )
 table = header + "\n" + "\n".join(rows)
@@ -309,6 +361,24 @@ totals = (
     f"| Current total reduction vs upstream | `{saved:.1f} MiB / {saved / total_upstream * 100:.1f}%` |"
 )
 
+core_rss = 0.0
+for row in rows:
+    cells = [cell.strip() for cell in row.split("|")]
+    if cells[1] in {"Postgres", "PostgREST", "Auth"}:
+        rss = row_mib(row, 6)
+        if rss is not None:
+            core_rss += rss
+
+release_summary = (
+    f"For the latest published Linux ARM64 release set ({len(rows)} services), upstream images\n"
+    f"total **{total_upstream:.1f} MiB** compressed; the slim set totals **{total_slim:.1f} MiB** "
+    f"(**{saved / total_upstream * 100:.1f}%**\n"
+    "smaller — exact numbers below). Every published service also ships measured\n"
+    "steady-state RSS and idle-CPU numbers, and a minimal core stack (postgres +\n"
+    f"auth + postgrest) idles at roughly **{core_rss:.0f} MiB of RSS per stack** with near-zero\n"
+    "idle CPU."
+)
+
 def splice(path, marker, content):
     begin, end = f"<!-- generated:{marker}:begin -->", f"<!-- generated:{marker}:end -->"
     with open(path, encoding="utf-8") as fh:
@@ -322,8 +392,11 @@ def splice(path, marker, content):
     print(f"[tables] updated {os.path.relpath(path, root)} ({marker})", file=sys.stderr)
 
 splice(os.path.join(root, "README.md"), "results", table)
-splice(os.path.join(root, "SLIM_IMAGES_REPORT.md"), "results", table)
-splice(os.path.join(root, "SLIM_IMAGES_REPORT.md"), "totals", totals)
+if published:
+    splice(os.path.join(root, "README.md"), "release-summary", release_summary)
+if not published:
+    splice(os.path.join(root, "SLIM_IMAGES_REPORT.md"), "results", table)
+    splice(os.path.join(root, "SLIM_IMAGES_REPORT.md"), "totals", totals)
 PY
 
 log "results tables regenerated"
