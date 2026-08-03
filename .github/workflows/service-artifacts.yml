@@ -234,7 +234,7 @@ jobs:
   update-tables:
     name: refresh results tables
     needs: build
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && github.ref_name == github.event.repository.default_branch }}
     runs-on: ubuntu-24.04
     permissions:
       contents: write
