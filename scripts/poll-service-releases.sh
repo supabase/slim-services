@@ -98,6 +98,36 @@ while IFS=$'\t' read -r service upstream_repository tag_pattern; do
     continue
   fi
 
+  expected_run_title="Release $service $version"
+  active_runs_json="$(
+    gh run list \
+      --repo "$TARGET_REPOSITORY" \
+      --workflow "$TARGET_WORKFLOW" \
+      --limit 100 \
+      --json displayTitle,status
+  )"
+  if python3 - "$expected_run_title" "$active_runs_json" <<'PY'
+import json
+import sys
+
+expected_title, runs_raw = sys.argv[1:]
+active_statuses = {"in_progress", "pending", "queued", "requested", "waiting"}
+runs = json.loads(runs_raw)
+raise SystemExit(
+    0
+    if any(
+        run.get("displayTitle") == expected_title
+        and run.get("status") in active_statuses
+        for run in runs
+    )
+    else 1
+)
+PY
+  then
+    printf '%s is already being built by %s\n' "$service" "$expected_run_title"
+    continue
+  fi
+
   if [[ "$POLL_DRY_RUN" == "1" ]]; then
     printf 'would dispatch %s for %s stable release %s on %s\n' \
       "$TARGET_WORKFLOW" "$service" "$version" "$TARGET_REF"
