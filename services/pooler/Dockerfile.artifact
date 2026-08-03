@@ -18,14 +18,15 @@ COPY ${SOURCE_DIR}/ ./
 # Apply the repo-owned portable package (the local Nix runner does the same
 # through a temporary source export; the Docker runner must do it here).
 COPY services/pooler/nix/ nix/
-COPY scripts/nix-build-with-derived-mix-hash.sh /usr/local/bin/
+COPY scripts/nix-build-with-derived-hashes.sh /usr/local/bin/
 RUN rm -rf .git
-RUN nix-build-with-derived-mix-hash.sh \
-      "./${NIX_EXPRESSION}" "${NIX_ATTR}" "${SERVICE_VERSION}" \
-      /result /mix-deps-hash \
+RUN nix-build-with-derived-hashes.sh \
+      nix-build "./${NIX_EXPRESSION}" "${NIX_ATTR}" "${SERVICE_VERSION}" \
+      /result /nix-derived-hashes.json \
+      mix-deps:mix_deps_hash \
   && mkdir -p /rootfs \
   && cp -RL /result/. /rootfs/ \
-  && cp /mix-deps-hash /rootfs/.slim-mix-deps-hash \
+  && cp /nix-derived-hashes.json /rootfs/.slim-nix-derived-hashes.json \
   && chmod -R u+w /rootfs
 
 FROM scratch AS artifact
