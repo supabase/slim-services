@@ -167,7 +167,7 @@ jobs:
         if: steps.artifact-cache.outputs.cache-hit != 'true'
         uses: nix-community/cache-nix-action@v7
         with:
-          primary-key: nix-host-native-${{ matrix.service }}-${{ matrix.platform_dir }}-${{ hashFiles(format('services/{0}/recipe.env', matrix.service), format('services/{0}/nix/**', matrix.service), format('services/{0}/build-host.sh', matrix.service), 'scripts/nixpkgs-pin.sh') }}
+          primary-key: nix-host-native-${{ matrix.service }}-${{ matrix.platform_dir }}-${{ hashFiles(format('services/{0}/recipe.env', matrix.service), format('services/{0}/nix/**', matrix.service), format('services/{0}/build-host.sh', matrix.service), 'scripts/nix-build-with-derived-mix-hash.sh', 'scripts/nixpkgs-pin.sh') }}
           restore-prefixes-first-match: |
             nix-host-native-${{ matrix.service }}-${{ matrix.platform_dir }}-
           gc-max-store-size-linux: 8G
@@ -234,7 +234,7 @@ jobs:
   update-tables:
     name: refresh results tables
     needs: build
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && github.ref_name == github.event.repository.default_branch }}
     runs-on: ubuntu-24.04
     permissions:
       contents: write

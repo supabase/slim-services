@@ -129,10 +129,23 @@
               dbExtensions17
             else
               ourExtensions;
+          extensionFetchFromGitHub =
+            args:
+            pkgs.fetchFromGitHub (
+              args
+              // lib.optionalAttrs (
+                (args.owner or null) == "pgexperts" && (args.repo or null) == "plan_filter"
+              ) {
+                # The repository was renamed, but released Postgres tags still
+                # reference its old name. Keep those immutable tags buildable.
+                repo = "pg_plan_filter";
+              }
+            );
           extCallPackage = pkgs.lib.callPackageWith (
             pkgs
             // {
               inherit postgresql latestOnly;
+              fetchFromGitHub = extensionFetchFromGitHub;
               switch-ext-version = extCallPackage ./switch-ext-version.nix { };
               overlayfs-on-package = extCallPackage ./overlayfs-on-package.nix { };
             }

@@ -13,6 +13,8 @@
     url = "https://github.com/NixOS/nixpkgs/archive/ac62194c3917d5f474c1a844b6fd6da2db95077d.tar.gz";
     sha256 = "0v6bd1xk8a2aal83karlvc853x44dg1n4nk08jg3dajqyy0s98np";
   }) { },
+  serviceVersion ? "dev",
+  mixDepsHash ? null,
 }:
 let
   lib = pkgs.lib;
@@ -22,7 +24,7 @@ let
   mixRelease = beamPackages.mixRelease.override { inherit elixir fetchMixDeps; };
 
   pname = "supavisor";
-  version = "2.9.10";
+  version = serviceVersion;
 
   src = lib.cleanSourceWith {
     src = ../.;
@@ -43,16 +45,17 @@ let
     lockFile = ../native/Cargo.lock;
   };
 
+  mixDeps = fetchMixDeps {
+    pname = "mix-deps-${pname}";
+    inherit version src;
+    hash = if mixDepsHash == null then lib.fakeHash else mixDepsHash;
+    mixEnv = "prod";
+  };
+
   release = mixRelease ({
     inherit pname version src;
     mixEnv = "prod";
-
-    mixFodDeps = fetchMixDeps {
-      pname = "mix-deps-${pname}";
-      inherit version src;
-      hash = "sha256-zIt7Vf8R6xjAu9Y4nXtOdlqTE4RLPaotYJ7l13GyveU=";
-      mixEnv = "prod";
-    };
+    mixFodDeps = mixDeps;
 
     # bindgenHook wires libclang + the C standard header search paths that
     # pg_query's bindgen needs on Linux (darwin finds them through the system
@@ -83,6 +86,8 @@ let
   });
 in
 {
+  mix-deps = mixDeps;
+
   supavisor = pkgs.stdenv.mkDerivation {
     name = "${pname}-portable";
     inherit version;

@@ -22,6 +22,8 @@
     url = "https://github.com/NixOS/nixpkgs/archive/ac62194c3917d5f474c1a844b6fd6da2db95077d.tar.gz";
     sha256 = "0v6bd1xk8a2aal83karlvc853x44dg1n4nk08jg3dajqyy0s98np";
   }) { },
+  serviceVersion ? "dev",
+  mixDepsHash ? null,
 }:
 let
   lib = pkgs.lib;
@@ -31,7 +33,7 @@ let
   mixRelease = beamPackages.mixRelease.override { inherit elixir fetchMixDeps; };
 
   pname = "realtime";
-  version = "2.112.6";
+  version = serviceVersion;
 
   # Exclude the overlay itself (and repo noise) so editing packaging files does
   # not invalidate the deps fetcher's fixed-output derivation.
@@ -49,22 +51,25 @@ let
       && !(lib.hasPrefix "bench" rel);
   };
 
+  mixDeps = fetchMixDeps {
+    pname = "mix-deps-${pname}";
+    inherit version src;
+    hash = if mixDepsHash == null then lib.fakeHash else mixDepsHash;
+    mixEnv = "prod";
+  };
+
   release = mixRelease {
     inherit pname version src;
     mixEnv = "prod";
-
-    mixFodDeps = fetchMixDeps {
-      pname = "mix-deps-${pname}";
-      inherit version src;
-      hash = "sha256-XgVb5vwl1AVU2PM5A/aoWJLZ9hIuqJqQumoexnOjMMg=";
-      mixEnv = "prod";
-    };
+    mixFodDeps = mixDeps;
 
     # The release includes ERTS by default; keep the generated start scripts.
     removeCookie = false;
   };
 in
 {
+  mix-deps = mixDeps;
+
   realtime = pkgs.stdenv.mkDerivation {
     name = "${pname}-portable";
     inherit version;

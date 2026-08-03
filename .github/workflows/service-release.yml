@@ -1,4 +1,5 @@
 name: Release service artifacts and image
+run-name: Release ${{ inputs.service }} ${{ inputs.version }}
 
 "on":
   workflow_dispatch:
@@ -58,6 +59,8 @@ jobs:
       matrix: ${{ steps.plan.outputs.matrix }}
       publish: ${{ steps.plan.outputs.publish }}
       release_tag: ${{ steps.plan.outputs.release_tag }}
+      upstream_asset_sha256: ${{ steps.plan.outputs.upstream_asset_sha256 }}
+      upstream_asset_url: ${{ steps.plan.outputs.upstream_asset_url }}
     steps:
       - name: Checkout release policy
         uses: actions/checkout@v4
@@ -119,6 +122,31 @@ jobs:
             exit 1
           fi
 
+          upstream_asset_url=""
+          upstream_asset_sha256=""
+          if [[ "$SERVICE" == "postgrest" ]]; then
+            asset_name="postgrest-$VERSION-macos-aarch64.tar.xz"
+            asset="$(
+              gh api "repos/$upstream_repository/releases/tags/$VERSION" \
+                --jq ".assets[] | select(.name == \"$asset_name\") | [.browser_download_url, .digest] | @tsv"
+            )"
+            [[ -n "$asset" ]] || {
+              printf 'required upstream asset not found: %s\n' "$asset_name" >&2
+              exit 1
+            }
+            IFS=$'\t' read -r upstream_asset_url upstream_asset_digest <<< "$asset"
+            expected_asset_url="https://github.com/$upstream_repository/releases/download/$VERSION/$asset_name"
+            [[ "$upstream_asset_url" == "$expected_asset_url" ]] || {
+              printf 'unexpected upstream asset URL: %s\n' "$upstream_asset_url" >&2
+              exit 1
+            }
+            [[ "$upstream_asset_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+              printf 'upstream asset has no valid GitHub SHA-256 digest: %s\n' "$asset_name" >&2
+              exit 1
+            }
+            upstream_asset_sha256="${upstream_asset_digest#sha256:}"
+          fi
+
           release_tag="$SERVICE-$VERSION"
           image_repository="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/cli/$SERVICE"
           publish=true
@@ -133,6 +161,8 @@ jobs:
             printf 'matrix=%s\n' "$matrix"
             printf 'publish=%s\n' "$publish"
             printf 'release_tag=%s\n' "$release_tag"
+            printf 'upstream_asset_sha256=%s\n' "$upstream_asset_sha256"
+            printf 'upstream_asset_url=%s\n' "$upstream_asset_url"
           } >> "$GITHUB_OUTPUT"
 
   build:
@@ -191,7 +221,7 @@ jobs:
       - name: Restore/save Nix store cache
         uses: nix-community/cache-nix-action@v7
         with:
-          primary-key: release-${{ inputs.service }}-${{ matrix.platform_dir }}-${{ hashFiles(format('services/{0}/recipe.env', inputs.service), format('services/{0}/nix/**', inputs.service), format('services/{0}/build-host.sh', inputs.service), 'scripts/nixpkgs-pin.sh') }}
+          primary-key: release-${{ inputs.service }}-${{ matrix.platform_dir }}-${{ hashFiles(format('services/{0}/recipe.env', inputs.service), format('services/{0}/nix/**', inputs.service), format('services/{0}/build-host.sh', inputs.service), 'scripts/nix-build-with-derived-mix-hash.sh', 'scripts/nixpkgs-pin.sh') }}
           restore-prefixes-first-match: |
             release-${{ inputs.service }}-${{ matrix.platform_dir }}-
           gc-max-store-size-linux: 8G
@@ -218,6 +248,8 @@ jobs:
           SLIM_SMOKE_HOST_POSTGRES: ${{ matrix.target_os == 'darwin' && '1' || '0' }}
           SOURCE_REF: ${{ inputs.version }}
           TARGET_OS: ${{ matrix.target_os }}
+          UPSTREAM_ASSET_SHA256: ${{ needs.plan.outputs.upstream_asset_sha256 }}
+          UPSTREAM_ASSET_URL: ${{ needs.plan.outputs.upstream_asset_url }}
         run: |
           set -euo pipefail
           scripts/ci-build-service.sh "${{ inputs.service }}" "${{ inputs.version }}"

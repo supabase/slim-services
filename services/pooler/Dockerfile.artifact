@@ -6,20 +6,26 @@
 ARG SOURCE_DIR=sources/pooler
 ARG NIX_ATTR=supavisor
 ARG NIX_EXPRESSION=nix
+ARG SERVICE_VERSION=dev
 
 FROM nixos/nix:2.24.9 AS builder
 ARG SOURCE_DIR
 ARG NIX_ATTR
 ARG NIX_EXPRESSION
+ARG SERVICE_VERSION
 WORKDIR /src
 COPY ${SOURCE_DIR}/ ./
 # Apply the repo-owned portable package (the local Nix runner does the same
 # through a temporary source export; the Docker runner must do it here).
 COPY services/pooler/nix/ nix/
+COPY scripts/nix-build-with-derived-mix-hash.sh /usr/local/bin/
 RUN rm -rf .git
-RUN nix-build "./${NIX_EXPRESSION}" -A "${NIX_ATTR}" --out-link /result \
+RUN nix-build-with-derived-mix-hash.sh \
+      "./${NIX_EXPRESSION}" "${NIX_ATTR}" "${SERVICE_VERSION}" \
+      /result /mix-deps-hash \
   && mkdir -p /rootfs \
   && cp -RL /result/. /rootfs/ \
+  && cp /mix-deps-hash /rootfs/.slim-mix-deps-hash \
   && chmod -R u+w /rootfs
 
 FROM scratch AS artifact

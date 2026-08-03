@@ -207,6 +207,8 @@ manifest = {
     "source_ref": "$SOURCE_REF",
     "source_commit": "$actual_ref",
     "upstream_image": "$UPSTREAM_IMAGE",
+    "upstream_asset_url": os.environ.get("UPSTREAM_ASSET_URL") or None,
+    "upstream_asset_sha256": os.environ.get("UPSTREAM_ASSET_SHA256") or None,
     "base_image": "$BASE_IMAGE",
     "entrypoint": json.loads("""$ENTRYPOINT_JSON"""),
     "cmd": json.loads("""$CMD_JSON"""),
