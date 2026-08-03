@@ -27,6 +27,9 @@
 }:
 let
   lib = pkgs.lib;
+  derivedHashesRaw = builtins.getEnv "SLIM_NIX_DERIVED_HASHES";
+  derivedHashes =
+    if derivedHashesRaw == "" then { } else builtins.fromJSON derivedHashesRaw;
   beamPackages = pkgs.beam.packagesWith pkgs.beam.interpreters.erlang_27;
   elixir = beamPackages.elixir_1_18;
   fetchMixDeps = beamPackages.fetchMixDeps.override { inherit elixir; };
@@ -54,7 +57,11 @@ let
   mixDeps = fetchMixDeps {
     pname = "mix-deps-${pname}";
     inherit version src;
-    hash = if mixDepsHash == null then lib.fakeHash else mixDepsHash;
+    hash =
+      if mixDepsHash != null then
+        mixDepsHash
+      else
+        derivedHashes.mix_deps_hash or lib.fakeHash;
     mixEnv = "prod";
   };
 

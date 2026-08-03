@@ -5,8 +5,8 @@
 # read-only. It is copied over nix/edge-runtime.nix in a temporary source export
 # before running nix build for portable artifacts.
 #
-# It tracks the upstream v1.74.2 package (nix/ unchanged since v1.73.15) with
-# portability fixes:
+# It tracks the checked-out release's Cargo lockfile and Rusty V8 tag while
+# applying portability fixes:
 # - build-time ONNX Runtime discovery for Cargo build scripts;
 # - preserved ONNX dylib symlinks;
 # - ORT_DYLIB_PATH in the portable wrapper;
@@ -34,65 +34,102 @@
   cmake,
   openssl,
   zstd,
+  serviceVersion ? null,
+  v8ArchiveHash ? null,
+  v8BindingHash ? null,
+  cargoHash ? null,
 }:
 let
   system = stdenv.hostPlatform.system;
+  derivedHashesRaw = builtins.getEnv "SLIM_NIX_DERIVED_HASHES";
+  derivedHashes =
+    if derivedHashesRaw == "" then { } else builtins.fromJSON derivedHashesRaw;
+  environmentServiceVersion = builtins.getEnv "SLIM_NIX_SERVICE_VERSION";
+  resolvedServiceVersion =
+    if serviceVersion != null then
+      serviceVersion
+    else if environmentServiceVersion != "" then
+      environmentServiceVersion
+    else
+      "dev";
 
-  v8Artifacts = {
-    "aarch64-darwin" = {
-      archive = {
-        url = "https://github.com/supabase/rusty_v8/releases/download/v130.0.7/librusty_v8_release_aarch64-apple-darwin.a.gz";
-        sha256 = "sha256-VYWg+9WekcHBJWEq49eAAVpc6g/PPaoZDm/j2DKNQLY=";
-      };
-      binding = {
-        url = "https://github.com/supabase/rusty_v8/releases/download/v130.0.7/src_binding_release_aarch64-apple-darwin.rs";
-        sha256 = "sha256-ytcUCd4V1MQkinakmT3rJsdow1RLVWrGqtMjava4BaU=";
-      };
-    };
+  cargoLock = builtins.fromTOML (builtins.readFile ../Cargo.lock);
+  v8Package = lib.findFirst (
+    package: package.name == "v8"
+  ) (throw "Cargo.lock contains no v8 package") cargoLock.package;
+  v8TagParts = lib.splitString "?tag=" v8Package.source;
+  v8Tag =
+    if builtins.length v8TagParts == 2 then
+      builtins.head (lib.splitString "#" (builtins.elemAt v8TagParts 1))
+    else
+      "v${v8Package.version}";
+  rustyV8Target = {
+    "aarch64-darwin" = "aarch64-apple-darwin";
+    "aarch64-linux" = "aarch64-unknown-linux-gnu";
+    "x86_64-linux" = "x86_64-unknown-linux-gnu";
+  }.${system} or (throw "Unsupported system: ${system}");
+  v8ArchiveName = "librusty_v8_release_${rustyV8Target}.a.gz";
+  v8BindingName = "src_binding_release_${rustyV8Target}.rs";
+  rustyV8ReleaseUrl = "https://github.com/supabase/rusty_v8/releases/download/${v8Tag}";
 
-    "aarch64-linux" = {
-      archive = {
-        url = "https://github.com/supabase/rusty_v8/releases/download/v130.0.7/librusty_v8_release_aarch64-unknown-linux-gnu.a.gz";
-        sha256 = "sha256-8YupKkWyFn8oZ+RbEzcigdgwvIRjzE5GW7OSnmkIYHU=";
-      };
-      binding = {
-        url = "https://github.com/supabase/rusty_v8/releases/download/v130.0.7/src_binding_release_aarch64-unknown-linux-gnu.rs";
-        sha256 = "sha256-sq8JII71BvnI43jNMm5yCj8WgGQ1K9n7AcOCJsfklRQ=";
-      };
-    };
-    "x86_64-linux" = {
-      archive = {
-        url = "https://github.com/supabase/rusty_v8/releases/download/v130.0.7-patch.1/librusty_v8_release_x86_64-unknown-linux-gnu.a.gz";
-        sha256 = "sha256-4tF7bHXad7K1ADwv3r718HUawEixSEOR5fNoBYJkFsA=";
-      };
-      binding = {
-        url = "https://github.com/supabase/rusty_v8/releases/download/v130.0.7/src_binding_release_x86_64-unknown-linux-gnu.rs";
-        sha256 = "sha256-sq8JII71BvnI43jNMm5yCj8WgGQ1K9n7AcOCJsfklRQ=";
-      };
-    };
+  v8Archive = fetchurl {
+    name = v8ArchiveName;
+    url = "${rustyV8ReleaseUrl}/${v8ArchiveName}";
+    hash =
+      if v8ArchiveHash != null then
+        v8ArchiveHash
+      else
+        derivedHashes.v8_archive_hash or lib.fakeHash;
   };
-
-  v8 = v8Artifacts.${system} or (throw "Unsupported system: ${system}");
-  v8Archive = fetchurl v8.archive;
-  v8Binding = fetchurl v8.binding;
+  v8Binding = fetchurl {
+    name = v8BindingName;
+    url = "${rustyV8ReleaseUrl}/${v8BindingName}";
+    hash =
+      if v8BindingHash != null then
+        v8BindingHash
+      else
+        derivedHashes.v8_binding_hash or lib.fakeHash;
+  };
+  resolvedCargoHash =
+    if cargoHash != null then
+      cargoHash
+    else
+      derivedHashes.cargo_hash or lib.fakeHash;
 
   build_step = rustPlatform.buildRustPackage (finalAttrs: {
     pname = "edge_runtime_build";
-    version = "v1.73.15";
+    version = resolvedServiceVersion;
     src = ../.;
     nativeBuildInputs = [ pkg-config curl cmake ];
     buildInputs = [ openblas onnxruntime openssl zstd ];
     propagatedBuildInputs = [ onnxruntime ];
     doCheck = false;
 
-    cargoLock = {
-      lockFile = ../Cargo.lock;
-      outputHashes = {
-        "deno_core-0.324.0" = "sha256-WCEUKkCnDQ3VHILsf1hAnz1L1wlr9prTMgHKnzJ5cXc=";
-        "v8-130.0.7" = "sha256-0mcHKmIECFX7yTTOh0yEjyCMXCkwxL5LS1TkuO8GTlA=";
-        "eszip-0.80.0" = "sha256-KILUDqMpMbR9WuB7gE0a4kiRECVB2dTiOW++3sz2mBU=";
-      };
-    };
+    cargoHash = resolvedCargoHash;
+    # The nixpkgs revision pinned by current Edge Runtime releases still uses
+    # the rate-limited crates.io API endpoint while assembling cargoDeps. Patch
+    # its generated fetch helper to use the static crates CDN instead. Newer
+    # nixpkgs revisions already use this endpoint, so the conditional keeps the
+    # overlay compatible as upstream advances its flake lock.
+    depsExtraArgs.buildPhase = ''
+      runHook preBuild
+
+      if [ -n "''${cargoRoot-}" ]; then
+        cd "$cargoRoot"
+      fi
+
+      vendor_util="$TMPDIR/fetch-cargo-vendor-util"
+      cp "$(command -v fetch-cargo-vendor-util)" "$vendor_util"
+      chmod u+w "$vendor_util"
+      if grep -q 'https://crates.io/api/v1/crates/' "$vendor_util"; then
+        sed -i \
+          's|https://crates.io/api/v1/crates/{pkg\["name"\]}/{pkg\["version"\]}/download|https://static.crates.io/crates/{pkg["name"]}/{pkg["version"]}/download|' \
+          "$vendor_util"
+      fi
+      "$vendor_util" create-vendor-staging ./Cargo.lock "$out"
+
+      runHook postBuild
+    '';
 
     RUSTY_V8_MIRROR="null";
     RUST_BACKTRACE="full";
@@ -115,10 +152,15 @@ let
 in
 stdenv.mkDerivation {
   name = "edge_runtime_portable";
-  version = "0.1.0";
+  version = resolvedServiceVersion;
   dontUnpack = true;
   dontPatchShebangs = true;
   nativeBuildInputs = lib.optionals stdenv.isLinux [ patchelf ];
+
+  passthru.fixedOutputs = {
+    inherit v8Archive v8Binding;
+    cargoDeps = build_step.cargoDeps;
+  };
 
 buildPhase = ''
   rootfs="$out"

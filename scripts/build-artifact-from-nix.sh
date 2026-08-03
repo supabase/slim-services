@@ -55,14 +55,21 @@ NIX_BUILD_COMMAND_TEMPLATE="${NIX_BUILD_COMMAND_TEMPLATE:-}"
 NIX_PACKAGE_OVERLAY="${NIX_PACKAGE_OVERLAY:-}"
 NIX_PACKAGE_OVERLAY_DEST="${NIX_PACKAGE_OVERLAY_DEST:-}"
 NIX_DERIVE_MIX_DEPS_HASH="${NIX_DERIVE_MIX_DEPS_HASH:-false}"
+derived_hash_specs=()
+if declare -p NIX_DERIVED_HASH_SPECS >/dev/null 2>&1; then
+  derived_hash_specs=("${NIX_DERIVED_HASH_SPECS[@]}")
+elif [[ "$NIX_DERIVE_MIX_DEPS_HASH" == "true" ]]; then
+  # Backward compatibility for recipes that still use the original boolean.
+  derived_hash_specs=("mix-deps:mix_deps_hash")
+fi
 
 source_abs="$ROOT_DIR/$SOURCE_DIR"
 artifact_dir="$ROOT_DIR/artifacts/$service/$VERSION/$(artifact_platform_dir "$TARGET_OS" "$ARCH")"
 rootfs="$artifact_dir/rootfs"
 manifest="$artifact_dir/manifest.json"
 out_link="$artifact_dir/nix-result"
-mix_deps_hash_file="$artifact_dir/mix-deps-hash"
-mix_deps_hash=""
+derived_hashes_file="$artifact_dir/nix-derived-hashes.json"
+derived_hashes_json="{}"
 
 [[ -d "$source_abs" ]] || fail "source submodule directory not found: $SOURCE_DIR"
 [[ -f "$source_abs/.git" || -d "$source_abs/.git" ]] || fail "source directory is not a git checkout: $SOURCE_DIR"
@@ -80,7 +87,7 @@ fi
 rm -rf "$rootfs"
 mkdir -p "$rootfs" "$artifact_dir"
 rm -f "$out_link"
-rm -f "$mix_deps_hash_file"
+rm -f "$derived_hashes_file"
 
 if ! declare -p NIX_COPY_PATHS >/dev/null 2>&1 && [[ "${NIX_OUTPUT_KIND:-copy-paths}" != "rootfs" ]]; then
   fail "recipe must define NIX_COPY_PATHS for Nix backend"
@@ -159,7 +166,12 @@ case "$resolved_nix_runner" in
       flake)
         (
           cd "$ROOT_DIR"
-          if [[ -n "$NIX_BUILD_COMMAND_TEMPLATE" ]]; then
+          if [[ ${#derived_hash_specs[@]} -gt 0 ]]; then
+            "$ROOT_DIR/scripts/nix-build-with-derived-hashes.sh" \
+              flake "$nix_installable" - "$VERSION" \
+              "$out_link" "$derived_hashes_file" \
+              "${derived_hash_specs[@]}"
+          elif [[ -n "$NIX_BUILD_COMMAND_TEMPLATE" ]]; then
             export NIX_INSTALLABLE="$nix_installable"
             export NIX_SYSTEM="$NIX_SYSTEM"
             export NIX_OUT_LINK="$out_link"
@@ -175,10 +187,11 @@ case "$resolved_nix_runner" in
       nix-build)
         (
           cd "$ROOT_DIR"
-          if [[ "$NIX_DERIVE_MIX_DEPS_HASH" == "true" ]]; then
-            "$ROOT_DIR/scripts/nix-build-with-derived-mix-hash.sh" \
-              "$nix_flake_for_build/${NIX_EXPRESSION:-.}" \
-              "$NIX_ATTR" "$VERSION" "$out_link" "$mix_deps_hash_file"
+          if [[ ${#derived_hash_specs[@]} -gt 0 ]]; then
+            "$ROOT_DIR/scripts/nix-build-with-derived-hashes.sh" \
+              nix-build "$nix_flake_for_build/${NIX_EXPRESSION:-.}" \
+              "$NIX_ATTR" "$VERSION" "$out_link" "$derived_hashes_file" \
+              "${derived_hash_specs[@]}"
           else
             nix-build "$nix_flake_for_build/${NIX_EXPRESSION:-.}" \
               -A "$NIX_ATTR" --out-link "$out_link"
@@ -242,8 +255,8 @@ case "$resolved_nix_runner" in
       --build-arg "NIX_EXPRESSION=${NIX_EXPRESSION:-default.nix}" \
       "$ROOT_DIR"
 
-    if [[ -f "$rootfs/.slim-mix-deps-hash" ]]; then
-      mv "$rootfs/.slim-mix-deps-hash" "$mix_deps_hash_file"
+    if [[ -f "$rootfs/.slim-nix-derived-hashes.json" ]]; then
+      mv "$rootfs/.slim-nix-derived-hashes.json" "$derived_hashes_file"
     fi
 
     chmod -R u+w "$rootfs"
@@ -260,10 +273,12 @@ case "$resolved_nix_runner" in
     ;;
 esac
 
-if [[ "$NIX_DERIVE_MIX_DEPS_HASH" == "true" ]]; then
-  [[ -s "$mix_deps_hash_file" ]] || fail "Mix dependency hash was not recorded"
-  mix_deps_hash="$(tr -d '\n' < "$mix_deps_hash_file")"
-  rm -f "$mix_deps_hash_file"
+if [[ ${#derived_hash_specs[@]} -gt 0 ]]; then
+  [[ -s "$derived_hashes_file" ]] || fail "Nix derived hashes were not recorded"
+  python3 -m json.tool "$derived_hashes_file" >/dev/null \
+    || fail "Nix derived hash metadata is not valid JSON"
+  derived_hashes_json="$(tr -d '\n' < "$derived_hashes_file")"
+  rm -f "$derived_hashes_file"
 fi
 
 # The Nix sandbox signs with the sigtool shim, which produces invalid
@@ -300,9 +315,9 @@ fi
 portable="$(portable_flag)"
 assumed_host_libs_json="$(portable_host_libs_json)"
 
-# The build command template may contain quotes; pass it via the environment
-# rather than interpolating it into the python source.
-MIX_DEPS_HASH_ENV="$mix_deps_hash" \
+# The build command template and derived hash JSON may contain quotes; pass
+# them via the environment rather than interpolating them into Python source.
+NIX_DERIVED_HASHES_ENV="$derived_hashes_json" \
 NIX_BUILD_COMMAND_TEMPLATE_ENV="$NIX_BUILD_COMMAND_TEMPLATE" \
 python3 - "$manifest" "$archive" "$archive_bytes" <<PY
 import json
@@ -312,6 +327,7 @@ import sys
 _, manifest_path, archive_path, archive_bytes_raw = sys.argv
 archive_name = os.path.basename(archive_path) if archive_path else None
 archive_bytes = int(archive_bytes_raw) if archive_bytes_raw else None
+nix_derived_hashes = json.loads(os.environ.get("NIX_DERIVED_HASHES_ENV", "{}"))
 
 manifest = {
     "service": "$service",
@@ -340,7 +356,8 @@ manifest = {
     "host_nix_system": "$host_nix_system",
     "nix_package_overlay": "$NIX_PACKAGE_OVERLAY",
     "nix_package_overlay_dest": "$NIX_PACKAGE_OVERLAY_DEST",
-    "mix_deps_hash": os.environ.get("MIX_DEPS_HASH_ENV") or None,
+    "nix_derived_hashes": nix_derived_hashes,
+    "mix_deps_hash": nix_derived_hashes.get("mix_deps_hash"),
     "nix_copy_paths": ${NIX_COPY_PATHS_JSON:-[]},
     "portable": "$portable" == "true",
     "assumed_host_libs": json.loads("""$assumed_host_libs_json"""),

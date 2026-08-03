@@ -33,9 +33,14 @@
   }) { },
   serviceVersion ? null,
   mixDepsHash ? null,
+  explorerNifHash ? null,
+  sqlFmtNifHash ? null,
 }:
 let
   lib = pkgs.lib;
+  derivedHashesRaw = builtins.getEnv "SLIM_NIX_DERIVED_HASHES";
+  derivedHashes =
+    if derivedHashesRaw == "" then { } else builtins.fromJSON derivedHashesRaw;
   beamPackages = pkgs.beam.packagesWith pkgs.beam.interpreters.erlang_27;
   elixir = beamPackages.elixir_1_18;
   fetchMixDeps = beamPackages.fetchMixDeps.override { inherit elixir; };
@@ -67,6 +72,22 @@ let
     lockFile = ../Cargo.lock;
   };
 
+  # Mix writes a stable textual lockfile format. Resolve the exact Hex package
+  # versions from the checked-out release so their precompiled NIF asset names
+  # advance with future releases instead of requiring a packaging edit.
+  lockedHexVersion = package:
+    let
+      marker = "\"${package}\": {:hex, :${package}, \"";
+      parts = lib.splitString marker (builtins.readFile ../mix.lock);
+    in
+    if builtins.length parts != 2 then
+      throw "could not resolve ${package} from mix.lock"
+    else
+      builtins.head (lib.splitString "\"" (builtins.elemAt parts 1));
+
+  explorerVersion = lockedHexVersion "explorer";
+  sqlFmtVersion = lockedHexVersion "sql_fmt";
+
   # Pinned rustler_precompiled artifacts per target (NIF 2.15, the variant
   # resolved under OTP 27).
   rustlerTarget = {
@@ -76,37 +97,34 @@ let
   }.${pkgs.stdenv.hostPlatform.system}
     or (throw "no rustler_precompiled pin for ${pkgs.stdenv.hostPlatform.system}");
 
-  nifSha256 = {
-    "aarch64-apple-darwin" = {
-      explorer = "8ffac3a1c4308b9e248ad48a5d184dba8c3cac13110c315a763fc29d0d42361d";
-      sqlFmt = "d528525334a051071859079e360ec2966d2bfd4f200bf539d1856602450e3a0e";
-    };
-    "aarch64-unknown-linux-gnu" = {
-      explorer = "a8ce4ec5ece5ec14911a9002f59b1214e1cd4a1bcb234d3a07999e466dbc3fbd";
-      sqlFmt = "4a864d71772824c55bb1731d70d68fc8aafdb5b73923ede457987706b963f04f";
-    };
-    "x86_64-unknown-linux-gnu" = {
-      explorer = "ab49ca5297683e6ad1f024e1223f76b754c76ce19e8437a3389c1ab71f29af0e";
-      sqlFmt = "2ed1a82e9a311880fa8ff83830b3bded521c2d65455a421b98c68864519422b4";
-    };
-  }.${rustlerTarget};
-
-  explorerNifName = "libexplorer-v0.11.1-nif-2.15-${rustlerTarget}.so.tar.gz";
-  sqlFmtNifName = "libsql_fmt_nif-v0.4.0-nif-2.15-${rustlerTarget}.so.tar.gz";
+  explorerNifName = "libexplorer-v${explorerVersion}-nif-2.15-${rustlerTarget}.so.tar.gz";
+  sqlFmtNifName = "libsql_fmt_nif-v${sqlFmtVersion}-nif-2.15-${rustlerTarget}.so.tar.gz";
 
   explorerNif = pkgs.fetchurl {
-    url = "https://github.com/elixir-explorer/explorer/releases/download/v0.11.1/${explorerNifName}";
-    sha256 = nifSha256.explorer;
+    url = "https://github.com/elixir-explorer/explorer/releases/download/v${explorerVersion}/${explorerNifName}";
+    hash =
+      if explorerNifHash != null then
+        explorerNifHash
+      else
+        derivedHashes.explorer_nif_hash or lib.fakeHash;
   };
   sqlFmtNif = pkgs.fetchurl {
-    url = "https://github.com/akoutmos/sql_fmt/releases/download/v0.4.0/${sqlFmtNifName}";
-    sha256 = nifSha256.sqlFmt;
+    url = "https://github.com/akoutmos/sql_fmt/releases/download/v${sqlFmtVersion}/${sqlFmtNifName}";
+    hash =
+      if sqlFmtNifHash != null then
+        sqlFmtNifHash
+      else
+        derivedHashes.sql_fmt_nif_hash or lib.fakeHash;
   };
 
   mixDeps = fetchMixDeps {
     pname = "mix-deps-${pname}";
     inherit version src;
-    hash = if mixDepsHash == null then lib.fakeHash else mixDepsHash;
+    hash =
+      if mixDepsHash != null then
+        mixDepsHash
+      else
+        derivedHashes.mix_deps_hash or lib.fakeHash;
     mixEnv = "prod";
   };
 
@@ -144,6 +162,8 @@ let
 in
 {
   mix-deps = mixDeps;
+  explorer-nif = explorerNif;
+  sql-fmt-nif = sqlFmtNif;
 
   logflare = pkgs.stdenv.mkDerivation {
     name = "${pname}-portable";
