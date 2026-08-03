@@ -69,7 +69,7 @@ override because its exact release tag is unavailable on Docker Hub.
 <!-- generated:results:begin -->
 | Service | Version | Upstream ARM64 | Published slim | Reduction | Idle RSS | Idle CPU | Sources |
 |---|---:|---:|---:|---:|---:|---:|---|
-| Postgres | `17.6.1.157` (all PG17 extensions, minimal preload) | `349.9 MiB` | `132.7 MiB` | `62.1%` | `47.5 MiB` | `0.01%` | [release](https://github.com/supabase/slim-services/releases/tag/postgres-17.6.1.157) · [report](services/postgres/REPORT.md) |
+| Postgres | `17.6.1.158` (all PG17 extensions, minimal preload) | `349.9 MiB` | `132.7 MiB` | `62.1%` | `47.0 MiB` | `0.01%` | [release](https://github.com/supabase/slim-services/releases/tag/postgres-17.6.1.158) · [report](services/postgres/REPORT.md) |
 | PostgREST | `v14.16` | `145.9 MiB` | `23.9 MiB` | `83.6%` | `86.4 MiB` | `0.06%` | [release](https://github.com/supabase/slim-services/releases/tag/postgrest-v14.16) · [report](services/postgrest/REPORT.md) |
 | Auth | `v2.194.0` | `26.0 MiB` | `11.4 MiB` | `56.1%` | `9.4 MiB` | `0.00%` | [release](https://github.com/supabase/slim-services/releases/tag/auth-v2.194.0) · [report](services/auth/REPORT.md) |
 | Realtime | `v2.122.0` | `115.0 MiB` | `27.0 MiB` | `76.5%` | `170.8 MiB` | `0.15%` | [release](https://github.com/supabase/slim-services/releases/tag/realtime-v2.122.0) · [report](services/realtime/REPORT.md) |
@@ -118,7 +118,7 @@ macOS archives require macOS 14+. The manifest records the exact floor as
 <!-- generated:host-native:begin -->
 | Service | Version | Archive | rootfs | Idle RSS | Idle CPU | Portable | Sources |
 |---|---:|---:|---:|---:|---:|---|---|
-| Postgres | `17.6.1.157` | `103.0 MiB` | `662.6 MiB` | `71.5 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/postgres-17.6.1.157) · [report](services/postgres/REPORT.md) |
+| Postgres | `17.6.1.158` | `103.0 MiB` | `662.7 MiB` | `69.7 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/postgres-17.6.1.158) · [report](services/postgres/REPORT.md) |
 | PostgREST | `v14.16` | `13.1 MiB` | `84.8 MiB` | `44.7 MiB` | `0.10%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/postgrest-v14.16) · [report](services/postgrest/REPORT.md) |
 | Auth | `v2.194.0` | `9.5 MiB` | `33.8 MiB` | `29.4 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/auth-v2.194.0) · [report](services/auth/REPORT.md) |
 | Realtime | `v2.122.0` | `11.8 MiB` | `41.3 MiB` | `205.7 MiB` | `0.23%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/realtime-v2.122.0) · [report](services/realtime/REPORT.md) |
