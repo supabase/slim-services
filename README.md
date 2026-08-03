@@ -8,12 +8,14 @@ This repo asks a simple question, on three axes:
 > **CPU** — if we package only the runtime files it actually needs and ship it
 > with a low-footprint runtime profile?
 
+<!-- generated:release-summary:begin -->
 For the latest published Linux ARM64 release set (9 services), upstream images
-total **1862.2 MiB** compressed; the slim set totals **452.2 MiB** (**75.7%**
+total **1865.1 MiB** compressed; the slim set totals **452.3 MiB** (**75.7%**
 smaller — exact numbers below). Every published service also ships measured
 steady-state RSS and idle-CPU numbers, and a minimal core stack (postgres +
-auth + postgrest) idles at roughly **145 MiB of RSS per stack** with near-zero
+auth + postgrest) idles at roughly **143 MiB of RSS per stack** with near-zero
 idle CPU.
+<!-- generated:release-summary:end -->
 
 ## Project Goals
 
@@ -68,12 +70,12 @@ override because its exact release tag is unavailable on Docker Hub.
 | Service | Version | Upstream ARM64 | Published slim | Reduction | Idle RSS | Idle CPU | Sources |
 |---|---:|---:|---:|---:|---:|---:|---|
 | Postgres | `17.6.1.157` (all PG17 extensions, minimal preload) | `349.9 MiB` | `132.7 MiB` | `62.1%` | `47.5 MiB` | `0.01%` | [release](https://github.com/supabase/slim-services/releases/tag/postgres-17.6.1.157) · [report](services/postgres/REPORT.md) |
-| PostgREST | `v14.14` | `145.3 MiB` | `23.6 MiB` | `83.8%` | `88.0 MiB` | `0.12%` | [release](https://github.com/supabase/slim-services/releases/tag/postgrest-v14.14) · [report](services/postgrest/REPORT.md) |
-| Auth | `v2.194.0` | `26.0 MiB` | `11.4 MiB` | `56.2%` | `9.4 MiB` | `0.00%` | [release](https://github.com/supabase/slim-services/releases/tag/auth-v2.194.0) · [report](services/auth/REPORT.md) |
-| Realtime | `v2.121.2` | `115.0 MiB` | `27.0 MiB` | `76.5%` | `169.5 MiB` | `0.19%` | [release](https://github.com/supabase/slim-services/releases/tag/realtime-v2.121.2) · [report](services/realtime/REPORT.md) |
-| Storage | `v1.67.25` | `222.9 MiB` | `51.3 MiB` | `77.0%` | `225.5 MiB` | `0.01%` | [release](https://github.com/supabase/slim-services/releases/tag/storage-v1.67.25) · [report](services/storage/REPORT.md) |
-| Edge Runtime | `v1.74.2` (no-AI) | `360.6 MiB` | `52.7 MiB` | `85.4%` | `18.5 MiB` | `0.01%` | [release](https://github.com/supabase/slim-services/releases/tag/edge-runtime-v1.74.2) · [report](services/edge-runtime/REPORT.md) |
-| Analytics | `v1.46.0` | `258.9 MiB` | `58.7 MiB` | `77.3%` | `493.4 MiB` | `0.30%` | [release](https://github.com/supabase/slim-services/releases/tag/analytics-v1.46.0) · [report](services/analytics/REPORT.md) |
+| PostgREST | `v14.16` | `145.9 MiB` | `23.9 MiB` | `83.6%` | `86.4 MiB` | `0.06%` | [release](https://github.com/supabase/slim-services/releases/tag/postgrest-v14.16) · [report](services/postgrest/REPORT.md) |
+| Auth | `v2.194.0` | `26.0 MiB` | `11.4 MiB` | `56.1%` | `9.4 MiB` | `0.00%` | [release](https://github.com/supabase/slim-services/releases/tag/auth-v2.194.0) · [report](services/auth/REPORT.md) |
+| Realtime | `v2.122.0` | `115.0 MiB` | `27.0 MiB` | `76.5%` | `170.8 MiB` | `0.15%` | [release](https://github.com/supabase/slim-services/releases/tag/realtime-v2.122.0) · [report](services/realtime/REPORT.md) |
+| Storage | `v1.68.0` | `223.0 MiB` | `51.0 MiB` | `77.1%` | `218.2 MiB` | `0.02%` | [release](https://github.com/supabase/slim-services/releases/tag/storage-v1.68.0) · [report](services/storage/REPORT.md) |
+| Edge Runtime | `v1.74.3` (no-AI) | `360.6 MiB` | `52.7 MiB` | `85.4%` | `18.2 MiB` | `0.00%` | [release](https://github.com/supabase/slim-services/releases/tag/edge-runtime-v1.74.3) · [report](services/edge-runtime/REPORT.md) |
+| Analytics | `v1.49.2` | `261.1 MiB` | `58.8 MiB` | `77.5%` | `495.2 MiB` | `0.25%` | [release](https://github.com/supabase/slim-services/releases/tag/analytics-v1.49.2) · [report](services/analytics/REPORT.md) |
 | PgMeta | `v0.96.6` | `94.2 MiB` | `55.5 MiB` | `41.1%` | `100.7 MiB` | `0.59%` | [release](https://github.com/supabase/slim-services/releases/tag/pgmeta-v0.96.6) · [report](services/pgmeta/REPORT.md) |
 | Pooler | `v2.9.10` | `289.4 MiB`* | `39.3 MiB` | `86.4%`* | `162.4 MiB` | `0.11%` | [release](https://github.com/supabase/slim-services/releases/tag/pooler-v2.9.10) · [report](services/pooler/REPORT.md) |
 
@@ -117,12 +119,12 @@ macOS archives require macOS 14+. The manifest records the exact floor as
 | Service | Version | Archive | rootfs | Idle RSS | Idle CPU | Portable | Sources |
 |---|---:|---:|---:|---:|---:|---|---|
 | Postgres | `17.6.1.157` | `103.0 MiB` | `662.6 MiB` | `71.5 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/postgres-17.6.1.157) · [report](services/postgres/REPORT.md) |
-| PostgREST | `v14.14` | `13.0 MiB` | `84.0 MiB` | `44.7 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/postgrest-v14.14) · [report](services/postgrest/REPORT.md) |
+| PostgREST | `v14.16` | `13.1 MiB` | `84.8 MiB` | `44.7 MiB` | `0.10%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/postgrest-v14.16) · [report](services/postgrest/REPORT.md) |
 | Auth | `v2.194.0` | `9.5 MiB` | `33.8 MiB` | `29.4 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/auth-v2.194.0) · [report](services/auth/REPORT.md) |
-| Realtime | `v2.121.2` | `11.8 MiB` | `41.1 MiB` | `218.4 MiB` | `0.37%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/realtime-v2.121.2) · [report](services/realtime/REPORT.md) |
-| Storage | `v1.67.25` | `36.2 MiB` | `144.8 MiB` | `307.2 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/storage-v1.67.25) · [report](services/storage/REPORT.md) |
-| Edge Runtime | `v1.74.2` | `39.9 MiB` | `161.2 MiB` | `56.7 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/edge-runtime-v1.74.2) · [report](services/edge-runtime/REPORT.md) |
-| Analytics | `v1.46.0` | `33.1 MiB` | `137.9 MiB` | `505.2 MiB` | `0.53%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/analytics-v1.46.0) · [report](services/analytics/REPORT.md) |
+| Realtime | `v2.122.0` | `11.8 MiB` | `41.3 MiB` | `205.7 MiB` | `0.23%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/realtime-v2.122.0) · [report](services/realtime/REPORT.md) |
+| Storage | `v1.68.0` | `36.1 MiB` | `143.4 MiB` | `234.2 MiB` | `0.03%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/storage-v1.68.0) · [report](services/storage/REPORT.md) |
+| Edge Runtime | `v1.74.3` | `39.9 MiB` | `161.2 MiB` | `56.2 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/edge-runtime-v1.74.3) · [report](services/edge-runtime/REPORT.md) |
+| Analytics | `v1.49.2` | `33.3 MiB` | `140.4 MiB` | `505.4 MiB` | `0.70%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/analytics-v1.49.2) · [report](services/analytics/REPORT.md) |
 | PgMeta | `v0.96.6` | `37.2 MiB` | `172.7 MiB` | `175.2 MiB` | `0.30%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/pgmeta-v0.96.6) · [report](services/pgmeta/REPORT.md) |
 | Pooler | `v2.9.10` | `23.5 MiB` | `52.4 MiB` | `202.6 MiB` | `0.20%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/pooler-v2.9.10) · [report](services/pooler/REPORT.md) |
 <!-- generated:host-native:end -->
@@ -334,6 +336,14 @@ the newest version tag matching each service policy that does not yet have a
 corresponding GitHub release here. All configured services are enabled. The
 PostgreSQL policy accepts only plain `17.x.x.x` releases; PostgreSQL 15,
 OrioleDB, architecture-specific, and other suffixed release tags are ignored.
+
+After a successful release run, `.github/workflows/release-results.yml`
+downloads the newest published manifest set for every service, regenerates the
+two README tables, and merges the result through a short-lived docs pull
+request. The shared concurrency group coalesces simultaneous service releases,
+and the hourly reconciliation schedule repairs any missed or failed refresh.
+It uses the repository's GitHub App credentials because the organization does
+not allow the built-in Actions token to create pull requests.
 
 The release workflow rechecks the upstream release policy independently, so a
 manual dispatch cannot publish `main`, another branch, a draft/prerelease, or
