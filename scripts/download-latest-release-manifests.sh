@@ -67,13 +67,28 @@ PY
 
 while IFS=$'\t' read -r service release_tag version; do
   [[ -n "$service" ]] || continue
-  download_dir="$temp_dir/manifests/$service"
-  mkdir -p "$download_dir"
   printf 'downloading manifests for %s (%s)\n' "$service" "$release_tag"
-  gh release download "$release_tag" \
-    --repo "$TARGET_REPOSITORY" \
-    --pattern '*.manifest.json' \
-    --dir "$download_dir"
+  download_dir=""
+  for attempt in 1 2 3 4; do
+    attempt_dir="$temp_dir/manifests/$service/$attempt"
+    mkdir -p "$attempt_dir"
+    if gh release download "$release_tag" \
+      --repo "$TARGET_REPOSITORY" \
+      --pattern '*.manifest.json' \
+      --dir "$attempt_dir"; then
+      download_dir="$attempt_dir"
+      break
+    fi
+    if [[ "$attempt" == "4" ]]; then
+      printf 'could not download manifests for %s after %s attempts\n' \
+        "$release_tag" "$attempt" >&2
+      exit 1
+    fi
+    retry_delay=$((1 << attempt))
+    printf 'release download failed; retrying in %ss (%s/4)\n' \
+      "$retry_delay" "$attempt" >&2
+    sleep "$retry_delay"
+  done
 
   python3 - "$ARTIFACTS_DIR" "$download_dir" "$service" "$version" <<'PY'
 import glob
