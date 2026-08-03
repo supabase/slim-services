@@ -54,12 +54,15 @@ NIX_BUILD_MODE="${NIX_BUILD_MODE:-flake}"
 NIX_BUILD_COMMAND_TEMPLATE="${NIX_BUILD_COMMAND_TEMPLATE:-}"
 NIX_PACKAGE_OVERLAY="${NIX_PACKAGE_OVERLAY:-}"
 NIX_PACKAGE_OVERLAY_DEST="${NIX_PACKAGE_OVERLAY_DEST:-}"
+NIX_DERIVE_MIX_DEPS_HASH="${NIX_DERIVE_MIX_DEPS_HASH:-false}"
 
 source_abs="$ROOT_DIR/$SOURCE_DIR"
 artifact_dir="$ROOT_DIR/artifacts/$service/$VERSION/$(artifact_platform_dir "$TARGET_OS" "$ARCH")"
 rootfs="$artifact_dir/rootfs"
 manifest="$artifact_dir/manifest.json"
 out_link="$artifact_dir/nix-result"
+mix_deps_hash_file="$artifact_dir/mix-deps-hash"
+mix_deps_hash=""
 
 [[ -d "$source_abs" ]] || fail "source submodule directory not found: $SOURCE_DIR"
 [[ -f "$source_abs/.git" || -d "$source_abs/.git" ]] || fail "source directory is not a git checkout: $SOURCE_DIR"
@@ -77,6 +80,7 @@ fi
 rm -rf "$rootfs"
 mkdir -p "$rootfs" "$artifact_dir"
 rm -f "$out_link"
+rm -f "$mix_deps_hash_file"
 
 if ! declare -p NIX_COPY_PATHS >/dev/null 2>&1 && [[ "${NIX_OUTPUT_KIND:-copy-paths}" != "rootfs" ]]; then
   fail "recipe must define NIX_COPY_PATHS for Nix backend"
@@ -171,7 +175,14 @@ case "$resolved_nix_runner" in
       nix-build)
         (
           cd "$ROOT_DIR"
-          nix-build "$nix_flake_for_build/${NIX_EXPRESSION:-.}" -A "$NIX_ATTR" --out-link "$out_link"
+          if [[ "$NIX_DERIVE_MIX_DEPS_HASH" == "true" ]]; then
+            "$ROOT_DIR/scripts/nix-build-with-derived-mix-hash.sh" \
+              "$nix_flake_for_build/${NIX_EXPRESSION:-.}" \
+              "$NIX_ATTR" "$VERSION" "$out_link" "$mix_deps_hash_file"
+          else
+            nix-build "$nix_flake_for_build/${NIX_EXPRESSION:-.}" \
+              -A "$NIX_ATTR" --out-link "$out_link"
+          fi
         )
         ;;
     esac
@@ -231,6 +242,10 @@ case "$resolved_nix_runner" in
       --build-arg "NIX_EXPRESSION=${NIX_EXPRESSION:-default.nix}" \
       "$ROOT_DIR"
 
+    if [[ -f "$rootfs/.slim-mix-deps-hash" ]]; then
+      mv "$rootfs/.slim-mix-deps-hash" "$mix_deps_hash_file"
+    fi
+
     chmod -R u+w "$rootfs"
 
     if [[ -f "$(service_dir "$service")/wrapper.sh" ]]; then
@@ -244,6 +259,12 @@ case "$resolved_nix_runner" in
     fail "unknown NIX_RUNNER for $service: $resolved_nix_runner"
     ;;
 esac
+
+if [[ "$NIX_DERIVE_MIX_DEPS_HASH" == "true" ]]; then
+  [[ -s "$mix_deps_hash_file" ]] || fail "Mix dependency hash was not recorded"
+  mix_deps_hash="$(tr -d '\n' < "$mix_deps_hash_file")"
+  rm -f "$mix_deps_hash_file"
+fi
 
 # The Nix sandbox signs with the sigtool shim, which produces invalid
 # signatures on some special Mach-O layouts (e.g. reexport stubs like
@@ -281,6 +302,7 @@ assumed_host_libs_json="$(portable_host_libs_json)"
 
 # The build command template may contain quotes; pass it via the environment
 # rather than interpolating it into the python source.
+MIX_DEPS_HASH_ENV="$mix_deps_hash" \
 NIX_BUILD_COMMAND_TEMPLATE_ENV="$NIX_BUILD_COMMAND_TEMPLATE" \
 python3 - "$manifest" "$archive" "$archive_bytes" <<PY
 import json
@@ -318,6 +340,7 @@ manifest = {
     "host_nix_system": "$host_nix_system",
     "nix_package_overlay": "$NIX_PACKAGE_OVERLAY",
     "nix_package_overlay_dest": "$NIX_PACKAGE_OVERLAY_DEST",
+    "mix_deps_hash": os.environ.get("MIX_DEPS_HASH_ENV") or None,
     "nix_copy_paths": ${NIX_COPY_PATHS_JSON:-[]},
     "portable": "$portable" == "true",
     "assumed_host_libs": json.loads("""$assumed_host_libs_json"""),

@@ -6,10 +6,12 @@ set -euo pipefail
 # PostgREST is a Haskell service; a from-source GHC build on darwin without
 # upstream's cachix cache takes hours, and the repo's static Nix experiment is
 # Linux-only (macOS has no static linking). So the darwin artifact consumes the
-# upstream release binary (pinned by sha256) and repairs its one non-portable
-# edge: upstream links libpq from a Homebrew path. We bundle a Nix libpq
-# closure into lib/ and rewrite install names so the artifact is relocatable
-# with no Homebrew dependency. Recorded in services/postgrest/REPORT.md.
+# upstream release binary and repairs its one non-portable edge: upstream links
+# libpq from a Homebrew path. The release planning job supplies the exact asset
+# URL and GitHub-computed SHA-256 after validating the stable upstream tag. We
+# verify that digest here, bundle a Nix libpq closure into lib/, and rewrite
+# install names so the artifact is relocatable with no Homebrew dependency.
+# Recorded in services/postgrest/REPORT.md.
 
 # shellcheck source=scripts/lib.sh
 source "$ROOT_DIR/scripts/lib.sh"
@@ -23,18 +25,52 @@ require_cmd otool
 require_cmd install_name_tool
 require_cmd shasum
 
-case "$TARGET_OS-$ARCH-$VERSION" in
-  darwin-arm64-v14.14)
-    archive_url="https://github.com/PostgREST/postgrest/releases/download/v14.14/postgrest-v14.14-macos-aarch64.tar.xz"
-    archive_sha256="656f5ece84f5cc269f2337ac3fe658349984a5d28e500edb56f150e3cb2cf1fa"
-    ;;
-  *)
-    fail "no pinned upstream postgrest release for $TARGET_OS/$ARCH $VERSION; add the sha256 pin to services/postgrest/build-host.sh"
-    ;;
-esac
-
 workdir="$(mktemp -d "${TMPDIR:-/tmp}/postgrest-host-build.XXXXXX")"
 trap 'rm -rf "$workdir"' EXIT
+
+[[ "$TARGET_OS-$ARCH" == "darwin-arm64" ]] || \
+  fail "unsupported PostgREST host target: $TARGET_OS/$ARCH"
+
+# Generic artifact builds do not pass through the release planning job. Keep
+# that path automatic too by resolving the same GitHub-computed digest from
+# the public release API.
+if [[ -z "${UPSTREAM_ASSET_URL:-}" || -z "${UPSTREAM_ASSET_SHA256:-}" ]]; then
+  require_cmd python3
+  asset_name="postgrest-$VERSION-macos-aarch64.tar.xz"
+  release_json="$workdir/release.json"
+  curl -fsSL \
+    -H 'Accept: application/vnd.github+json' \
+    -o "$release_json" \
+    "https://api.github.com/repos/PostgREST/postgrest/releases/tags/$VERSION"
+  asset_metadata="$(python3 - "$release_json" "$asset_name" <<'PY'
+import json
+import sys
+
+release_path, asset_name = sys.argv[1:]
+with open(release_path, encoding="utf-8") as fh:
+    release = json.load(fh)
+
+matches = [asset for asset in release.get("assets", []) if asset.get("name") == asset_name]
+if len(matches) != 1:
+    raise SystemExit(f"expected one upstream asset named {asset_name}, found {len(matches)}")
+
+asset = matches[0]
+print(asset.get("browser_download_url", ""), asset.get("digest", ""), sep="\t")
+PY
+  )"
+  IFS=$'\t' read -r UPSTREAM_ASSET_URL upstream_asset_digest <<< "$asset_metadata"
+  UPSTREAM_ASSET_SHA256="${upstream_asset_digest#sha256:}"
+fi
+
+asset_name="postgrest-$VERSION-macos-aarch64.tar.xz"
+expected_asset_url="https://github.com/PostgREST/postgrest/releases/download/$VERSION/$asset_name"
+[[ "$UPSTREAM_ASSET_URL" == "$expected_asset_url" ]] || \
+  fail "unexpected PostgREST release asset URL: $UPSTREAM_ASSET_URL"
+[[ "${UPSTREAM_ASSET_SHA256:-}" =~ ^[0-9a-f]{64}$ ]] || \
+  fail "UPSTREAM_ASSET_SHA256 is not a valid SHA-256 digest"
+
+archive_url="$UPSTREAM_ASSET_URL"
+archive_sha256="$UPSTREAM_ASSET_SHA256"
 
 log "fetching upstream release: $archive_url"
 curl -fsSL -o "$workdir/postgrest.tar.xz" "$archive_url"

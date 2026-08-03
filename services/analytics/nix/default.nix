@@ -31,6 +31,8 @@
     url = "https://github.com/NixOS/nixpkgs/archive/d407951447dcd00442e97087bf374aad70c04cea.tar.gz";
     sha256 = "1jgfnvi57n79zsfljh2i4b77yj6wh028z4r3wf223am8wznzqbzj";
   }) { },
+  serviceVersion ? null,
+  mixDepsHash ? null,
 }:
 let
   lib = pkgs.lib;
@@ -40,7 +42,11 @@ let
   mixRelease = beamPackages.mixRelease.override { inherit elixir fetchMixDeps; };
 
   pname = "logflare";
-  version = lib.removeSuffix "\n" (builtins.readFile ../VERSION);
+  version =
+    if serviceVersion == null then
+      lib.removeSuffix "\n" (builtins.readFile ../VERSION)
+    else
+      serviceVersion;
 
   src = lib.cleanSourceWith {
     src = ../.;
@@ -97,16 +103,17 @@ let
     sha256 = nifSha256.sqlFmt;
   };
 
+  mixDeps = fetchMixDeps {
+    pname = "mix-deps-${pname}";
+    inherit version src;
+    hash = if mixDepsHash == null then lib.fakeHash else mixDepsHash;
+    mixEnv = "prod";
+  };
+
   release = mixRelease {
     inherit pname version src;
     mixEnv = "prod";
-
-    mixFodDeps = fetchMixDeps {
-      pname = "mix-deps-${pname}";
-      inherit version src;
-      hash = "sha256-PyDeAKzRBGeplz528GO80T+Mr+4uTztxjANzUWoo8w0=";
-      mixEnv = "prod";
-    };
+    mixFodDeps = mixDeps;
 
     nativeBuildInputs = [
       pkgsRust.cargo
@@ -136,6 +143,8 @@ let
   };
 in
 {
+  mix-deps = mixDeps;
+
   logflare = pkgs.stdenv.mkDerivation {
     name = "${pname}-portable";
     inherit version;
