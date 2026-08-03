@@ -1,0 +1,11 @@
+# Deliberate smoke-test fixtures. These are repeated non-production values used
+# only to boot local floor checks; retaining exact fingerprints keeps new or
+# moved secrets visible to the scanner.
+5ecf884f40bde9f8cd63ba1c45282bfc83a8f972:services/analytics/recipe.env:generic-api-key:30
+5ecf884f40bde9f8cd63ba1c45282bfc83a8f972:services/realtime/recipe.env:generic-api-key:31
+2549e8af9180f054c79aa698eccc04a5ecb7b7a4:services/analytics/recipe.env:generic-api-key:22
+2549e8af9180f054c79aa698eccc04a5ecb7b7a4:services/realtime/recipe.env:generic-api-key:23
+d56ccf7e3e1e4eabf4b9032258d343b7c0cb38c0:docs/superpowers/plans/2026-07-08-host-portability-floors.md:generic-api-key:634
+d56ccf7e3e1e4eabf4b9032258d343b7c0cb38c0:docs/superpowers/plans/2026-07-08-host-portability-floors.md:generic-api-key:646
+131322e97b70bf1cb290cd2f40374c1130f5c521:services/realtime/smoke.sh:generic-api-key:58
+cf9b6e4b92aeea7a8c39f1c97861903e582947f8:services/realtime/smoke.sh:generic-api-key:28
