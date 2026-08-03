@@ -43,7 +43,7 @@ jobs:
 
       - name: Download latest published manifests
         env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ github.token }}
         run: scripts/download-latest-release-manifests.sh
 
       - name: Set up Docker Buildx
