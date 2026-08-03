@@ -64,7 +64,7 @@ fi
 node ./scripts/prepare-bundle-dist.mjs
 
 find dist-bundle dist-bundle/node_modules \
-  \( -name '*.d.ts' -o -name '*.d.ts.map' -o -name '*.map' -o -name '*.md' -o -name '*.markdown' -o -name 'LICENSE*' -o -name 'README*' -o -name '*.test.js' -o -name '*.test.js.map' \) \
+  \( -name '*.d.ts' -o -name '*.d.ts.map' -o -name '*.map' -o -name '*.md' -o -name '*.markdown' -o -name 'README*' -o -name '*.test.js' -o -name '*.test.js.map' \) \
   -type f -print0 | xargs -0r rm -f
 find dist-bundle/node_modules \
   \( -path '*/test/*' -o -path '*/tests/*' -o -path '*/__tests__/*' -o -path '*/example/*' -o -path '*/examples/*' -o -path '*/benchmark/*' -o -path '*/benchmarks/*' \) \

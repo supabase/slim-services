@@ -439,3 +439,11 @@ outside the release set. CLI-side integration (download/verify and
 process-compose wiring) is the next step, tracked in
 [SLIM_IMAGES_REPORT.md](SLIM_IMAGES_REPORT.md) § Remaining Work and the plan's
 Phase 5 notes.
+
+## Licensing
+
+The packaging code in this repository is licensed under
+[Apache-2.0](LICENSE). Built artifacts contain independently licensed upstream
+software. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md); each archive
+also carries the license material collected from its dependency closure under
+`share/licenses/` and is published with an SPDX SBOM.

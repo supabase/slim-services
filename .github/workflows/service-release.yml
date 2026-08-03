@@ -288,6 +288,8 @@ jobs:
           cp "$archive" "$release_dir/"
           cp "$artifact_dir/manifest.json" \
             "$release_dir/$SERVICE-$VERSION-$PLATFORM_DIR.manifest.json"
+          cp "$artifact_dir/$SERVICE-$VERSION-$PLATFORM_DIR.sbom.spdx.json" \
+            "$release_dir/"
           cp "$artifact_dir/SHA256SUMS" \
             "$release_dir/$SERVICE-$VERSION-$PLATFORM_DIR.SHA256SUMS"
 

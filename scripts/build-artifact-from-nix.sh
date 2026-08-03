@@ -67,6 +67,7 @@ source_abs="$ROOT_DIR/$SOURCE_DIR"
 artifact_dir="$ROOT_DIR/artifacts/$service/$VERSION/$(artifact_platform_dir "$TARGET_OS" "$ARCH")"
 rootfs="$artifact_dir/rootfs"
 manifest="$artifact_dir/manifest.json"
+sbom="$artifact_dir/$service-$VERSION-$(artifact_platform_dir "$TARGET_OS" "$ARCH").sbom.spdx.json"
 out_link="$artifact_dir/nix-result"
 derived_hashes_file="$artifact_dir/nix-derived-hashes.json"
 derived_hashes_json="{}"
@@ -299,6 +300,9 @@ if [[ "$TARGET_OS" == "darwin" ]]; then
 fi
 
 "$ROOT_DIR/scripts/prune-runtime-tree.sh" "$rootfs"
+"$ROOT_DIR/scripts/generate-artifact-sbom.sh" \
+  "$rootfs" "$sbom" "$service" "$VERSION" \
+  "$(artifact_platform_dir "$TARGET_OS" "$ARCH")"
 archive=""
 if [[ "${ARTIFACT_ARCHIVE_ON_BUILD:-1}" == "1" ]]; then
   archive="$(archive_with_best_available_compressor "$rootfs" "$artifact_dir/$service")"
@@ -373,6 +377,8 @@ manifest = {
     ],
     "smoke_command": "scripts/smoke.sh $service --artifact $rootfs",
     "archive": archive_name,
+    "sbom": os.path.basename("$sbom"),
+    "licenses": "share/licenses",
     "size": {
         "rootfs_bytes": int($rootfs_kib) * 1024,
         "rootfs_mib": round((int($rootfs_kib) * 1024) / 1024 / 1024, 1),

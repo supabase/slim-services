@@ -38,6 +38,7 @@ CMD_JSON="${CMD_JSON:-[]}"
 artifact_dir="$ROOT_DIR/artifacts/$service/$VERSION/$(artifact_platform_dir "$TARGET_OS" "$ARCH")"
 rootfs="$artifact_dir/rootfs"
 manifest="$artifact_dir/manifest.json"
+sbom="$artifact_dir/$service-$VERSION-$(artifact_platform_dir "$TARGET_OS" "$ARCH").sbom.spdx.json"
 
 rm -rf "$rootfs"
 mkdir -p "$rootfs" "$artifact_dir"
@@ -218,6 +219,9 @@ if [[ -f "$(service_dir "$service")/wrapper.sh" ]]; then
 fi
 
 "$ROOT_DIR/scripts/prune-runtime-tree.sh" "$rootfs"
+"$ROOT_DIR/scripts/generate-artifact-sbom.sh" \
+  "$rootfs" "$sbom" "$service" "$VERSION" \
+  "$(artifact_platform_dir "$TARGET_OS" "$ARCH")"
 
 archive="$(archive_with_best_available_compressor "$rootfs" "$artifact_dir/$service")"
 
@@ -260,6 +264,8 @@ manifest = {
     ],
     "smoke_command": "scripts/smoke.sh $service --artifact $rootfs",
     "archive": os.path.basename("$archive"),
+    "sbom": os.path.basename("$sbom"),
+    "licenses": "share/licenses",
     "size": {
         "rootfs_bytes": int($rootfs_kib) * 1024,
         "rootfs_mib": round((int($rootfs_kib) * 1024) / 1024 / 1024, 1),
