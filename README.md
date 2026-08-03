@@ -10,10 +10,10 @@ This repo asks a simple question, on three axes:
 
 <!-- generated:release-summary:begin -->
 For the latest published Linux ARM64 release set (9 services), upstream images
-total **1865.1 MiB** compressed; the slim set totals **452.3 MiB** (**75.7%**
+total **1865.2 MiB** compressed; the slim set totals **452.4 MiB** (**75.7%**
 smaller — exact numbers below). Every published service also ships measured
 steady-state RSS and idle-CPU numbers, and a minimal core stack (postgres +
-auth + postgrest) idles at roughly **143 MiB of RSS per stack** with near-zero
+auth + postgrest) idles at roughly **142 MiB of RSS per stack** with near-zero
 idle CPU.
 <!-- generated:release-summary:end -->
 
@@ -69,11 +69,11 @@ override because its exact release tag is unavailable on Docker Hub.
 <!-- generated:results:begin -->
 | Service | Version | Upstream ARM64 | Published slim | Reduction | Idle RSS | Idle CPU | Sources |
 |---|---:|---:|---:|---:|---:|---:|---|
-| Postgres | `17.6.1.158` (all PG17 extensions, minimal preload) | `349.9 MiB` | `132.7 MiB` | `62.1%` | `47.0 MiB` | `0.01%` | [release](https://github.com/supabase/slim-services/releases/tag/postgres-17.6.1.158) · [report](services/postgres/REPORT.md) |
+| Postgres | `17.6.1.159` (all PG17 extensions, minimal preload) | `349.8 MiB` | `132.7 MiB` | `62.1%` | `47.4 MiB` | `0.01%` | [release](https://github.com/supabase/slim-services/releases/tag/postgres-17.6.1.159) · [report](services/postgres/REPORT.md) |
 | PostgREST | `v14.16` | `145.9 MiB` | `23.9 MiB` | `83.6%` | `86.4 MiB` | `0.06%` | [release](https://github.com/supabase/slim-services/releases/tag/postgrest-v14.16) · [report](services/postgrest/REPORT.md) |
-| Auth | `v2.194.0` | `26.0 MiB` | `11.4 MiB` | `56.1%` | `9.4 MiB` | `0.00%` | [release](https://github.com/supabase/slim-services/releases/tag/auth-v2.194.0) · [report](services/auth/REPORT.md) |
+| Auth | `v2.195.0` | `26.0 MiB` | `11.5 MiB` | `55.7%` | `8.3 MiB` | `0.00%` | [release](https://github.com/supabase/slim-services/releases/tag/auth-v2.195.0) · [report](services/auth/REPORT.md) |
 | Realtime | `v2.122.0` | `115.0 MiB` | `27.0 MiB` | `76.5%` | `170.8 MiB` | `0.15%` | [release](https://github.com/supabase/slim-services/releases/tag/realtime-v2.122.0) · [report](services/realtime/REPORT.md) |
-| Storage | `v1.68.0` | `223.0 MiB` | `51.0 MiB` | `77.1%` | `218.2 MiB` | `0.02%` | [release](https://github.com/supabase/slim-services/releases/tag/storage-v1.68.0) · [report](services/storage/REPORT.md) |
+| Storage | `v1.68.1` | `223.2 MiB` | `51.0 MiB` | `77.1%` | `217.8 MiB` | `0.03%` | [release](https://github.com/supabase/slim-services/releases/tag/storage-v1.68.1) · [report](services/storage/REPORT.md) |
 | Edge Runtime | `v1.74.3` (no-AI) | `360.6 MiB` | `52.7 MiB` | `85.4%` | `18.2 MiB` | `0.00%` | [release](https://github.com/supabase/slim-services/releases/tag/edge-runtime-v1.74.3) · [report](services/edge-runtime/REPORT.md) |
 | Analytics | `v1.49.2` | `261.1 MiB` | `58.8 MiB` | `77.5%` | `495.2 MiB` | `0.25%` | [release](https://github.com/supabase/slim-services/releases/tag/analytics-v1.49.2) · [report](services/analytics/REPORT.md) |
 | PgMeta | `v0.96.6` | `94.2 MiB` | `55.5 MiB` | `41.1%` | `100.7 MiB` | `0.59%` | [release](https://github.com/supabase/slim-services/releases/tag/pgmeta-v0.96.6) · [report](services/pgmeta/REPORT.md) |
@@ -118,11 +118,11 @@ macOS archives require macOS 14+. The manifest records the exact floor as
 <!-- generated:host-native:begin -->
 | Service | Version | Archive | rootfs | Idle RSS | Idle CPU | Portable | Sources |
 |---|---:|---:|---:|---:|---:|---|---|
-| Postgres | `17.6.1.158` | `103.0 MiB` | `662.7 MiB` | `69.7 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/postgres-17.6.1.158) · [report](services/postgres/REPORT.md) |
+| Postgres | `17.6.1.159` | `103.0 MiB` | `662.7 MiB` | `71.2 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/postgres-17.6.1.159) · [report](services/postgres/REPORT.md) |
 | PostgREST | `v14.16` | `13.1 MiB` | `84.8 MiB` | `44.7 MiB` | `0.10%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/postgrest-v14.16) · [report](services/postgrest/REPORT.md) |
-| Auth | `v2.194.0` | `9.5 MiB` | `33.8 MiB` | `29.4 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/auth-v2.194.0) · [report](services/auth/REPORT.md) |
+| Auth | `v2.195.0` | `9.5 MiB` | `33.8 MiB` | `29.8 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/auth-v2.195.0) · [report](services/auth/REPORT.md) |
 | Realtime | `v2.122.0` | `11.8 MiB` | `41.3 MiB` | `205.7 MiB` | `0.23%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/realtime-v2.122.0) · [report](services/realtime/REPORT.md) |
-| Storage | `v1.68.0` | `36.1 MiB` | `143.4 MiB` | `234.2 MiB` | `0.03%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/storage-v1.68.0) · [report](services/storage/REPORT.md) |
+| Storage | `v1.68.1` | `36.1 MiB` | `143.5 MiB` | `255.9 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/storage-v1.68.1) · [report](services/storage/REPORT.md) |
 | Edge Runtime | `v1.74.3` | `39.9 MiB` | `161.2 MiB` | `56.2 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/edge-runtime-v1.74.3) · [report](services/edge-runtime/REPORT.md) |
 | Analytics | `v1.49.2` | `33.3 MiB` | `140.4 MiB` | `505.4 MiB` | `0.70%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/analytics-v1.49.2) · [report](services/analytics/REPORT.md) |
 | PgMeta | `v0.96.6` | `37.2 MiB` | `172.7 MiB` | `175.2 MiB` | `0.30%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/pgmeta-v0.96.6) · [report](services/pgmeta/REPORT.md) |
