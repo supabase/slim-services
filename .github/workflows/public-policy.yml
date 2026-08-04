@@ -1,0 +1,43 @@
+name: Public policy
+
+"on":
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  policy:
+    name: public policy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout without persisted credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Require immutable action references
+        run: scripts/check-actions-pinned.sh
+
+      - name: Check shell syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r script; do
+            bash -n "$script"
+          done < <(find scripts services -type f -name '*.sh' -print | sort)
+
+      - name: Run ShellCheck
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t scripts < <(find scripts services -type f -name '*.sh' -print | sort)
+          # These repository-wide warnings are intentional: SOURCE_REF and
+          # host_service_pid are populated by sourced helpers, and ulimit
+          # flags are provided by the concrete runtime-image shells.
+          shellcheck --severity=warning --exclude=SC2034,SC2154,SC3045 "${scripts[@]}"

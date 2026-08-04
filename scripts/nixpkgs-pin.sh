@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Shared nixpkgs pin for host-native build/smoke tooling (sourced, not run).
 # Keep in sync with the pin at the top of services/*/nix/default.nix (those
 # stay self-contained by design).
