@@ -51,6 +51,7 @@ dockerfile="$ROOT_DIR/services/$service/$artifact_dockerfile"
 artifact_dir="$ROOT_DIR/artifacts/$service/$VERSION/$(artifact_platform_dir "$TARGET_OS" "$ARCH")"
 rootfs="$artifact_dir/rootfs"
 manifest="$artifact_dir/manifest.json"
+sbom="$artifact_dir/$service-$VERSION-$(artifact_platform_dir "$TARGET_OS" "$ARCH").sbom.spdx.json"
 
 # Non-linux targets always build with services/<service>/build-host.sh (no
 # Docker on macOS CI runners); linux targets do too when the recipe opts in
@@ -175,6 +176,9 @@ else
 fi
 
 "$ROOT_DIR/scripts/prune-runtime-tree.sh" "$rootfs"
+"$ROOT_DIR/scripts/generate-artifact-sbom.sh" \
+  "$rootfs" "$sbom" "$service" "$VERSION" \
+  "$(artifact_platform_dir "$TARGET_OS" "$ARCH")"
 
 # ci-build-service.sh creates the distribution archive itself; skip the
 # duplicate (zstd -19 over the full rootfs) when the caller says so.
@@ -228,6 +232,8 @@ manifest = {
     ],
     "smoke_command": "scripts/smoke.sh $service --artifact $rootfs",
     "archive": os.path.basename("$archive") or None,
+    "sbom": os.path.basename("$sbom"),
+    "licenses": "share/licenses",
     "size": {
         "rootfs_bytes": int($rootfs_kib) * 1024,
         "rootfs_mib": round((int($rootfs_kib) * 1024) / 1024 / 1024, 1),

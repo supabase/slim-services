@@ -19,7 +19,7 @@ RUN npm run build \
   && rolldown -c ./rolldown.config.mjs \
   && node ./scripts/prepare-bundle-dist.mjs \
   && find /usr/src/app/dist-bundle /usr/src/app/dist-bundle/node_modules \
-      \( -name '*.d.ts' -o -name '*.d.ts.map' -o -name '*.map' -o -name '*.md' -o -name '*.markdown' -o -name 'LICENSE*' -o -name 'README*' \) \
+      \( -name '*.d.ts' -o -name '*.d.ts.map' -o -name '*.map' -o -name '*.md' -o -name '*.markdown' -o -name 'README*' \) \
       -type f -print0 | xargs -0r rm -f \
   && find /usr/src/app/dist-bundle/node_modules \
       \( -path '*/test/*' -o -path '*/tests/*' -o -path '*/__tests__/*' -o -path '*/example/*' -o -path '*/examples/*' -o -path '*/benchmark/*' -o -path '*/benchmarks/*' \) \

@@ -173,13 +173,16 @@ if not archives:
     raise SystemExit(f"no archive found for prefix {prefix}")
 
 out_path = os.path.join(os.path.dirname(prefix), "SHA256SUMS")
+sboms = sorted(glob.glob(os.path.join(os.path.dirname(prefix), "*.sbom.spdx.json")))
+if len(sboms) != 1:
+    raise SystemExit(f"expected one SPDX SBOM next to {prefix}, found {len(sboms)}")
 with open(out_path, "w", encoding="utf-8") as out:
-    for archive in archives:
+    for artifact in archives + sboms:
         digest = hashlib.sha256()
-        with open(archive, "rb") as fh:
+        with open(artifact, "rb") as fh:
             for chunk in iter(lambda: fh.read(1 << 20), b""):
                 digest.update(chunk)
-        out.write(f"{digest.hexdigest()}  {os.path.basename(archive)}\n")
+        out.write(f"{digest.hexdigest()}  {os.path.basename(artifact)}\n")
 print(f"[slim] checksums written: {out_path}")
 PY
 

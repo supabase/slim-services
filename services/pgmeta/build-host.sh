@@ -38,7 +38,7 @@ npm clean-install --no-audit --no-fund
 npm run build
 npm prune --omit=dev
 find dist node_modules \
-  \( -name '*.d.ts' -o -name '*.d.ts.map' -o -name '*.map' -o -name '*.md' -o -name '*.markdown' -o -name 'LICENSE*' -o -name 'README*' \) \
+  \( -name '*.d.ts' -o -name '*.d.ts.map' -o -name '*.map' -o -name '*.md' -o -name '*.markdown' -o -name 'README*' \) \
   -type f -print0 | xargs -0r rm -f
 find node_modules \
   \( -path '*/test/*' -o -path '*/tests/*' -o -path '*/__tests__/*' -o -path '*/example/*' -o -path '*/examples/*' -o -path '*/benchmark/*' -o -path '*/benchmarks/*' \) \
