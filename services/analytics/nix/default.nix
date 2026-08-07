@@ -78,7 +78,13 @@ let
   derivedHashesRaw = builtins.getEnv "SLIM_NIX_DERIVED_HASHES";
   derivedHashes =
     if derivedHashesRaw == "" then { } else builtins.fromJSON derivedHashesRaw;
-  beamPackages = pkgs.beam.packagesWith erlang;
+  baseBeamPackages = pkgs.beam.packagesWith erlang;
+  beamPackages = baseBeamPackages.extend (_final: previous: {
+    # Rebar's package-level Common Test suite is unrelated to the service
+    # artifact and has a known temp-directory collision when CI builds several
+    # BEAM targets concurrently. Service compilation and smoke tests stay on.
+    rebar3 = previous.rebar3.overrideAttrs (_: { doCheck = false; });
+  });
   elixir =
     if builtins.pathExists elixirDefinition then
       beamPackages.callPackage elixirDefinition {
