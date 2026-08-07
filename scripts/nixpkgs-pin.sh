@@ -1,7 +1,8 @@
 # shellcheck shell=bash
 # Shared nixpkgs pin for host-native build/smoke tooling (sourced, not run).
-# Keep in sync with the pin at the top of services/*/nix/default.nix (those
-# stay self-contained by design).
+# Keep in sync with the default pin used by services/*/nix/default.nix (those
+# stay self-contained by design). Realtime keeps this package set for its
+# glibc floor but imports Elixir/OTP definitions from a newer immutable pin.
 #
 # Provides:
 #   NIXPKGS_PIN_URL / NIXPKGS_PIN_SHA256

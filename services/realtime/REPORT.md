@@ -140,9 +140,12 @@ artifact builder unchanged):
 
 - NIF inventory (fast-fail check): only OTP-standard NIFs (crypto, asn1,
   runtime_tools) — no app-level native code, so a plain `mixRelease` works.
-- `mixRelease` (Elixir 1.18.4 / OTP 27.3.4.6 from pinned nixpkgs 25.05,
-  matching the Docker builder's 1.18/27.3) with ERTS included; deps pinned by
-  a fixed-output `fetchMixDeps` hash.
+- `mixRelease` with ERTS included; the Elixir minor and OTP major are derived
+  from the checked-out upstream Dockerfile. Their source definitions come
+  from a newer immutable nixpkgs revision while dependencies stay on the
+  shared package set and its established glibc floor. For v2.123.5 that
+  selects Elixir 1.19.5 and OTP 28.5.0.5 (upstream pins OTP 28.5.0.4).
+  Dependencies remain pinned by a fixed-output `fetchMixDeps` hash.
 - Portable packaging in the derivation: every Nix-store dylib the release
   references (openssl for the crypto NIF, ncurses/zlib/libc++ for ERTS) is
   bundled into `dylib/`, install names rewritten to `@rpath` with
