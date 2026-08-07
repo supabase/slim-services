@@ -73,7 +73,7 @@ override because its exact release tag is unavailable on Docker Hub.
 | PostgREST | `v14.16` | `145.9 MiB` | `23.9 MiB` | `83.6%` | `102.5 MiB` | `0.07%` | [release](https://github.com/supabase/slim-services/releases/tag/postgrest-v14.16) · [report](services/postgrest/REPORT.md) |
 | Auth | `v2.195.0` | `26.0 MiB` | `11.5 MiB` | `55.7%` | `9.0 MiB` | `0.01%` | [release](https://github.com/supabase/slim-services/releases/tag/auth-v2.195.0) · [report](services/auth/REPORT.md) |
 | Realtime | `v2.124.2` | `116.5 MiB` | `27.0 MiB` | `76.8%` | `177.8 MiB` | `0.19%` | [release](https://github.com/supabase/slim-services/releases/tag/realtime-v2.124.2) · [report](services/realtime/REPORT.md) |
-| Storage | `v1.68.9` | `223.3 MiB` | `51.0 MiB` | `77.2%` | `219.6 MiB` | `0.02%` | [release](https://github.com/supabase/slim-services/releases/tag/storage-v1.68.9) · [report](services/storage/REPORT.md) |
+| Storage | `v1.68.10` | `223.3 MiB` | `51.0 MiB` | `77.2%` | `218.5 MiB` | `0.02%` | [release](https://github.com/supabase/slim-services/releases/tag/storage-v1.68.10) · [report](services/storage/REPORT.md) |
 | Edge Runtime | `v1.74.3` (no-AI) | `360.6 MiB` | `52.7 MiB` | `85.4%` | `18.1 MiB` | `0.01%` | [release](https://github.com/supabase/slim-services/releases/tag/edge-runtime-v1.74.3) · [report](services/edge-runtime/REPORT.md) |
 | Studio | `2026.08.03-sha-022b374` | `306.5 MiB` | `125.5 MiB` | `59.0%` | `194.3 MiB` | `0.00%` | [release](https://github.com/supabase/slim-services/releases/tag/studio-2026.08.03-sha-022b374) · [report](services/studio/REPORT.md) |
 | Analytics | `v1.50.1` | `261.1 MiB` | `58.5 MiB` | `77.6%` | `505.9 MiB` | `0.30%` | [release](https://github.com/supabase/slim-services/releases/tag/analytics-v1.50.1) · [report](services/analytics/REPORT.md) |
@@ -123,7 +123,7 @@ macOS archives require macOS 14+. The manifest records the exact floor as
 | PostgREST | `v14.16` | `13.1 MiB` | `84.8 MiB` | `44.8 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/postgrest-v14.16) · [report](services/postgrest/REPORT.md) |
 | Auth | `v2.195.0` | `9.5 MiB` | `33.8 MiB` | `29.8 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/auth-v2.195.0) · [report](services/auth/REPORT.md) |
 | Realtime | `v2.124.2` | `11.7 MiB` | `47.7 MiB` | `216.5 MiB` | `0.43%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/realtime-v2.124.2) · [report](services/realtime/REPORT.md) |
-| Storage | `v1.68.9` | `36.1 MiB` | `143.6 MiB` | `289.0 MiB` | `0.03%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/storage-v1.68.9) · [report](services/storage/REPORT.md) |
+| Storage | `v1.68.10` | `36.1 MiB` | `143.6 MiB` | `292.8 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/storage-v1.68.10) · [report](services/storage/REPORT.md) |
 | Edge Runtime | `v1.74.3` | `39.9 MiB` | `161.4 MiB` | `56.8 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/edge-runtime-v1.74.3) · [report](services/edge-runtime/REPORT.md) |
 | Studio | `2026.08.03-sha-022b374` | `75.1 MiB` | `453.3 MiB` | `303.4 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/studio-2026.08.03-sha-022b374) · [report](services/studio/REPORT.md) |
 | Analytics | `v1.50.1` | `33.4 MiB` | `140.5 MiB` | `479.2 MiB` | `0.37%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/analytics-v1.50.1) · [report](services/analytics/REPORT.md) |
