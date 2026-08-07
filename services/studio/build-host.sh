@@ -22,6 +22,18 @@ require_cmd git
 require_cmd tar
 require_cmd python3
 
+studio_build_started_at=$SECONDS
+studio_phase=""
+studio_phase_started_at=0
+studio_phase_start() {
+  studio_phase="$1"
+  studio_phase_started_at=$SECONDS
+  log "Studio phase started: $studio_phase"
+}
+studio_phase_complete() {
+  log "Studio phase completed: $studio_phase ($((SECONDS - studio_phase_started_at))s)"
+}
+
 studio_dir="$SOURCE_DIR/apps/studio"
 node_major="$(upstream_node_major "$studio_dir" "$SOURCE_DIR")"
 node_attribute="nodejs_${node_major}"
@@ -46,6 +58,7 @@ print(version)
 PY
 )"
 
+studio_phase_start "resolve build toolchain"
 log "resolving $node_attribute from pinned nixpkgs"
 node_store="$(nixpkgs_build_attr "$node_attribute")"
 export PATH="$node_store/bin:$PATH"
@@ -66,7 +79,9 @@ export NPM_CONFIG_PREFIX="$tool_prefix"
 npm install -g --no-audit --no-fund "pnpm@${pnpm_version}"
 export PATH="$tool_prefix/bin:$PATH"
 log "using $(node --version) / pnpm $(pnpm --version) / Studio $studio_framework"
+studio_phase_complete
 
+studio_phase_start "prune Studio workspace"
 git -C "$SOURCE_DIR" archive HEAD | tar -C "$workdir" -xf -
 
 cd "$workdir"
@@ -77,20 +92,34 @@ cp "$workdir/out/pnpm-lock.yaml" "$build_dir/pnpm-lock.yaml"
 if [[ -d "$workdir/patches" ]]; then
   cp -R "$workdir/patches" "$build_dir/patches"
 fi
+studio_phase_complete
 
+studio_phase_start "install pruned dependencies"
 cd "$build_dir"
 pnpm install --frozen-lockfile
 cp -R "$workdir/out/full"/. "$build_dir/"
+studio_phase_complete
 
 mkdir -p "$ROOTFS/app/apps/studio" "$ROOTFS/bin"
 if [[ "$studio_framework" == "next" ]]; then
-  pnpm --filter studio exec next build
+  studio_phase_start "build Studio with Next.js"
+  # Next.js telemetry is not part of the artifact build and a stalled
+  # telemetry request can keep `next build` alive after compilation ends.
+  NEXT_TELEMETRY_DISABLED=1 pnpm --filter studio exec next build
+  studio_phase_complete
+
+  studio_phase_start "assemble Next.js runtime tree"
   cp -R apps/studio/.next/standalone/. "$ROOTFS/app/"
   mkdir -p "$ROOTFS/app/apps/studio/.next"
   cp -R apps/studio/.next/static "$ROOTFS/app/apps/studio/.next/static"
   cp -R apps/studio/public "$ROOTFS/app/apps/studio/public"
+  studio_phase_complete
 else
+  studio_phase_start "build Studio with TanStack Start"
   NODE_OPTIONS=--max-old-space-size=4096 pnpm --filter studio run build:tanstack
+  studio_phase_complete
+
+  studio_phase_start "assemble TanStack Start runtime tree"
   deploy_dir="$(mktemp -d "${TMPDIR:-/tmp}/studio-deploy.XXXXXX")"
   pnpm --filter studio deploy --prod --legacy --ignore-scripts "$deploy_dir"
   find "$deploy_dir" -mindepth 1 -maxdepth 1 \
@@ -104,6 +133,7 @@ else
     cd "$ROOTFS/app/apps/studio"
     node scripts/smoke-server.mjs
   )
+  studio_phase_complete
 fi
 
 cp "$ROOT_DIR/services/studio/overlay/docker-entrypoint.mjs" \
@@ -111,6 +141,7 @@ cp "$ROOT_DIR/services/studio/overlay/docker-entrypoint.mjs" \
 
 # Packages such as the Sentry profiler can carry every platform prebuild in a
 # single npm package. Keep only this artifact's platform and architecture.
+studio_phase_start "trim target-specific native dependencies"
 node_arch="x64"
 [[ "$ARCH" == "arm64" ]] && node_arch="arm64"
 find "$ROOTFS/app" -type f -name 'sentry_cpu_profiler-*.node' \
@@ -118,7 +149,9 @@ find "$ROOTFS/app" -type f -name 'sentry_cpu_profiler-*.node' \
 find "$ROOTFS/app" -type f -name '*-musl-*.node' -print0 | xargs -0r rm -f
 find "$ROOTFS/app" -type d -path '*/build/Release/obj.target' -prune -print0 | xargs -0r rm -rf
 find "$ROOTFS/app" -type f \( -name '*.o' -o -name '*.o.d' \) -print0 | xargs -0r rm -f
+studio_phase_complete
 
+studio_phase_start "bundle portable Node.js runtime"
 log "bundling portable node runtime (nix/portable-node)"
 export SLIM_NODE_MAJOR="$node_major"
 node_bundle="$(nixpkgs_build_file "$ROOT_DIR/nix/portable-node/default.nix")"
@@ -137,7 +170,9 @@ if [[ "$TARGET_OS" == "darwin" ]]; then
     fi
   done
 fi
+studio_phase_complete
 
+studio_phase_start "write Studio launcher"
 cat > "$ROOTFS/bin/studio" <<'WRAPPER'
 #!/bin/sh
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -157,3 +192,5 @@ exec "$NODE_BIN" apps/studio/docker-entrypoint.mjs \
   "$NODE_BIN" apps/studio/server.js "$@"
 WRAPPER
 chmod 0755 "$ROOTFS/bin/studio"
+studio_phase_complete
+log "Studio host build completed ($((SECONDS - studio_build_started_at))s total)"
