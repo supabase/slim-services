@@ -21,9 +21,13 @@ source "$ROOT_DIR/scripts/nixpkgs-pin.sh"
 
 require_cmd tar
 
-# Latest Node LTS, same major as the bundled runtime (nix/portable-node).
-log "resolving nodejs_24 from pinned nixpkgs"
-node_store="$(nixpkgs_build_attr nodejs_24)"
+# Match the upstream production Dockerfile and .nvmrc. The same major is
+# passed to nix/portable-node below so build-time native modules and the
+# shipped runtime cannot silently diverge.
+node_major="$(upstream_node_major "$SOURCE_DIR")"
+node_attribute="nodejs_${node_major}"
+log "resolving $node_attribute from pinned nixpkgs"
+node_store="$(nixpkgs_build_attr "$node_attribute")"
 export PATH="$node_store/bin:$PATH"
 log "using $(node --version) / npm $(npm --version)"
 
@@ -65,6 +69,7 @@ cp -R dist "$ROOTFS/app/dist"
 cp -R node_modules "$ROOTFS/app/node_modules"
 
 log "bundling portable node runtime (nix/portable-node)"
+export SLIM_NODE_MAJOR="$node_major"
 node_bundle="$(nixpkgs_build_file "$ROOT_DIR/nix/portable-node/default.nix")"
 mkdir -p "$ROOTFS/node"
 cp -R "$node_bundle"/. "$ROOTFS/node/"

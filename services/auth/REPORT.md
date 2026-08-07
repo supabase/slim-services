@@ -90,9 +90,10 @@ migrations intact. No separate phase 2 optimization is worth carrying for now.
 ## Host-Native darwin-arm64 Artifact (2026-07)
 
 Auth is the first service on the host-native contract (HOST_NATIVE_PLAN.md):
-`services/auth/build-host.sh` cross-compiles the pinned submodule with the
-host Go toolchain (`CGO_ENABLED=0 GOOS=darwin GOARCH=arm64`, same flags as
-`Dockerfile.artifact`) — no Docker in the build or smoke path for the service.
+`services/auth/build-host.sh` cross-compiles the pinned submodule with the Go
+version declared by upstream `go.mod` (`CGO_ENABLED=0 GOOS=darwin
+GOARCH=arm64`, same flags as upstream) — no Docker in the build or smoke path
+for the service.
 
 - Layout: `rootfs/bin/auth` + `bin/gotrue` symlink. No CA bundle (Go uses the
   macOS system trust store) and no `migrations/` directory (embedded via

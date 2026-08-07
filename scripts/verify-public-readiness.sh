@@ -73,6 +73,7 @@ required_files=(
   scripts/test-actions-pinned.sh
   scripts/test-license-compliance.sh
   scripts/test-publish-repository.sh
+  scripts/test-upstream-runtime.sh
 )
 for path in "${required_files[@]}"; do
   [[ -f "$ROOT_DIR/$path" ]] || {
@@ -84,6 +85,7 @@ done
 "$ROOT_DIR/scripts/check-actions-pinned.sh"
 "$ROOT_DIR/scripts/test-actions-pinned.sh"
 "$ROOT_DIR/scripts/test-license-compliance.sh"
+"$ROOT_DIR/scripts/test-upstream-runtime.sh"
 
 command -v gitleaks >/dev/null || {
   echo "gitleaks is required for the public-readiness gate" >&2

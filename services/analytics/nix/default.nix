@@ -14,23 +14,24 @@
 # - config/prod.exs sets cache_static_manifest; the asset pipeline (npm/
 #   esbuild) is skipped like realtime's, so a stub cache_manifest.json is
 #   installed to keep endpoint boot happy (UI assets 404, API unaffected).
-# - Pins: everything builds from the shared 25.05 pin so shipped binaries
-#   link the same glibc floor as the other services (the distroless
-#   base-debian13 runtime has glibc 2.41; nixos-unstable's 2.42 symbols broke
-#   the derived image). Only the Rust toolchain comes from the unstable pin —
-#   the rustler 0.37 crates require rustc >= 1.91 and 25.05 ships 1.86;
-#   rustc's output is linked by the 25.05 stdenv cc, so the glibc floor is
-#   unaffected. Elixir is 1.18.4 (Docker builder uses 1.19.5; mix.exs allows
-#   `~> 1.4`).
+# - Pins: shipped binaries build with the shared package set so they retain the
+#   established glibc floor. Elixir, OTP, and Rust versions are derived from
+#   the checked-out upstream Dockerfile. Versioned BEAM definitions and the
+#   Rust binary manifest come from separate immutable source pins, while the
+#   shared stdenv remains responsible for linking the output.
 {
   pkgs ? import (fetchTarball {
     url = "https://github.com/NixOS/nixpkgs/archive/ac62194c3917d5f474c1a844b6fd6da2db95077d.tar.gz";
     sha256 = "0v6bd1xk8a2aal83karlvc853x44dg1n4nk08jg3dajqyy0s98np";
   }) { },
-  pkgsRust ? import (fetchTarball {
-    url = "https://github.com/NixOS/nixpkgs/archive/d407951447dcd00442e97087bf374aad70c04cea.tar.gz";
-    sha256 = "1jgfnvi57n79zsfljh2i4b77yj6wh028z4r3wf223am8wznzqbzj";
-  }) { },
+  runtimeNixpkgsSrc ? fetchTarball {
+    url = "https://github.com/NixOS/nixpkgs/archive/b7c2ada94fe99c15b0dbcf4d11fd7850b957a436.tar.gz";
+    sha256 = "1hw875y585lkhygn09kcbmdgm58b0nb5k0d38qwlvfngprsnp2r0";
+  },
+  rustOverlaySrc ? fetchTarball {
+    url = "https://github.com/oxalica/rust-overlay/archive/57a23bfaf4f7017267294b161175db1e32eb1c85.tar.gz";
+    sha256 = "1fq4csyi5rsn1k1krz2hzp2sdwrbkkrwji6lsskj5b1f3hx7mx4d";
+  },
   serviceVersion ? null,
   mixDepsHash ? null,
   explorerNifHash ? null,
@@ -38,11 +39,59 @@
 }:
 let
   lib = pkgs.lib;
+  upstreamDockerfile = builtins.readFile ../Dockerfile;
+  upstreamDockerfileLines = lib.splitString "\n" upstreamDockerfile;
+  upstreamDockerArg = name:
+    let
+      prefix = "ARG ${name}=";
+      line = lib.findFirst
+        (candidate: lib.hasPrefix prefix candidate)
+        (throw "upstream Analytics Dockerfile does not declare ${prefix}<version>")
+        upstreamDockerfileLines;
+    in
+    lib.removePrefix prefix line;
+  upstreamElixirVersion = upstreamDockerArg "ELIXIR_VERSION";
+  upstreamOtpVersion = upstreamDockerArg "OTP_VERSION";
+  upstreamRustVersion = upstreamDockerArg "RUST_VERSION";
+  elixirGeneration = lib.concatStringsSep "."
+    (lib.take 2 (lib.splitVersion upstreamElixirVersion));
+  otpGeneration = lib.head (lib.splitVersion upstreamOtpVersion);
+  runtimeDefinitions = "${runtimeNixpkgsSrc}/pkgs/development/interpreters";
+  erlangDefinition = "${runtimeDefinitions}/erlang/${otpGeneration}.nix";
+  elixirDefinition = "${runtimeDefinitions}/elixir/${elixirGeneration}.nix";
+  erlang =
+    if builtins.pathExists erlangDefinition then
+      let
+        genericBuilder = versionArgs:
+          import "${runtimeDefinitions}/erlang/generic-builder.nix" (versionArgs // {
+            systemdSupport = false;
+            wxSupport = pkgs.stdenv.isDarwin;
+          });
+      in
+      pkgs.callPackage (import erlangDefinition genericBuilder) {
+        libx11 = pkgs.xorg.libX11;
+        unixodbc = pkgs.unixODBC;
+        wxwidgets_3_2 = pkgs.wxGTK32;
+      }
+    else
+      throw "runtime definitions do not provide OTP ${otpGeneration} required by Analytics' upstream Dockerfile";
   derivedHashesRaw = builtins.getEnv "SLIM_NIX_DERIVED_HASHES";
   derivedHashes =
     if derivedHashesRaw == "" then { } else builtins.fromJSON derivedHashesRaw;
-  beamPackages = pkgs.beam.packagesWith pkgs.beam.interpreters.erlang_27;
-  elixir = beamPackages.elixir_1_18;
+  beamPackages = pkgs.beam.packagesWith erlang;
+  elixir =
+    if builtins.pathExists elixirDefinition then
+      beamPackages.callPackage elixirDefinition {
+        inherit erlang;
+        debugInfo = true;
+      }
+    else
+      throw "runtime definitions do not provide Elixir ${elixirGeneration} required by Analytics' upstream Dockerfile";
+  rustPackages = pkgs.extend (import rustOverlaySrc);
+  rustToolchain = lib.attrByPath
+    [ "rust-bin" "stable" upstreamRustVersion "minimal" ]
+    (throw "Rust overlay does not provide ${upstreamRustVersion} required by Analytics' upstream Dockerfile")
+    rustPackages;
   fetchMixDeps = beamPackages.fetchMixDeps.override { inherit elixir; };
   mixRelease = beamPackages.mixRelease.override { inherit elixir fetchMixDeps; };
 
@@ -88,8 +137,14 @@ let
   explorerVersion = lockedHexVersion "explorer";
   sqlFmtVersion = lockedHexVersion "sql_fmt";
 
-  # Pinned rustler_precompiled artifacts per target (NIF 2.15, the variant
-  # resolved under OTP 27).
+  # These two dependencies currently publish the NIF 2.15 variant selected by
+  # rustler_precompiled under OTP 27. Fail closed on an OTP-generation change
+  # until the upstream lock's available NIF variants are explicitly audited.
+  rustlerNifVersion =
+    if otpGeneration == "27" then
+      "2.15"
+    else
+      throw "Analytics precompiled NIF selection is not audited for OTP ${otpGeneration}";
   rustlerTarget = {
     "aarch64-darwin" = "aarch64-apple-darwin";
     "aarch64-linux" = "aarch64-unknown-linux-gnu";
@@ -97,8 +152,8 @@ let
   }.${pkgs.stdenv.hostPlatform.system}
     or (throw "no rustler_precompiled pin for ${pkgs.stdenv.hostPlatform.system}");
 
-  explorerNifName = "libexplorer-v${explorerVersion}-nif-2.15-${rustlerTarget}.so.tar.gz";
-  sqlFmtNifName = "libsql_fmt_nif-v${sqlFmtVersion}-nif-2.15-${rustlerTarget}.so.tar.gz";
+  explorerNifName = "libexplorer-v${explorerVersion}-nif-${rustlerNifVersion}-${rustlerTarget}.so.tar.gz";
+  sqlFmtNifName = "libsql_fmt_nif-v${sqlFmtVersion}-nif-${rustlerNifVersion}-${rustlerTarget}.so.tar.gz";
 
   explorerNif = pkgs.fetchurl {
     url = "https://github.com/elixir-explorer/explorer/releases/download/v${explorerVersion}/${explorerNifName}";
@@ -134,8 +189,7 @@ let
     mixFodDeps = mixDeps;
 
     nativeBuildInputs = [
-      pkgsRust.cargo
-      pkgsRust.rustc
+      rustToolchain
     ];
 
     preConfigure = ''

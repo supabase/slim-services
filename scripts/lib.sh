@@ -29,6 +29,96 @@ require_cmd() {
   command -v "$1" >/dev/null 2>&1 || fail "required command not found: $1"
 }
 
+# Resolve the Node major used by an upstream production Dockerfile and verify
+# that any additional upstream declarations are compatible with it. Docker is
+# authoritative because it defines the environment used to build the published
+# service image; .nvmrc and package.json are consistency checks.
+upstream_node_major() {
+  local source_dir="$1"
+  require_cmd python3
+  python3 - "$source_dir" <<'PY'
+import json
+import pathlib
+import re
+import sys
+
+source = pathlib.Path(sys.argv[1])
+dockerfile = source / "Dockerfile"
+if not dockerfile.is_file():
+    raise SystemExit(f"upstream Dockerfile not found: {dockerfile}")
+
+docker_text = dockerfile.read_text(encoding="utf-8")
+args = {}
+for line in docker_text.splitlines():
+    match = re.match(r"\s*ARG\s+([A-Za-z_][A-Za-z0-9_]*)=(?:\"([^\"]+)\"|'([^']+)'|([^\s#]+))", line)
+    if match:
+        args[match.group(1)] = next(value for value in match.groups()[1:] if value is not None)
+
+majors = set()
+for line in docker_text.splitlines():
+    match = re.match(r"\s*FROM\s+node:([^\s]+)", line, re.IGNORECASE)
+    if not match:
+        continue
+    image_tag = match.group(1)
+    for name, value in args.items():
+        image_tag = image_tag.replace(f"${{{name}}}", value).replace(f"${name}", value)
+    version = re.match(r"v?(\d+)(?:[.\-@]|$)", image_tag)
+    if not version:
+        raise SystemExit(f"cannot resolve Node major from upstream Docker tag: node:{image_tag}")
+    majors.add(int(version.group(1)))
+
+if len(majors) != 1:
+    rendered = ", ".join(str(value) for value in sorted(majors)) or "none"
+    raise SystemExit(f"upstream Dockerfile must use exactly one Node major; found: {rendered}")
+major = majors.pop()
+
+nvmrc = source / ".nvmrc"
+if nvmrc.is_file():
+    match = re.fullmatch(r"\s*v?(\d+)(?:\.\d+(?:\.\d+)?)?\s*", nvmrc.read_text(encoding="utf-8"))
+    if not match:
+        raise SystemExit(f"cannot parse upstream Node version from {nvmrc}")
+    nvm_major = int(match.group(1))
+    if nvm_major != major:
+        raise SystemExit(f"upstream Node declarations disagree: Dockerfile={major}, .nvmrc={nvm_major}")
+
+package_json = source / "package.json"
+if package_json.is_file():
+    package = json.loads(package_json.read_text(encoding="utf-8"))
+    engine = package.get("engines", {}).get("node")
+    if engine:
+        versions = [int(value) for value in re.findall(r"(?<![.\d])(\d+)(?:\.\d+){0,2}", engine)]
+        if versions and major < min(versions):
+            raise SystemExit(
+                f"upstream Docker Node {major} does not satisfy package.json engines.node={engine}"
+            )
+
+print(major)
+PY
+}
+
+upstream_package_manager_version() {
+  local source_dir="$1"
+  local manager="$2"
+  require_cmd python3
+  python3 - "$source_dir/package.json" "$manager" <<'PY'
+import json
+import pathlib
+import re
+import sys
+
+package_path = pathlib.Path(sys.argv[1])
+manager = sys.argv[2]
+if not package_path.is_file():
+    raise SystemExit(f"upstream package.json not found: {package_path}")
+package = json.loads(package_path.read_text(encoding="utf-8"))
+declaration = package.get("packageManager", "")
+match = re.fullmatch(re.escape(manager) + r"@([^+\s]+)(?:\+.*)?", declaration)
+if not match:
+    raise SystemExit(f"upstream package.json must declare an exact packageManager for {manager}")
+print(match.group(1))
+PY
+}
+
 is_service() {
   local service="$1"
   local known

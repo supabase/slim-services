@@ -27,9 +27,12 @@ require_cmd python3
 ROLLDOWN_VERSION="${ROLLDOWN_VERSION:-1.0.0-rc.17}"
 ROLLDOWN_MINIFY="${ROLLDOWN_MINIFY:-1}"
 
-# Same Node major as the Docker builder (node:24).
-log "resolving nodejs_24 from pinned nixpkgs"
-node_store="$(nixpkgs_build_attr nodejs_24)"
+# Match the upstream production Dockerfile. The same major is passed to
+# nix/portable-node below so fs-xattr is built and run with one Node ABI.
+node_major="$(upstream_node_major "$SOURCE_DIR")"
+node_attribute="nodejs_${node_major}"
+log "resolving $node_attribute from pinned nixpkgs"
+node_store="$(nixpkgs_build_attr "$node_attribute")"
 export PATH="$node_store/bin:$PATH"
 log "using $(node --version) / npm $(npm --version)"
 
@@ -38,10 +41,9 @@ trap 'rm -rf "$workdir"' EXIT
 
 git -C "$SOURCE_DIR" archive HEAD | tar -C "$workdir/" -xf -
 
-# rolldown and a newer npm go into a temporary prefix instead of a global
-# install (upstream's engines pin wants npm >= 11.12.1; nixpkgs node 24
-# ships an older one).
-NPM_VERSION="${NPM_VERSION:-11.12.1}"
+# rolldown and upstream's exact packageManager npm go into a temporary prefix
+# instead of a global install (the pinned Nix Node can ship an older npm).
+NPM_VERSION="${NPM_VERSION:-$(upstream_package_manager_version "$SOURCE_DIR" npm)}"
 export NPM_CONFIG_PREFIX="$workdir/.npm-global"
 mkdir -p "$NPM_CONFIG_PREFIX"
 npm install -g --no-audit --no-fund "npm@${NPM_VERSION}" "rolldown@${ROLLDOWN_VERSION}"
@@ -83,6 +85,7 @@ cp -R dist-bundle/node_modules "$ROOTFS/app/node_modules"
 cp -R migrations "$ROOTFS/app/migrations"
 
 log "bundling portable node runtime (nix/portable-node)"
+export SLIM_NODE_MAJOR="$node_major"
 node_bundle="$(nixpkgs_build_file "$ROOT_DIR/nix/portable-node/default.nix")"
 mkdir -p "$ROOTFS/node"
 cp -R "$node_bundle"/. "$ROOTFS/node/"

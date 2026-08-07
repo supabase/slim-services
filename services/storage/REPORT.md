@@ -125,9 +125,10 @@ shared Node runtime**. The artifact stays a rolldown JS bundle; a thin
 `runtime_requires: node>=20` so the CLI can verify before running.
 
 - `services/storage/build-host.sh` mirrors `Dockerfile.artifact.rolldown` on
-  the host: npm ci + upstream build + rolldown bundle (pinned npm 11.12.1
-  for upstream's engines check; node 24 from pinned nixpkgs = the Docker
-  runtime major). The one native module, `fs-xattr`, compiles for darwin
+  the host: npm ci + upstream build + rolldown bundle. It derives Node from
+  the upstream production Dockerfile and npm from upstream's exact
+  `packageManager`, then uses the same pinned-Nix Node for the build and
+  portable bundle. The one native module, `fs-xattr`, compiles for darwin
   during npm ci. Sharp is not a dependency at v1.62.6 (image transformation
   is imgproxy-based and off in the local profile).
 - Smoke (host process, `runtime.env` applied): `/status` 200 plus the full

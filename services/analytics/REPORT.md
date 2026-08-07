@@ -121,11 +121,11 @@ The hardest BEAM clone (see `services/realtime/REPORT.md` for the shared
 portable-BEAM packaging). Built by `services/analytics/nix/default.nix`.
 Logflare-specific packaging:
 
-- Pins: everything from the shared 25.05 pin (Elixir 1.18.4 / OTP 27.3.4.6;
-  mix.exs allows `~> 1.4` — the Docker builder uses 1.19.5) so shipped
-  binaries keep the same glibc floor as the other services on Linux; only
-  the Rust toolchain (rustc 1.95) comes from a nixos-unstable pin because
-  the rustler 0.37 crates require rustc >= 1.91.
+- The checked-out upstream Dockerfile selects the Elixir, OTP, and Rust
+  versions. Versioned BEAM definitions and the exact Rust binary toolchain
+  come from immutable source pins, while builds retain the shared package set
+  and its established Linux compatibility floor. Unsupported generations fail
+  explicitly instead of silently compiling with a stale runtime.
 - Four in-tree rustler NIFs (`arrowipc_ex`, `ch_compression_ex`, `mapper_ex`,
   `sqlparser_ex`) are members of one cargo workspace rooted at the repo top
   level; deps are vendored once via `importCargoLock` from the workspace
@@ -159,9 +159,9 @@ image derived via `Dockerfile.slim` (`entry.sh`: migrate → `start --sname
 logflare`, replacing upstream run.sh minus its cloud secrets/startup hooks).
 Pin correction: shipped libraries must match the runtime glibc floor —
 nixos-unstable's glibc 2.42 symbols broke the distroless (2.41) image, so
-everything builds from the shared 25.05 pin (Elixir 1.18.4; mix.exs allows
-`~> 1.4`) with only the Rust toolchain from unstable (rustler 0.37 needs
-rustc ≥ 1.91). rustler_precompiled NIF tarballs are pinned per target
+linking still uses the shared package set. Only version definitions/toolchain
+binaries follow upstream's Dockerfile pins. rustler_precompiled NIF tarballs
+are pinned per target
 (darwin-arm64, linux-arm64, linux-amd64). linux-arm64 verified: derived
 image smoke green — RSS 479.7 MiB (was 546.7) and 58.4 MiB gzip (was 89.7,
 no npm assets + tighter pruning). disksup disabled via `vm.args`.
