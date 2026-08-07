@@ -22,6 +22,15 @@ printf '%s\n' '{"engines":{"node":">=24.0.0"},"packageManager":"npm@11.12.1"}' >
 [[ "$(upstream_node_major "$argument")" == "24" ]]
 [[ "$(upstream_package_manager_version "$argument" npm)" == "11.12.1" ]]
 
+split_docker="$test_dir/split-docker"
+split_metadata="$test_dir/split-metadata"
+mkdir -p "$split_docker" "$split_metadata"
+printf '%s\n' 'ARG STUDIO_FRAMEWORK=next' 'FROM node:22-slim' > "$split_docker/Dockerfile"
+printf '%s\n' '{"engines":{"node":">=22.13"},"packageManager":"pnpm@11.13.1"}' > "$split_metadata/package.json"
+[[ "$(upstream_node_major "$split_docker" "$split_metadata")" == "22" ]]
+[[ "$(upstream_docker_arg "$split_docker" STUDIO_FRAMEWORK)" == "next" ]]
+[[ "$(upstream_package_manager_version "$split_metadata" pnpm)" == "11.13.1" ]]
+
 conflict="$test_dir/conflict"
 cp -R "$literal" "$conflict"
 printf '%s\n' 'v20' > "$conflict/.nvmrc"

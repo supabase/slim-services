@@ -217,7 +217,7 @@ manifest = {
     "entrypoint": json.loads("""$ENTRYPOINT_JSON"""),
     "cmd": json.loads("""$CMD_JSON"""),
     "build_mode": "$build_mode",
-    "artifact_dockerfile": "$artifact_dockerfile",
+    "artifact_dockerfile": "$artifact_dockerfile" if "$use_host_build" != "1" else None,
     "portable": "$portable" == "true",
     "assumed_host_libs": json.loads("""$assumed_host_libs_json"""),
     "runtime_requires": "${RUNTIME_REQUIRES:-}" or None,

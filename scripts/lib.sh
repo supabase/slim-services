@@ -35,14 +35,16 @@ require_cmd() {
 # service image; .nvmrc and package.json are consistency checks.
 upstream_node_major() {
   local source_dir="$1"
+  local metadata_dir="${2:-$source_dir}"
   require_cmd python3
-  python3 - "$source_dir" <<'PY'
+  python3 - "$source_dir" "$metadata_dir" <<'PY'
 import json
 import pathlib
 import re
 import sys
 
 source = pathlib.Path(sys.argv[1])
+metadata = pathlib.Path(sys.argv[2])
 dockerfile = source / "Dockerfile"
 if not dockerfile.is_file():
     raise SystemExit(f"upstream Dockerfile not found: {dockerfile}")
@@ -72,7 +74,7 @@ if len(majors) != 1:
     raise SystemExit(f"upstream Dockerfile must use exactly one Node major; found: {rendered}")
 major = majors.pop()
 
-nvmrc = source / ".nvmrc"
+nvmrc = metadata / ".nvmrc"
 if nvmrc.is_file():
     match = re.fullmatch(r"\s*v?(\d+)(?:\.\d+(?:\.\d+)?)?\s*", nvmrc.read_text(encoding="utf-8"))
     if not match:
@@ -81,7 +83,7 @@ if nvmrc.is_file():
     if nvm_major != major:
         raise SystemExit(f"upstream Node declarations disagree: Dockerfile={major}, .nvmrc={nvm_major}")
 
-package_json = source / "package.json"
+package_json = metadata / "package.json"
 if package_json.is_file():
     package = json.loads(package_json.read_text(encoding="utf-8"))
     engine = package.get("engines", {}).get("node")
@@ -93,6 +95,37 @@ if package_json.is_file():
             )
 
 print(major)
+PY
+}
+
+upstream_docker_arg() {
+  local source_dir="$1"
+  local argument="$2"
+  require_cmd python3
+  python3 - "$source_dir/Dockerfile" "$argument" <<'PY'
+import pathlib
+import re
+import sys
+
+dockerfile = pathlib.Path(sys.argv[1])
+argument = sys.argv[2]
+if not dockerfile.is_file():
+    raise SystemExit(f"upstream Dockerfile not found: {dockerfile}")
+
+pattern = re.compile(
+    rf"\s*ARG\s+{re.escape(argument)}=(?:\"([^\"]+)\"|'([^']+)'|([^\s#]+))"
+)
+values = []
+for line in dockerfile.read_text(encoding="utf-8").splitlines():
+    match = pattern.fullmatch(line)
+    if match:
+        values.append(next(value for value in match.groups() if value is not None))
+
+if len(values) != 1:
+    raise SystemExit(
+        f"upstream Dockerfile must declare exactly one ARG {argument}=<value>; found {len(values)}"
+    )
+print(values[0])
 PY
 }
 

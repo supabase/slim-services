@@ -16,10 +16,11 @@ run-name: Release ${{ inputs.service }} ${{ inputs.version }}
           - analytics
           - storage
           - edge-runtime
+          - studio
           - pgmeta
           - postgres
       version:
-        description: Published stable upstream release tag.
+        description: Published stable upstream release or image tag.
         required: true
         type: string
       force:
@@ -60,6 +61,7 @@ jobs:
       matrix: ${{ steps.plan.outputs.matrix }}
       publish: ${{ steps.plan.outputs.publish }}
       release_tag: ${{ steps.plan.outputs.release_tag }}
+      source_ref: ${{ steps.plan.outputs.source_ref }}
       upstream_asset_sha256: ${{ steps.plan.outputs.upstream_asset_sha256 }}
       upstream_asset_url: ${{ steps.plan.outputs.upstream_asset_url }}
     steps:
@@ -67,6 +69,10 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - name: Set up Docker Buildx for image release validation
+        if: inputs.service == 'studio'
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
       - name: Validate inputs and check existing release
         id: plan
@@ -80,7 +86,7 @@ jobs:
           set -euo pipefail
 
           case "$SERVICE" in
-            auth|postgrest|realtime|pooler|analytics|storage|edge-runtime|pgmeta|postgres) ;;
+            auth|postgrest|realtime|pooler|analytics|storage|edge-runtime|studio|pgmeta|postgres) ;;
             *)
               printf 'unsupported release service: %s\n' "$SERVICE" >&2
               exit 1
@@ -98,10 +104,16 @@ jobs:
           config = services.get(service)
           if config is None:
               raise SystemExit(f"release policy not found for {service}")
-          print(config["repository"], config["tag_pattern"], sep="\t")
+          print(
+              config["repository"],
+              config["tag_pattern"],
+              config.get("release_source", "github"),
+              config.get("image_repository", "-"),
+              sep="\t",
+          )
           PY
           )"
-          IFS=$'\t' read -r upstream_repository tag_pattern <<< "$config_line"
+          IFS=$'\t' read -r upstream_repository tag_pattern release_source upstream_image_repository <<< "$config_line"
 
           if [[ ! "$VERSION" =~ $tag_pattern ]]; then
             printf 'version is not an allowed release tag for %s: %s (expected %s)\n' \
@@ -109,20 +121,65 @@ jobs:
             exit 1
           fi
 
-          if ! upstream_release="$(
-            gh api "repos/$upstream_repository/releases/tags/$VERSION" \
-              --jq '[.tag_name, (.draft | tostring), (.prerelease | tostring)] | @tsv'
-          )"; then
-            printf '%s is not a published upstream release of %s\n' \
-              "$VERSION" "$upstream_repository" >&2
-            exit 1
-          fi
-          IFS=$'\t' read -r upstream_tag upstream_draft upstream_prerelease \
-            <<< "$upstream_release"
-          if [[ "$upstream_tag" != "$VERSION" || "$upstream_draft" != "false" || "$upstream_prerelease" != "false" ]]; then
-            printf '%s must be an exact, stable, published upstream release of %s\n' \
-              "$VERSION" "$upstream_repository" >&2
-            exit 1
+          source_ref="$VERSION"
+          if [[ "$release_source" == "dockerhub" ]]; then
+            upstream_tag="$(
+              curl -fsSL \
+                "https://hub.docker.com/v2/repositories/$upstream_image_repository/tags/$VERSION" \
+                | jq -r .name
+            )" || {
+              printf '%s is not a published Docker Hub tag of %s\n' \
+                "$VERSION" "$upstream_image_repository" >&2
+              exit 1
+            }
+            [[ "$upstream_tag" == "$VERSION" ]] || {
+              printf 'unexpected Docker Hub tag response for %s: %s\n' \
+                "$VERSION" "$upstream_tag" >&2
+              exit 1
+            }
+            short_ref="${VERSION##*-sha-}"
+            provenance="$(
+              docker buildx imagetools inspect \
+                "$upstream_image_repository:$VERSION" \
+                --format '{{json .Provenance}}'
+            )"
+            source_refs="$(
+              jq -r '.. | objects | .sha1? // empty' <<< "$provenance" \
+                | grep -E '^[0-9a-f]{40}$' | sort -u
+            )"
+            [[ "$(wc -l <<< "$source_refs" | tr -d ' ')" == "1" ]] || {
+              printf 'expected one source commit in %s:%s provenance\n' \
+                "$upstream_image_repository" "$VERSION" >&2
+              exit 1
+            }
+            source_ref="$source_refs"
+            [[ "$source_ref" == "$short_ref"* ]] || {
+              printf 'Studio tag commit %s disagrees with provenance %s\n' \
+                "$short_ref" "$source_ref" >&2
+              exit 1
+            }
+            gh api "repos/$upstream_repository/commits/$source_ref" --silent \
+              || {
+                printf 'could not resolve Studio source commit %s in %s\n' \
+                  "$source_ref" "$upstream_repository" >&2
+                exit 1
+              }
+          else
+            if ! upstream_release="$(
+              gh api "repos/$upstream_repository/releases/tags/$VERSION" \
+                --jq '[.tag_name, (.draft | tostring), (.prerelease | tostring)] | @tsv'
+            )"; then
+              printf '%s is not a published upstream release of %s\n' \
+                "$VERSION" "$upstream_repository" >&2
+              exit 1
+            fi
+            IFS=$'\t' read -r upstream_tag upstream_draft upstream_prerelease \
+              <<< "$upstream_release"
+            if [[ "$upstream_tag" != "$VERSION" || "$upstream_draft" != "false" || "$upstream_prerelease" != "false" ]]; then
+              printf '%s must be an exact, stable, published upstream release of %s\n' \
+                "$VERSION" "$upstream_repository" >&2
+              exit 1
+            fi
           fi
 
           upstream_asset_url=""
@@ -164,6 +221,7 @@ jobs:
             printf 'matrix=%s\n' "$matrix"
             printf 'publish=%s\n' "$publish"
             printf 'release_tag=%s\n' "$release_tag"
+            printf 'source_ref=%s\n' "$source_ref"
             printf 'upstream_asset_sha256=%s\n' "$upstream_asset_sha256"
             printf 'upstream_asset_url=%s\n' "$upstream_asset_url"
           } >> "$GITHUB_OUTPUT"
@@ -190,7 +248,7 @@ jobs:
         env:
           ARCH: ${{ matrix.arch }}
           SERVICE: ${{ inputs.service }}
-          SOURCE_REF: ${{ inputs.version }}
+          SOURCE_REF: ${{ needs.plan.outputs.source_ref }}
           TARGET_OS: ${{ matrix.target_os }}
           VERSION: ${{ inputs.version }}
         run: |
@@ -203,11 +261,15 @@ jobs:
           ')"
           git submodule update --init --depth 1 "$source_dir"
 
-          if ! git -C "$source_dir" rev-parse --verify --quiet "$VERSION^{commit}" >/dev/null; then
-            git -C "$source_dir" fetch --force --depth 1 origin \
-              "refs/tags/$VERSION:refs/tags/$VERSION"
+          if ! git -C "$source_dir" rev-parse --verify --quiet "$SOURCE_REF^{commit}" >/dev/null; then
+            if [[ "$SOURCE_REF" =~ ^[0-9a-f]{40}$ ]]; then
+              git -C "$source_dir" fetch --force --depth 1 origin "$SOURCE_REF"
+            else
+              git -C "$source_dir" fetch --force --depth 1 origin \
+                "refs/tags/$SOURCE_REF:refs/tags/$SOURCE_REF"
+            fi
           fi
-          source_sha="$(git -C "$source_dir" rev-parse "$VERSION^{commit}")"
+          source_sha="$(git -C "$source_dir" rev-parse "$SOURCE_REF^{commit}")"
           git -C "$source_dir" checkout --detach "$source_sha"
           [[ -z "$(git -C "$source_dir" status --porcelain)" ]] || {
             printf 'source checkout is dirty: %s\n' "$source_dir" >&2
@@ -251,7 +313,8 @@ jobs:
           OCI_SOURCE: https://github.com/${{ github.repository }}
           OCI_VERSION: ${{ inputs.version }}
           SLIM_SMOKE_HOST_POSTGRES: ${{ matrix.target_os == 'darwin' && '1' || '0' }}
-          SOURCE_REF: ${{ inputs.version }}
+          SOURCE_REF: ${{ needs.plan.outputs.source_ref }}
+          STUDIO_RELEASE: ${{ inputs.version }}
           TARGET_OS: ${{ matrix.target_os }}
           UPSTREAM_ASSET_SHA256: ${{ needs.plan.outputs.upstream_asset_sha256 }}
           UPSTREAM_ASSET_URL: ${{ needs.plan.outputs.upstream_asset_url }}
@@ -265,7 +328,7 @@ jobs:
         env:
           ARCH: ${{ matrix.arch }}
           SLIM_DIRECT_LINUX_ARTIFACT_SMOKE: "1"
-          SOURCE_REF: ${{ inputs.version }}
+          SOURCE_REF: ${{ needs.plan.outputs.source_ref }}
           TARGET_OS: ${{ matrix.target_os }}
         run: |
           set -euo pipefail

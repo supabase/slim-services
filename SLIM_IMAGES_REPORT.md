@@ -118,18 +118,16 @@ Measured steady-state RSS with the pass-3 runtime profiles:
 ## Remaining Work
 
 1. Run the first full CI pass of `.github/workflows/service-artifacts.yml`
-   (7 services x linux-arm64/linux-amd64/darwin-arm64; builds the host-native
+   (all promoted services x linux-arm64/linux-amd64/darwin-arm64; builds the host-native
    artifact, derives + smokes the Linux image, host-process smokes the
    artifact, uploads archive + SHA256SUMS). It verifies the two cells that
-   cannot be built locally from macOS: the Node duo's Linux artifacts and the
-   linux-amd64 BEAM/Node cells. postgres and studio (docker-image backend)
-   still need a workflow.
+   cannot be built locally from macOS: the Node services' Linux artifacts and
+   the linux-amd64 BEAM/Node cells.
 2. Table regeneration is automated: every service-artifacts.yml run ends
    with an update-tables job that merges fresh rows into the results tables
    and opens a docs PR when numbers changed. Rows for
-   storage/pgmeta/postgrest/postgres refresh on their first full CI pass
-   (studio and edge-runtime rows refresh from local builds or their own
-   workflow's artifacts).
+   storage/pgmeta/postgrest/postgres/studio refresh on their first full CI
+   pass (edge-runtime rows also refresh from its dedicated workflow artifacts).
 3. CLI-level follow-ups surfaced by the runtime measurements: run `analytics`
    and `studio` as shared singletons (or default-off) for parallel stacks;
    wire memory limits through `container.HostConfig.Resources`.

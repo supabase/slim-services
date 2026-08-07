@@ -3,10 +3,9 @@ set -euo pipefail
 # Host build for darwin targets (invoked by scripts/build-artifact-from-source.sh
 # with SERVICE/VERSION/TARGET_OS/ARCH/SOURCE_DIR/ROOTFS/ROOT_DIR set).
 #
-# Mirrors services/storage/Dockerfile.artifact.rolldown on the host: npm ci,
-# upstream build, rolldown bundle with the repo overlay config, bundle-dist
-# preparation, non-runtime pruning. Native modules (fs-xattr) compile for
-# darwin during npm ci.
+# Runs npm ci, the upstream build, the repo's Rolldown overlay, bundle-dist
+# preparation, and non-runtime pruning directly on the target host. Native
+# modules (fs-xattr) compile for that target during npm ci.
 # The pinned Node runtime IS bundled (nix/portable-node) at rootfs node/;
 # bin/storage resolves SUPABASE_NODE -> bundled node -> PATH. The archive is
 # fully self-contained (no runtime_requires).

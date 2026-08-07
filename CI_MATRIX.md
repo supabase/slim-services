@@ -71,7 +71,8 @@ Archive filenames include service, version, and platform, for example:
 
 Every other promoted service builds through
 `.github/workflows/service-artifacts.yml`: a `workflow_dispatch` matrix of
-services (auth, postgrest, realtime, pooler, analytics, storage, pgmeta)
+services (auth, postgrest, realtime, pooler, analytics, storage, edge-runtime,
+studio, pgmeta, postgres)
 times targets (`linux-arm64` on `ubuntu-24.04-arm`, `linux-amd64` on
 `ubuntu-24.04`, `darwin-arm64` on `macos-14`), each running
 `scripts/ci-build-service.sh` and uploading the archive, `SHA256SUMS`, and
@@ -84,7 +85,7 @@ mode — on top of the derived-image smoke.
 Native-first (HOST_NATIVE_PLAN.md): the archive on every target is the
 host-native artifact — relocatable, audit-clean, runnable straight from the
 extracted archive (only the glibc family assumed on Linux, libSystem on
-macOS; the Node duo bundles its Node runtime inside the archive — the
+macOS; each Node service bundles its upstream-selected Node runtime inside the archive — the
 wrapper prefers `node/bin/node`, no external runtime, `runtime_requires` is
 null). The Docker image for Linux targets is derived from that same rootfs
 by `Dockerfile.slim` (base + artifact + entry wiring). `darwin-amd64` is not

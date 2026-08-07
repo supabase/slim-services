@@ -29,7 +29,7 @@ fileEnv('SUPABASE_ANON_KEY')
 fileEnv('SUPABASE_SERVICE_KEY')
 
 const args = process.argv.slice(2)
-const command = args.length > 0 ? args[0] : '/nodejs/bin/node'
+const command = args.length > 0 ? args[0] : process.execPath
 const commandArgs = args.length > 0 ? args.slice(1) : ['apps/studio/server.js']
 
 const child = spawn(command, commandArgs, {

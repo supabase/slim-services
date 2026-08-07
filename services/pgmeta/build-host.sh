@@ -3,7 +3,7 @@ set -euo pipefail
 # Host build for darwin targets (invoked by scripts/build-artifact-from-source.sh
 # with SERVICE/VERSION/TARGET_OS/ARCH/SOURCE_DIR/ROOTFS/ROOT_DIR set).
 #
-# Mirrors services/pgmeta/Dockerfile.artifact on the host: npm clean-install,
+# Builds the upstream runtime directly on the target host: npm clean-install,
 # tsc build, npm prune, non-runtime file pruning.
 # The pinned Node runtime IS bundled (nix/portable-node) at rootfs node/;
 # bin/pgmeta resolves SUPABASE_NODE -> bundled node -> PATH. The archive is

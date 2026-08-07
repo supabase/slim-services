@@ -176,50 +176,27 @@ do **realtime first** (most valuable per-stack), then clone for the others.
 - Acceptance per service: darwin-arm64 archive; untar + run under the smoke;
   `audit-portable-artifact.sh` clean; metrics recorded.
 
-## Phase 4 — Node duo: storage, pgmeta (P2, decide the runtime story first)
+## Phase 4 — Node services: storage, pgmeta, Studio
 
-**Decision (2026-07-07): Option A — one shared Node runtime.** The service
-artifacts stay JS bundles plus a thin `bin/<service>` wrapper that resolves
-the runtime in order: `$SUPABASE_NODE` → `../../node/bin/node` relative to the
-artifact (the CLI's shared runtime location) → `node` on `PATH`. The manifest
-records the requirement in `runtime_requires` (e.g. `node>=20`), so the CLI
-can verify before running. The shared runtime itself is the official
-Node.js darwin-arm64 tarball (signed by the Node release team) downloaded by
-the CLI — this repo does not repackage Node. Smokes provide the runtime via
-`SUPABASE_NODE` (pinned via nixpkgs) so the round-trip is validated against
-the same major each service's Docker image uses (pgmeta 20, storage 24).
-Option B (bundle Node per service) was rejected for the ~50 MiB duplication
-per service; Option C (bun compile) for compat risk with native modules.
+**Current decision:** every Node service bundles the Node major selected by
+its checked-out upstream production Dockerfile. `nix/portable-node` packages
+that runtime under `<rootfs>/node/`; the host launcher resolves
+`SUPABASE_NODE` → bundled Node → `PATH`. Artifacts therefore have no external
+Node requirement, and Linux images derive from the same `app/` + `node/`
+trees on `gcr.io/distroless/base-debian13`.
 
-Original decision framing:
+Storage and pgmeta adopted this contract in July 2026. Studio joined it in
+August 2026, replacing its earlier Docker-only Next.js packaging. Studio's
+builder follows upstream's `STUDIO_FRAMEWORK` default (currently Next, with
+TanStack Start available upstream as an explicit alternative), derives Node
+and pnpm from upstream declarations, and builds on a host matching the target
+so native npm packages stay ABI/platform-correct.
 
-- **Option A (recommended): one shared Node runtime.** The CLI downloads a
-  single `node-<version>-darwin-arm64` runtime artifact; storage and pgmeta
-  artifacts stay JS-bundles + `bin/<service>` wrapper that resolves
-  `SUPABASE_NODE` (or a relative `../node/bin/node`). Smallest total download,
-  one security-patch surface. Requires the Node-major convergence follow-up
-  (pgmeta 20 / studio 22 / storage 24 today — check engine ranges).
-- Option B: bundle Node per service (Nix `nodejs` closure through the
-  playbook) — self-contained but ~50 MiB duplicated per service.
-- Option C: `bun build --compile` single binaries — attractive, but a runtime
-  swap with real compat risk (storage uses Sharp/native modules); only pilot
-  behind a smoke.
-- Native modules: storage's Sharp must be built per-platform. For local dev
-  the slim profile already sets `IMAGE_TRANSFORMATION_ENABLED=false`; the
-  darwin artifact can exclude Sharp and document the limitation (same
-  philosophy as edge-runtime's no-AI profile).
-- Smoke: host-process branches; storage runs the full bucket/upload/download
-  round-trip on the file backend.
-
-> **2026-07-09 — Decision reversed.** storage and pg-meta now bundle the
-> pinned nixpkgs Node 24 runtime inside each archive (`<rootfs>/node/`, built
-> by `nix/portable-node/default.nix`); the wrapper resolves `SUPABASE_NODE` →
-> bundled node → PATH. Self-containedness won over disk size (~+30 MiB
-> compressed per archive, accepted). `runtime_requires` is dropped from the
-> manifests, both recipes carry a `FLOOR_CHECK_CMD` execution proof, and the
-> Docker images derive from the bundled runtime on
-> `gcr.io/distroless/base-debian13` (single node provenance). The CLI-side
-> shared-runtime download is retired.
+Every Node artifact carries a glibc-floor execution proof on Linux, loads its
+native addons during that proof, and is smoked with host Node hidden. The
+accepted cost is one runtime per archive in exchange for fully self-contained
+host execution and a single runtime provenance shared by each artifact and its
+derived image.
 
 ## Phase 5 — Distribution hygiene (P2, before anything ships to users)
 
@@ -378,11 +355,11 @@ stock glibc ignores `LOCALE_ARCHIVE` (a Nix-glibc patch) and `LOCPATH` cannot
 read archive files. tzdata is the one genuine gap — bare hosts have no
 `/usr/share/zoneinfo` and glibc degrades silently to UTC — so it is now
 bundled for the BEAM trio (realtime, pooler, analytics) with a `TZDIR` guard
-in each release's `env.sh`; Node duo and postgres carry their own tz data and
+in each release's `env.sh`; Node services and postgres carry their own tz data and
 need nothing. `FLOOR_CHECK_CMD` was extended for all five (BEAM: NSS
-resolution + a >=3h TZ delta; Node duo: `dns.lookup`); the BEAM trio's checks
+resolution + a >=3h TZ delta; Node services: `dns.lookup`); the BEAM trio's checks
 are proven green on linux-arm64 locally (builds on this Mac), while the Node
-duo's `dns.lookup` check awaits the forced `service-artifacts.yml` linux
+services' `dns.lookup` checks await the forced `service-artifacts.yml` Linux
 dispatch (those cells cannot build on this Mac). One iconv-importing
 bundled-glibc artifact turned up in the
 sweep — postgrest — fixed by shipping the source image's own gconv modules
