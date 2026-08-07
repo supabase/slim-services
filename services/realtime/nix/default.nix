@@ -22,16 +22,67 @@
     url = "https://github.com/NixOS/nixpkgs/archive/ac62194c3917d5f474c1a844b6fd6da2db95077d.tar.gz";
     sha256 = "0v6bd1xk8a2aal83karlvc853x44dg1n4nk08jg3dajqyy0s98np";
   }) { },
+  runtimeNixpkgsSrc ? fetchTarball {
+    # Runtime definitions come from a newer immutable snapshot, while builds
+    # continue to use the shared package set and its established glibc floor.
+    url = "https://github.com/NixOS/nixpkgs/archive/b7c2ada94fe99c15b0dbcf4d11fd7850b957a436.tar.gz";
+    sha256 = "1hw875y585lkhygn09kcbmdgm58b0nb5k0d38qwlvfngprsnp2r0";
+  },
   serviceVersion ? "dev",
   mixDepsHash ? null,
 }:
 let
   lib = pkgs.lib;
+  upstreamDockerfile = builtins.readFile ../Dockerfile;
+  upstreamDockerfileLines = lib.splitString "\n" upstreamDockerfile;
+  upstreamDockerArg = name:
+    let
+      prefix = "ARG ${name}=";
+      line = lib.findFirst
+        (candidate: lib.hasPrefix prefix candidate)
+        (throw "upstream Realtime Dockerfile does not declare ${prefix}<version>")
+        upstreamDockerfileLines;
+    in
+    lib.removePrefix prefix line;
+  upstreamElixirVersion = upstreamDockerArg "ELIXIR_VERSION";
+  upstreamOtpVersion = upstreamDockerArg "OTP_VERSION";
+  elixirGeneration = lib.concatStringsSep "."
+    (lib.take 2 (lib.splitVersion upstreamElixirVersion));
+  otpGeneration = lib.head (lib.splitVersion upstreamOtpVersion);
+  runtimeDefinitions = "${runtimeNixpkgsSrc}/pkgs/development/interpreters";
+  erlangDefinition = "${runtimeDefinitions}/erlang/${otpGeneration}.nix";
+  elixirDefinition = "${runtimeDefinitions}/elixir/${elixirGeneration}.nix";
+  erlang =
+    if builtins.pathExists erlangDefinition then
+      let
+        genericBuilder = versionArgs:
+          import "${runtimeDefinitions}/erlang/generic-builder.nix" (versionArgs // {
+            # Neither service is needed by Realtime. Keeping them out of Linux
+            # avoids libsystemd and GUI dependencies that raise the glibc floor.
+            systemdSupport = false;
+            wxSupport = pkgs.stdenv.isDarwin;
+          });
+      in
+      pkgs.callPackage (import erlangDefinition genericBuilder) {
+        # Names used by the newer runtime definition set.
+        libx11 = pkgs.xorg.libX11;
+        unixodbc = pkgs.unixODBC;
+        wxwidgets_3_2 = pkgs.wxGTK32;
+      }
+    else
+      throw "runtime definitions do not provide OTP ${otpGeneration} required by Realtime's upstream Dockerfile";
   derivedHashesRaw = builtins.getEnv "SLIM_NIX_DERIVED_HASHES";
   derivedHashes =
     if derivedHashesRaw == "" then { } else builtins.fromJSON derivedHashesRaw;
-  beamPackages = pkgs.beam.packagesWith pkgs.beam.interpreters.erlang_27;
-  elixir = beamPackages.elixir_1_18;
+  beamPackages = pkgs.beam.packagesWith erlang;
+  elixir =
+    if builtins.pathExists elixirDefinition then
+      beamPackages.callPackage elixirDefinition {
+        inherit erlang;
+        debugInfo = true;
+      }
+    else
+      throw "runtime definitions do not provide Elixir ${elixirGeneration} required by Realtime's upstream Dockerfile";
   fetchMixDeps = beamPackages.fetchMixDeps.override { inherit elixir; };
   mixRelease = beamPackages.mixRelease.override { inherit elixir fetchMixDeps; };
 
