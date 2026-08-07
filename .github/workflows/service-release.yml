@@ -215,13 +215,7 @@ jobs:
             printf 'release %s already exists; skipping (use force=true to replace it)\n' "$release_tag"
           fi
 
-          darwin_runner="macos-14"
-          # Studio's Next.js build exceeds the standard arm64 macOS runner's
-          # 7 GB memory envelope during production builds.
-          if [[ "$SERVICE" == "studio" ]]; then
-            darwin_runner="macos-gh-hosted"
-          fi
-          matrix="{\"include\":[{\"target_os\":\"linux\",\"arch\":\"arm64\",\"platform_dir\":\"linux-arm64\",\"runner\":\"large-linux-arm\"},{\"target_os\":\"linux\",\"arch\":\"amd64\",\"platform_dir\":\"linux-amd64\",\"runner\":\"large-linux-x86\"},{\"target_os\":\"darwin\",\"arch\":\"arm64\",\"platform_dir\":\"darwin-arm64\",\"runner\":\"$darwin_runner\"}]}"
+          matrix='{"include":[{"target_os":"linux","arch":"arm64","platform_dir":"linux-arm64","runner":"large-linux-arm"},{"target_os":"linux","arch":"amd64","platform_dir":"linux-amd64","runner":"large-linux-x86"},{"target_os":"darwin","arch":"arm64","platform_dir":"darwin-arm64","runner":"macos-14-xlarge"}]}'
           {
             printf 'image_repository=%s\n' "$image_repository"
             printf 'matrix=%s\n' "$matrix"
