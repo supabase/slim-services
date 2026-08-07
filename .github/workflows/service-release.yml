@@ -239,7 +239,8 @@ jobs:
         if: inputs.service == 'auth'
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: stable
+          go-version-file: sources/auth/go.mod
+          cache-dependency-path: sources/auth/go.sum
 
       - name: Build, audit, smoke, and package
         shell: bash

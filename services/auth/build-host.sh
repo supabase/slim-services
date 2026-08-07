@@ -3,7 +3,7 @@ set -euo pipefail
 # Host-toolchain build for non-linux targets (invoked by
 # scripts/build-artifact-from-source.sh with SERVICE/VERSION/TARGET_OS/ARCH/
 # SOURCE_DIR/ROOTFS/ROOT_DIR set). Go cross-compiles darwin from any host;
-# go.mod's toolchain directive pins the effective compiler version.
+# CI installs the exact compiler declared by go.mod before invoking this file.
 
 command -v go >/dev/null 2>&1 || {
   printf '[slim] ERROR: go toolchain required for auth host builds\n' >&2

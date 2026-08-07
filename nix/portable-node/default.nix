@@ -1,4 +1,5 @@
-# Portable Node runtime bundle: the pinned nixpkgs nodejs_24 binary plus its
+# Portable Node runtime bundle: the upstream-selected Node major from pinned
+# nixpkgs plus its
 # non-glibc dylib closure, patched to run from any extraction path on a plain
 # host (no /nix/store). Playbook: NIX_PORTABLE_ARTIFACT_PLAYBOOK.md; reference
 # implementation: services/pooler/nix/default.nix postFixup.
@@ -10,11 +11,24 @@ let
     sha256 = "0v6bd1xk8a2aal83karlvc853x44dg1n4nk08jg3dajqyy0s98np";
   };
 in
-{ pkgs ? import nixpkgs { } }:
+{ pkgs ? import nixpkgs { }, nodeMajor ? null }:
 
 let
   inherit (pkgs) lib;
-  node = pkgs.nodejs_24;
+  environmentNodeMajor = builtins.getEnv "SLIM_NODE_MAJOR";
+  resolvedNodeMajor =
+    if nodeMajor != null then
+      toString nodeMajor
+    else if environmentNodeMajor != "" then
+      environmentNodeMajor
+    else
+      throw "portable-node requires nodeMajor or SLIM_NODE_MAJOR";
+  nodeAttribute = "nodejs_${resolvedNodeMajor}";
+  node =
+    if builtins.hasAttr nodeAttribute pkgs then
+      builtins.getAttr nodeAttribute pkgs
+    else
+      throw "pinned nixpkgs does not provide ${nodeAttribute} required by upstream";
 in
 pkgs.stdenv.mkDerivation {
   pname = "portable-node";

@@ -130,9 +130,10 @@ shared Node runtime**. The artifact stays a JS bundle; a thin `bin/pgmeta`
 wrapper resolves the runtime (`SUPABASE_NODE` → `../../node/bin/node` →
 `PATH`) and the manifest records `runtime_requires: node>=20`.
 
-- `services/pgmeta/build-host.sh` mirrors `Dockerfile.artifact` on the host:
-  npm clean-install + tsc build + npm prune, node 20 from pinned nixpkgs
-  (the Docker runtime major). No native modules.
+- `services/pgmeta/build-host.sh` mirrors the upstream build on the host:
+  npm clean-install + tsc build + npm prune. It derives the Node major from
+  upstream's production Dockerfile, verifies `.nvmrc` agrees, and uses that
+  same pinned-Nix runtime for both the build and portable bundle.
 - Smoke (host process, `runtime.env` applied): `/health` 200; re-run from an
   untarred archive in a scratch directory (relocatable); darwin audit clean.
 

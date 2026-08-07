@@ -119,8 +119,10 @@ lives at `native/Cargo.lock`). Same portable-BEAM packaging as realtime
   generated protobuf bindings back into the crate source.
 - `native/pgparser/.cargo/config.toml` already ships the macOS
   `-undefined dynamic_lookup` link flags rustler NIFs need.
-- Elixir 1.18.4 / OTP 27.3.4.6 from pinned nixpkgs (Docker builder: 1.18.2 /
-  27.2.1 — same majors, newer patches).
+- Elixir and OTP generations are derived from the checked-out upstream
+  Dockerfile and resolved through immutable versioned definitions. The shared
+  package set still controls linking and the Linux compatibility floor;
+  unavailable future generations fail explicitly.
 - Smoke (host process, `runtime.env` applied): `bin/migrate`, then
   `bin/server`; authenticated `/api/health` returns 204. Re-run from an
   untarred archive in a scratch directory (relocatable).
