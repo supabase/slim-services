@@ -72,12 +72,17 @@ jobs:
                   if target not in runners:
                       raise SystemExit(f"unsupported target: {target}")
                   target_os, arch = target.split("-", 1)
+                  runner = runners[target]
+                  # Studio's Next.js build exceeds the standard arm64 macOS
+                  # runner's 7 GB memory envelope during production builds.
+                  if service == "studio" and target == "darwin-arm64":
+                      runner = "macos-gh-hosted"
                   include.append({
                       "service": service,
                       "target_os": target_os,
                       "arch": arch,
                       "platform_dir": target,
-                      "runner": runners[target],
+                      "runner": runner,
                   })
           print(json.dumps({"include": include}))
           PY
