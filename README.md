@@ -82,9 +82,9 @@ override because its exact release tag is unavailable on Docker Hub.
 `*` Upstream comparison uses `UPSTREAM_COMPARE_IMAGE` from the recipe (the exact tag is not published on Docker Hub), so the percentage is directional.
 <!-- generated:results:end -->
 
-Studio measurements remain available in its service report and in
-[SLIM_IMAGES_REPORT.md](SLIM_IMAGES_REPORT.md), but are omitted from the
-release-backed table until this repository publishes a Studio release.
+Studio is now in the native automatic release pipeline. It remains omitted
+from this release-backed snapshot until the first native Studio release
+publishes its measured manifests.
 
 Postgres is native-first like everything else: the image is derived from the
 portable artifact, which ships every extension the upstream PG17 image
@@ -100,7 +100,7 @@ Every service in the release workflow ships a self-contained, relocatable
 `tar.zst` archive per target ([HOST_NATIVE_PLAN.md](HOST_NATIVE_PLAN.md)) that
 the CLI can download to `~/.supabase/bin/<service>/<version>/` and run without
 Docker — on macOS and on Linux (only the glibc family is assumed from a
-Linux host; the Node duo bundles its Node runtime inside the archive — the
+Linux host; each Node service bundles its upstream-selected runtime inside the archive — the
 wrapper prefers `node/bin/node`, no external runtime, `runtime_requires` is
 null). The Linux Docker images are derived from these same artifacts. The
 table below shows the `darwin-arm64` values from the manifest attached to the
@@ -218,11 +218,12 @@ dispatcher reads `ARTIFACT_BACKEND` and chooses one of:
   otherwise (e.g. building Linux artifacts from macOS).
 - `docker-source` with `ARTIFACT_SOURCE_BUILD="host"`: build with
   `services/<service>/build-host.sh` on the host toolchain — Go
-  cross-compiles (auth) and Node bundles (storage, pgmeta; these must run on
-  a host matching the target because npm resolves platform packages).
+  cross-compiles (auth) and Node bundles (storage, pgmeta, Studio; these must
+  run on a host matching the target because package managers resolve platform
+  packages).
 - `docker-image`: run `Dockerfile.artifact` rooted at a published upstream
   image (`FROM $SOURCE_IMAGE`, pinned by `SOURCE_IMAGE_DIGEST`) — used when
-  pruning the published image is the practical path (postgres, studio).
+  pruning the published image is the practical path (postgres).
 - `image`: extract selected paths from a published image (postgrest — the
   extraction bundles the full ELF closure, so the result is still portable).
 
@@ -392,8 +393,9 @@ scripts/archive-artifact.sh <artifact-rootfs> [archive-prefix]
 - [PostgREST](services/postgrest/REPORT.md): stable ARM64 dynamic bundle in
   `scratch`; static upstream artifact path validated for a future stable
   release.
-- [Studio](services/studio/REPORT.md): Next.js standalone image kept at phase 1;
-  a local-dev-only Sharp tradeoff could save more, but is not adopted.
+- [Studio](services/studio/REPORT.md): target-native Next/TanStack-aware build,
+  bundled upstream-selected Node runtime, artifact-derived slim image, and
+  Docker-tag release polling with provenance verification.
 - [Edge Runtime](services/edge-runtime/REPORT.md): adopted Nix/native artifact
   pruning; local-dev default excludes ONNX/OpenBLAS (`withAi = false`), the AI
   profile stays available upstream or via `withAi = true`.
@@ -404,8 +406,9 @@ scripts/archive-artifact.sh <artifact-rootfs> [archive-prefix]
   rejected.
 - [Pooler](services/pooler/REPORT.md): adopted POSIX launcher, native stripping,
   and base-library dedupe.
-- [PgMeta](services/pgmeta/REPORT.md): Rolldown and Sentryless experiments
-  worked but were too small to adopt.
+- [PgMeta](services/pgmeta/REPORT.md): upstream TypeScript runtime with a
+  bundled upstream-selected Node runtime; obsolete experimental variants are
+  removed.
 - [Storage](services/storage/REPORT.md): adopted Rolldown emitted-JS bundle with
   minification and no dependency shims.
 - [Auth](services/auth/REPORT.md): static Go executable runs from `scratch`;

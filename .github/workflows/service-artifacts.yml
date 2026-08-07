@@ -23,7 +23,7 @@ name: Service artifacts
       services:
         description: Space-separated services to build (default = all promoted).
         required: false
-        default: auth postgrest realtime pooler analytics storage edge-runtime pgmeta postgres
+        default: auth postgrest realtime pooler analytics storage edge-runtime studio pgmeta postgres
       targets:
         description: Space-separated targets (linux-arm64 linux-amd64 darwin-arm64).
         required: false

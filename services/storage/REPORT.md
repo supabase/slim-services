@@ -29,7 +29,8 @@ telemetry/pprof because the extra gain was too small.
 - Current backend: source submodule build.
 - Source ref: `v1.55.3`.
 - Upstream image: `supabase/storage-api:v1.55.3`.
-- Runtime base: `gcr.io/distroless/nodejs24-debian13:nonroot`.
+- Runtime base: `gcr.io/distroless/base-debian13:nonroot` plus the artifact's
+  upstream-selected bundled Node runtime.
 - Smoke test: `/status` returns `200`.
 - `sources/storage` is read-only; bundling changes live in overlay files.
 
@@ -47,7 +48,7 @@ pass.
 
 ## Phase 2 Changes
 
-- Adopted `services/storage/Dockerfile.artifact.rolldown`.
+- Adopted the repo-owned Rolldown overlay in the target-native build.
 - Kept upstream build as the type-check/transpile step.
 - Bundled emitted `dist` JavaScript with Rolldown.
 - Minified the Rolldown bundle.
@@ -73,8 +74,8 @@ large maintainable win. The local telemetry/pprof prune only saves another
 
 ## Validation
 
-- Built using `services/storage/Dockerfile.artifact.rolldown` with
-  `LOCAL_RUNTIME_PRUNE=0` and `ROLLDOWN_MINIFY=1`.
+- Built through `services/storage/build-host.sh` with
+  `ROLLDOWN_MINIFY=1`.
 - Built final image with
   `scripts/build-image-from-artifact.sh storage artifacts/storage/v1.55.3/linux-arm64/rootfs local/storage:slim-v1.55.3-arm64`.
 - Smoke passed with
@@ -118,14 +119,15 @@ accepted path avoids dependency shims or upstream source edits.
 
 ## Host-Native darwin-arm64 Artifact (2026-07)
 
-Runtime decision (recorded in HOST_NATIVE_PLAN.md Phase 4): **Option A — one
-shared Node runtime**. The artifact stays a rolldown JS bundle; a thin
+Runtime decision (recorded in HOST_NATIVE_PLAN.md Phase 4): bundle the
+upstream-selected Node runtime per service. The artifact stays a Rolldown JS
+bundle; a thin
 `bin/storage` wrapper resolves the runtime (`SUPABASE_NODE` →
-`../../node/bin/node` → `PATH`) and the manifest records
-`runtime_requires: node>=20` so the CLI can verify before running.
+`../../node/bin/node` → `PATH`) and the manifest records no external runtime
+requirement.
 
-- `services/storage/build-host.sh` mirrors `Dockerfile.artifact.rolldown` on
-  the host: npm ci + upstream build + rolldown bundle. It derives Node from
+- `services/storage/build-host.sh` runs npm ci + upstream build + Rolldown
+  directly on the target host. It derives Node from
   the upstream production Dockerfile and npm from upstream's exact
   `packageManager`, then uses the same pinned-Nix Node for the build and
   portable bundle. The one native module, `fs-xattr`, compiles for darwin
@@ -147,6 +149,6 @@ shared Node runtime**. The artifact stays a rolldown JS bundle; a thin
 `build-host.sh` builds the Linux artifacts on Linux hosts (a guard refuses
 cross-builds: npm resolves platform packages — fs-xattr — for the machine it
 runs on), and `Dockerfile.slim` derives the image from the artifact's `app/`
-tree on the distroless Node base (the `bin/storage` wrapper is host-only).
-The Dockerfile.artifact builders are gone. First Linux verification happens
-in CI (`service-artifacts.yml`), by design.
+and `node/` trees on the generic distroless base (the `bin/storage` wrapper is
+host-only). First Linux verification happens in CI
+(`service-artifacts.yml`), by design.

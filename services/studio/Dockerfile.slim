@@ -1,8 +1,12 @@
-ARG BASE_IMAGE=gcr.io/distroless/nodejs22-debian13:nonroot
+# syntax=docker/dockerfile:1.7
+ARG BASE_IMAGE=gcr.io/distroless/base-debian13:nonroot
 FROM ${BASE_IMAGE}
 ARG ARTIFACT_ROOT
 WORKDIR /app
-COPY ${ARTIFACT_ROOT}/ /
+ENV NODE_ENV=production
+ENV PORT=3000
+COPY ${ARTIFACT_ROOT}/app/ /app/
+COPY ${ARTIFACT_ROOT}/node/ /node/
 EXPOSE 3000
-ENTRYPOINT ["/nodejs/bin/node", "/app/apps/studio/docker-entrypoint.mjs"]
-CMD ["/nodejs/bin/node", "apps/studio/server.js"]
+ENTRYPOINT ["/node/bin/node", "/app/apps/studio/docker-entrypoint.mjs"]
+CMD ["/node/bin/node", "apps/studio/server.js"]

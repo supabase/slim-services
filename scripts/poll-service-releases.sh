@@ -47,6 +47,15 @@ for service, config in services.items():
         raise SystemExit(f"tag pattern must be anchored for {service}: {tag_pattern}")
     if not isinstance(config.get("poll"), bool):
         raise SystemExit(f"poll must be a boolean for {service}")
+    release_source = config.get("release_source", "github")
+    if release_source not in {"github", "dockerhub"}:
+        raise SystemExit(f"unsupported release source for {service}: {release_source}")
+    if release_source == "dockerhub":
+        image_repository = config.get("image_repository", "")
+        if not re.fullmatch(r"[^/]+/[^/]+", image_repository):
+            raise SystemExit(
+                f"invalid Docker Hub image repository for {service}: {image_repository}"
+            )
 
 print(f"validated {len(services)} service release sources")
 PY
@@ -58,32 +67,66 @@ fi
   exit 1
 }
 
-while IFS=$'\t' read -r service upstream_repository tag_pattern; do
+while IFS=$'\t' read -r service upstream_repository tag_pattern release_source upstream_image_repository; do
   [[ -z "$POLL_SERVICE" || "$service" == "$POLL_SERVICE" ]] || continue
 
   version=""
-  if latest_version="$(
-    gh api "repos/$upstream_repository/releases/latest" --jq .tag_name 2>/dev/null
-  )" && [[ "$latest_version" =~ $tag_pattern ]]; then
-    version="$latest_version"
-  fi
+  if [[ "$release_source" == "dockerhub" ]]; then
+    if ! version="$(python3 - "$upstream_image_repository" "$tag_pattern" <<'PY'
+import json
+import re
+import sys
+import urllib.parse
+import urllib.request
 
-  if [[ -z "$version" ]]; then
-    if ! release_tags="$(
-      gh api --paginate "repos/$upstream_repository/releases?per_page=100" \
-        --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name'
+repository, pattern_raw = sys.argv[1:]
+pattern = re.compile(pattern_raw)
+url = (
+    "https://hub.docker.com/v2/repositories/"
+    f"{urllib.parse.quote(repository, safe='/')}/tags?page_size=100&ordering=last_updated"
+)
+for _ in range(10):
+    with urllib.request.urlopen(url, timeout=30) as response:
+        page = json.load(response)
+    for tag in page.get("results", []):
+        candidate = tag.get("name", "")
+        if pattern.fullmatch(candidate):
+            print(candidate)
+            raise SystemExit(0)
+    url = page.get("next")
+    if not url:
+        break
+raise SystemExit(1)
+PY
     )"; then
-      printf 'could not query stable releases for %s (%s); continuing\n' \
-        "$service" "$upstream_repository" >&2
+      printf 'could not query matching Docker Hub tags for %s (%s); continuing\n' \
+        "$service" "$upstream_image_repository" >&2
       continue
     fi
+  else
+    if latest_version="$(
+      gh api "repos/$upstream_repository/releases/latest" --jq .tag_name 2>/dev/null
+    )" && [[ "$latest_version" =~ $tag_pattern ]]; then
+      version="$latest_version"
+    fi
 
-    while IFS= read -r candidate; do
-      if [[ "$candidate" =~ $tag_pattern ]]; then
-        version="$candidate"
-        break
+    if [[ -z "$version" ]]; then
+      if ! release_tags="$(
+        gh api --paginate "repos/$upstream_repository/releases?per_page=100" \
+          --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name'
+      )"; then
+        printf 'could not query stable releases for %s (%s); continuing\n' \
+          "$service" "$upstream_repository" >&2
+        continue
       fi
-    done <<< "$release_tags"
+
+      while IFS= read -r candidate; do
+        if [[ "$candidate" =~ $tag_pattern ]]; then
+          version="$candidate"
+          break
+        fi
+      done <<< "$release_tags"
+    fi
   fi
 
   if [[ -z "$version" ]]; then
@@ -152,6 +195,13 @@ with open(sys.argv[1], encoding="utf-8") as fh:
 
 for service, config in services.items():
     if config.get("poll"):
-        print(service, config["repository"], config["tag_pattern"], sep="\t")
+        print(
+            service,
+            config["repository"],
+            config["tag_pattern"],
+            config.get("release_source", "github"),
+            config.get("image_repository", "-"),
+            sep="\t",
+        )
 PY
 )
