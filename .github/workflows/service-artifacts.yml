@@ -63,7 +63,7 @@ jobs:
           runners = {
               "linux-arm64": "large-linux-arm",
               "linux-amd64": "large-linux-x86",
-              "darwin-arm64": "macos-14",
+              "darwin-arm64": "macos-14-xlarge",
           }
 
           include = []
