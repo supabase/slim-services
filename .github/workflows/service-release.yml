@@ -396,6 +396,7 @@ jobs:
         with:
           name: release-assets-${{ inputs.service }}-${{ inputs.version }}-${{ matrix.platform_dir }}
           if-no-files-found: error
+          retention-days: 7
           path: release-assets/
 
       - name: Upload exact smoked image
@@ -404,6 +405,7 @@ jobs:
         with:
           name: release-image-${{ inputs.service }}-${{ inputs.version }}-${{ matrix.arch }}
           if-no-files-found: error
+          retention-days: 7
           compression-level: 0
           path: release-image/
 
@@ -503,6 +505,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: published-image-${{ inputs.service }}-${{ inputs.version }}
+          retention-days: 7
           path: published-image.json
 
   publish-release:

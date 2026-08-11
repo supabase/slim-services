@@ -57,9 +57,8 @@ jobs:
           import json
           import os
 
-          # The repo is internal, so GitHub's free ubuntu-*-arm label (public
-          # repos only) is unavailable; the org's large runners provide arm64
-          # Linux.
+          # Use the org's large runners for consistent Linux capacity across
+          # repository visibility changes.
           runners = {
               "linux-arm64": "large-linux-arm",
               "linux-amd64": "large-linux-x86",
@@ -225,6 +224,7 @@ jobs:
         with:
           name: ${{ matrix.service }}-${{ steps.vars.outputs.version }}-${{ matrix.platform_dir }}
           if-no-files-found: error
+          retention-days: 7
           path: |
             ${{ steps.vars.outputs.artifact_dir }}/*.tar.zst
             ${{ steps.vars.outputs.artifact_dir }}/SHA256SUMS

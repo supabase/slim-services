@@ -447,8 +447,8 @@ Phase 5 notes.
 
 ## Licensing
 
-The packaging code in this repository is licensed under
-[Apache-2.0](LICENSE). Built artifacts contain independently licensed upstream
+The packaging code in this repository is licensed under the [MIT License](LICENSE).
+Built artifacts contain independently licensed upstream
 software. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md); each archive
 also carries the license material collected from its dependency closure under
 `share/licenses/` and is published with an SPDX SBOM.

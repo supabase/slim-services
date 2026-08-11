@@ -45,11 +45,16 @@ Realtime is packaged as a BEAM release. Phase 1 established:
 - BusyBox runtime applets for BEAM scripts.
 - ELF dependency crawl fixes and `/usr/lib` normalization.
 
-## Phase 2 Changes
+## Superseded Docker-source phase
 
-- Added `services/realtime/overlay/run.sh`.
-- Added `services/realtime/overlay/rel/env.sh.eex` so AWS Fargate metadata
-  parsing no longer depends on `jq`.
+An earlier Docker-source implementation carried custom cloud bootstrap and
+Fargate metadata wiring. Native-first convergence replaced that implementation
+with the smaller local/CI entrypoint described below, so the obsolete overlay
+files are no longer retained.
+
+That earlier phase:
+
+- Removed the runtime dependency on `jq` for Fargate metadata parsing.
 - Restored production generated-cluster-certificate support using the same
   dependency-reduction direction as `supabase/realtime#1837`: ECS task
   credentials, `curl`, AWS SigV4 signing with `openssl`, and small shell/awk

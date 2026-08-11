@@ -1,9 +1,7 @@
-# glibc runtime side-data — design (PR 2 of the portability roadmap)
+# glibc runtime side-data design
 
-Date: 2026-07-09. Status: approved by user (brainstorm session).
-Supersedes the PR-2 sketch in `docs/superpowers/plans/2026-07-09-portability-next-handoff.md`
-(tasks 1/2/4 there were written before the evidence below existed; task 3's open
-point is resolved here).
+Date: 2026-07-09. This document records the decisions behind the current
+portable glibc runtime layout.
 
 ## Goal
 

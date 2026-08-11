@@ -60,8 +60,7 @@ Existing machinery to build on (read these first):
 - `scripts/build-artifact-from-nix.sh` — local Nix runner (darwin) + Docker
   runner (linux-on-macOS); `NIX_PACKAGE_OVERLAY` mechanism for repo-owned
   package files; `scripts/portable-darwin-fixup.sh`,
-  `scripts/audit-portable-artifact.sh`, `scripts/collect-elf-deps.sh`,
-  `scripts/patch-elf-rpaths.sh`.
+  `scripts/audit-portable-artifact.sh`.
 - `services/edge-runtime/` — recipe (`ARTIFACT_BACKEND="nix"`,
   `SUPPORTS_DIRECT_ARTIFACT_SMOKE="true"`), `nix/edge-runtime.nix` overlay,
   smoke with a host-process branch (`ARTIFACT_ROOTFS=` mode).
@@ -131,14 +130,10 @@ archive → download-layout → run-on-mac loop with minimal build risk.
 
 ## Phase 2 — postgrest (P1)
 
-- Preferred: promote `services/postgrest/nix/static-v14_10-arm64.nix` from
-  experiment to the recipe's darwin/static path (update to the current
-  pinned version; the recipe already carries `NIX_*` scaffolding with
-  `NIX_STATUS`/`NIX_ATTR=postgrestStatic`). Static binary → same contract as
-  auth.
-- Fallback if the Nix static build fights back: consume upstream's published
-  macOS binaries (`ARTIFACT_BACKEND` gains a small `github-release` fetcher)
-  — less pure but unblocks the CLI path; note it in REPORT.md either way.
+- Implemented: consume upstream's published macOS binary, verify its release
+  digest, and bundle its non-system library closure. A repo-owned static Nix
+  build was rejected because macOS has no static-linking path and upstream
+  already publishes the required binary.
 - Smoke: host-process branch against harness postgres, `/` returns 200 with
   `PGRST_DB_POOL=2` from runtime.env applied.
 
@@ -364,4 +359,4 @@ dispatch (those cells cannot build on this Mac). One iconv-importing
 bundled-glibc artifact turned up in the
 sweep — postgrest — fixed by shipping the source image's own gconv modules
 via `OPTIONAL_INCLUDE_PATHS`, not a wrapper or env var. Full record:
-`docs/superpowers/specs/2026-07-09-glibc-runtime-side-data-design.md`.
+`docs/design/glibc-runtime-side-data.md`.
