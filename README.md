@@ -10,7 +10,7 @@ This repo asks a simple question, on three axes:
 
 <!-- generated:release-summary:begin -->
 For the latest published Linux ARM64 release set (10 services), upstream images
-total **2041.9 MiB** compressed; the slim set totals **561.7 MiB** (**72.5%**
+total **2041.9 MiB** compressed; the slim set totals **562.1 MiB** (**72.5%**
 smaller — exact numbers below). Every published service also ships measured
 steady-state RSS and idle-CPU numbers, and a minimal core stack (postgres +
 auth + postgrest) idles at roughly **65 MiB of RSS per stack** with near-zero
@@ -77,7 +77,7 @@ override because its exact release tag is unavailable on Docker Hub.
 | Edge Runtime | `v1.74.3` (no-AI) | `360.6 MiB` | `52.7 MiB` | `85.4%` | `18.1 MiB` | `0.01%` | [release](https://github.com/supabase/slim-services/releases/tag/edge-runtime-v1.74.3) · [report](services/edge-runtime/REPORT.md) |
 | Studio | `2026.08.10-sha-5b68af1` | `306.5 MiB` | `127.6 MiB` | `58.4%` | `195.6 MiB` | `0.00%` | [release](https://github.com/supabase/slim-services/releases/tag/studio-2026.08.10-sha-5b68af1) · [report](services/studio/REPORT.md) |
 | Analytics | `v1.50.1` | `261.1 MiB` | `58.5 MiB` | `77.6%` | `505.9 MiB` | `0.30%` | [release](https://github.com/supabase/slim-services/releases/tag/analytics-v1.50.1) · [report](services/analytics/REPORT.md) |
-| PgMeta | `v0.96.8` | `102.5 MiB` | `55.5 MiB` | `45.9%` | `101.1 MiB` | `0.23%` | [release](https://github.com/supabase/slim-services/releases/tag/pgmeta-v0.96.8) · [report](services/pgmeta/REPORT.md) |
+| PgMeta | `v0.96.9` | `102.5 MiB` | `55.9 MiB` | `45.5%` | `105.2 MiB` | `0.23%` | [release](https://github.com/supabase/slim-services/releases/tag/pgmeta-v0.96.9) · [report](services/pgmeta/REPORT.md) |
 | Pooler | `v2.9.10` | `289.4 MiB`* | `39.3 MiB` | `86.4%`* | `163.5 MiB` | `0.15%` | [release](https://github.com/supabase/slim-services/releases/tag/pooler-v2.9.10) · [report](services/pooler/REPORT.md) |
 
 `*` Upstream comparison uses `UPSTREAM_COMPARE_IMAGE` from the recipe (the exact tag is not published on Docker Hub), so the percentage is directional.
@@ -127,7 +127,7 @@ macOS archives require macOS 14+. The manifest records the exact floor as
 | Edge Runtime | `v1.74.3` | `39.9 MiB` | `161.4 MiB` | `56.8 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/edge-runtime-v1.74.3) · [report](services/edge-runtime/REPORT.md) |
 | Studio | `2026.08.10-sha-5b68af1` | `75.3 MiB` | `460.4 MiB` | `303.2 MiB` | `0.50%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/studio-2026.08.10-sha-5b68af1) · [report](services/studio/REPORT.md) |
 | Analytics | `v1.50.1` | `33.4 MiB` | `140.5 MiB` | `479.2 MiB` | `0.37%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/analytics-v1.50.1) · [report](services/analytics/REPORT.md) |
-| PgMeta | `v0.96.8` | `37.2 MiB` | `173.7 MiB` | `164.8 MiB` | `0.30%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/pgmeta-v0.96.8) · [report](services/pgmeta/REPORT.md) |
+| PgMeta | `v0.96.9` | `36.4 MiB` | `169.3 MiB` | `143.3 MiB` | `0.30%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/pgmeta-v0.96.9) · [report](services/pgmeta/REPORT.md) |
 | Pooler | `v2.9.10` | `23.5 MiB` | `52.4 MiB` | `207.9 MiB` | `0.10%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/pooler-v2.9.10) · [report](services/pooler/REPORT.md) |
 <!-- generated:host-native:end -->
 
