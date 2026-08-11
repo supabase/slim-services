@@ -151,7 +151,7 @@ Docker image, so it ships its own source image's gconv modules via
 never need this; their only iconv importer (`libstdc++.so.6`) reads host
 gconv, which ships with host libc. Full evidence, decision rules, and sweep
 results:
-`docs/superpowers/specs/2026-07-09-glibc-runtime-side-data-design.md`.
+`docs/design/glibc-runtime-side-data.md`.
 
 ## macOS Dynamic Linking
 

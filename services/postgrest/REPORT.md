@@ -112,10 +112,9 @@ We also validated upstream PR #4193 artifacts from GitHub Actions:
 ## Host-Native darwin-arm64 Artifact (2026-07)
 
 Decision: consume the upstream macOS release binary instead of building from
-source (the HOST_NATIVE_PLAN.md fallback). The repo's static Nix expression is
-Linux-only — macOS has no static linking — and a from-source GHC build on
-darwin without upstream's cachix cache costs hours for a binary upstream
-already publishes (and the CLI already consumes).
+source (the HOST_NATIVE_PLAN.md fallback). A from-source GHC build on darwin
+without upstream's cachix cache costs hours for a binary upstream already
+publishes (and the CLI already consumes).
 
 The upstream binary is not portable as published: it links
 `/opt/homebrew/opt/libpq/lib/libpq.5.dylib`, so it silently requires Homebrew

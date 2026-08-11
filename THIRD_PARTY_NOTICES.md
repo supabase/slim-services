@@ -1,7 +1,7 @@
 # Third-party notices
 
 This repository builds and redistributes runtime artifacts from independently
-licensed upstream projects. The Apache-2.0 license at the repository root
+licensed upstream projects. The MIT license at the repository root
 applies only to the original packaging code in this repository. It does not
 replace the licenses of upstream projects or their transitive dependencies.
 

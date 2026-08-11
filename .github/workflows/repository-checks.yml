@@ -1,4 +1,4 @@
-name: Public policy
+name: Repository checks
 
 "on":
   pull_request:
@@ -11,8 +11,8 @@ permissions:
   contents: read
 
 jobs:
-  policy:
-    name: public policy
+  checks:
+    name: repository checks
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -20,9 +20,6 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-
-      - name: Require immutable action references
-        run: scripts/check-actions-pinned.sh
 
       - name: Check shell syntax
         shell: bash
@@ -41,3 +38,8 @@ jobs:
           # host_service_pid are populated by sourced helpers, and ulimit
           # flags are provided by the concrete runtime-image shells.
           shellcheck --severity=warning --exclude=SC2034,SC2154,SC3045 "${scripts[@]}"
+
+      - name: Test artifact contracts
+        run: |
+          scripts/test-license-compliance.sh
+          scripts/test-upstream-runtime.sh

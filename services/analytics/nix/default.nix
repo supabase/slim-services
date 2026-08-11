@@ -296,7 +296,7 @@ in
       # silently falls back to UTC. NSS/gconv/locale need NO bundling at the
       # glibc 2.39 floor (nss_files/nss_dns are compiled into libc >= 2.34,
       # gconv ships with the host libc, C.UTF-8 is built in >= 2.35) — see
-      # docs/superpowers/specs/2026-07-09-glibc-runtime-side-data-design.md.
+      # docs/design/glibc-runtime-side-data.md.
       mkdir -p "$rootfs/share"
       cp -RL ${pkgs.tzdata}/share/zoneinfo "$rootfs/share/zoneinfo"
       chmod -R u+w "$rootfs/share/zoneinfo"

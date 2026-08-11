@@ -49,10 +49,14 @@ Important phase 1 fixes:
   failed with `:nxdomain`.
 - Normalized `/bin` and `/lib` to the Debian 13 merged-`/usr` layout.
 
-## Phase 2 Changes
+## Superseded Docker-source phase
 
-- Added `services/pooler/overlay/limits.sh`, a POSIX shell equivalent of
-  upstream `limits.sh`.
+An earlier Docker-source implementation added a POSIX limits wrapper. The
+native-first entrypoint described below superseded it, so the obsolete overlay
+file is no longer retained.
+
+That earlier phase:
+
 - Switched final entrypoint and command from `/bin/sh` to `/usr/bin/sh`, backed
   by BusyBox and matching the merged-`/usr` distroless layout.
 - Removed bash from the artifact runtime.
