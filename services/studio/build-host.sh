@@ -146,7 +146,7 @@ node_arch="x64"
 [[ "$ARCH" == "arm64" ]] && node_arch="arm64"
 find "$ROOTFS/app" -type f -name 'sentry_cpu_profiler-*.node' \
   ! -name "sentry_cpu_profiler-${TARGET_OS}-${node_arch}-*" -print0 | xargs -0r rm -f
-find "$ROOTFS/app" -type f -name '*-musl-*.node' -print0 | xargs -0r rm -f
+find "$ROOTFS/app" -type f \( -name '*-musl-*.node' -o -name '*-musl.node' \) -print0 | xargs -0r rm -f
 find "$ROOTFS/app" -type d -path '*/build/Release/obj.target' -prune -print0 | xargs -0r rm -rf
 find "$ROOTFS/app" -type f \( -name '*.o' -o -name '*.o.d' \) -print0 | xargs -0r rm -f
 studio_phase_complete
