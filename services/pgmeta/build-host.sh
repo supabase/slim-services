@@ -53,11 +53,14 @@ find node_modules \
 # libc.musl-*.so.1, and the darwin-x64 prebuilds carry code signatures
 # that do not verify. Keep only the current platform/arch (plus the musl
 # prune, since the keep pattern cannot separate glibc from musl).
+# The musl prune needs both spellings: sentry embeds the ABI mid-name
+# (…-musl-108.node) while napi-rs platform packages end with it
+# (nice.linux-arm64-musl.node, via piscina -> @napi-rs/nice).
 node_arch="x64"
 [[ "$ARCH" == "arm64" ]] && node_arch="arm64"
 find node_modules -type f -name 'sentry_cpu_profiler-*.node' \
   ! -name "sentry_cpu_profiler-${TARGET_OS}-${node_arch}-*" -print0 | xargs -0r rm -f
-find node_modules -type f -name '*-musl-*.node' -print0 | xargs -0r rm -f
+find node_modules -type f \( -name '*-musl-*.node' -o -name '*-musl.node' \) -print0 | xargs -0r rm -f
 # node-gyp intermediates (build/Release/obj.target, *.o) are not runtime
 # files, and their unsigned Mach-O objects fail the darwin signature audit.
 find node_modules -type d -path '*/build/Release/obj.target' -prune -print0 | xargs -0r rm -rf
