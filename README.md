@@ -13,7 +13,7 @@ For the latest published Linux ARM64 release set (10 services), upstream images
 total **2042.5 MiB** compressed; the slim set totals **562.3 MiB** (**72.5%**
 smaller — exact numbers below). Every published service also ships measured
 steady-state RSS and idle-CPU numbers, and a minimal core stack (postgres +
-auth + postgrest) idles at roughly **65 MiB of RSS per stack** with near-zero
+auth + postgrest) idles at roughly **64 MiB of RSS per stack** with near-zero
 idle CPU.
 <!-- generated:release-summary:end -->
 
@@ -69,7 +69,7 @@ override because its exact release tag is unavailable on Docker Hub.
 <!-- generated:results:begin -->
 | Service | Version | Upstream ARM64 | Published slim | Reduction | Idle RSS | Idle CPU | Sources |
 |---|---:|---:|---:|---:|---:|---:|---|
-| Postgres | `17.6.1.160` (all PG17 extensions, minimal preload) | `349.8 MiB` | `132.7 MiB` | `62.1%` | `47.6 MiB` | `0.01%` | [release](https://github.com/supabase/slim-services/releases/tag/postgres-17.6.1.160) · [report](services/postgres/REPORT.md) |
+| Postgres | `17.6.1.161` (all PG17 extensions, minimal preload) | `349.8 MiB` | `132.7 MiB` | `62.1%` | `47.1 MiB` | `0.01%` | [release](https://github.com/supabase/slim-services/releases/tag/postgres-17.6.1.161) · [report](services/postgres/REPORT.md) |
 | PostgREST | `v16.1` | `6.1 MiB` | `5.9 MiB` | `3.8%` | `8.3 MiB` | `0.07%` | [release](https://github.com/supabase/slim-services/releases/tag/postgrest-v16.1) · [report](services/postgrest/REPORT.md) |
 | Auth | `v2.195.0` | `26.0 MiB` | `11.5 MiB` | `55.7%` | `9.0 MiB` | `0.01%` | [release](https://github.com/supabase/slim-services/releases/tag/auth-v2.195.0) · [report](services/auth/REPORT.md) |
 | Realtime | `v2.125.1` | `116.6 MiB` | `27.0 MiB` | `76.8%` | `176.5 MiB` | `0.20%` | [release](https://github.com/supabase/slim-services/releases/tag/realtime-v2.125.1) · [report](services/realtime/REPORT.md) |
@@ -119,7 +119,7 @@ macOS archives require macOS 14+. The manifest records the exact floor as
 <!-- generated:host-native:begin -->
 | Service | Version | Archive | rootfs | Idle RSS | Idle CPU | Portable | Sources |
 |---|---:|---:|---:|---:|---:|---|---|
-| Postgres | `17.6.1.160` | `103.0 MiB` | `662.6 MiB` | `71.1 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/postgres-17.6.1.160) · [report](services/postgres/REPORT.md) |
+| Postgres | `17.6.1.161` | `103.0 MiB` | `662.6 MiB` | `72.4 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/postgres-17.6.1.161) · [report](services/postgres/REPORT.md) |
 | PostgREST | `v16.1` | `12.5 MiB` | `78.0 MiB` | `55.9 MiB` | `0.03%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/postgrest-v16.1) · [report](services/postgrest/REPORT.md) |
 | Auth | `v2.195.0` | `9.5 MiB` | `33.8 MiB` | `29.8 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/auth-v2.195.0) · [report](services/auth/REPORT.md) |
 | Realtime | `v2.125.1` | `11.7 MiB` | `47.8 MiB` | `210.7 MiB` | `0.23%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/realtime-v2.125.1) · [report](services/realtime/REPORT.md) |
