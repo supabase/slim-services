@@ -347,14 +347,15 @@ The PostgreSQL policy accepts only plain `17.x.x.x` releases; PostgreSQL 15,
 OrioleDB, architecture-specific, and other suffixed release tags are ignored.
 
 Mailpit and Vector are the non-polled upstream-archive services. Their release
-workflows use pinned native archives and mirror the exact upstream OCI images
-to `ghcr.io/supabase/cli/mailpit:<version>` and
-`ghcr.io/supabase/cli/vector:<version>`, respectively. They are intentionally
-absent from the generated size/runtime tables until first publication and the
-anonymous pull gates complete. See the [Mailpit report](services/mailpit/REPORT.md)
-and [Vector report](services/vector/REPORT.md) for input digests, normalized
-layouts, smoke coverage, and publication checklists. Vector release `0.53.0`
-uses `docker.io/timberio/vector:0.53.0-alpine` as its pinned mirror source.
+workflows accept an explicit version, resolve the versionless descriptor against
+GitHub and the independent OCI repository at plan time, and publish one
+run-scoped snapshot plus digest for every build, mirror, and release consumer.
+The recipe receives that verified snapshot through `UPSTREAM_ASSETS_FILE`; no
+checked-in per-version policy is used. They are intentionally absent from the
+generated size/runtime tables until first publication and the anonymous pull
+gates complete. See the [Mailpit report](services/mailpit/REPORT.md) and [Vector
+report](services/vector/REPORT.md) for historical input digests, normalized
+layouts, smoke coverage, and publication checklists.
 
 After a successful release run, `.github/workflows/release-results.yml`
 downloads the newest published manifest set for every service, regenerates the

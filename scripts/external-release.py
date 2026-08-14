@@ -315,12 +315,21 @@ def _source_record(
     archive_path = _download_archive(url)
     try:
         digest = hashlib.sha256(pathlib.Path(archive_path).read_bytes()).hexdigest()
+        nix_raw = _run_json(
+            [
+                "nix",
+                "store",
+                "prefetch-file",
+                "--json",
+                "--unpack",
+                pathlib.Path(archive_path).resolve().as_uri(),
+            ]
+        )
+        nix_result = _require_dict(nix_raw, "nix prefetch result")
+        fetch_hash = nix_result.get("hash")
+        fetch_hash = _validate_sri(fetch_hash, "nix prefetch result hash")
     finally:
         pathlib.Path(archive_path).unlink(missing_ok=True)
-    nix_raw = _run_json(["nix", "store", "prefetch-file", "--json", "--unpack", url])
-    nix_result = _require_dict(nix_raw, "nix prefetch result")
-    fetch_hash = nix_result.get("hash")
-    fetch_hash = _validate_sri(fetch_hash, "nix prefetch result hash")
     source: dict[str, Any] = {
         "commit": commit,
         "url": url,

@@ -116,7 +116,7 @@ class UpstreamArtifactTest(unittest.TestCase):
 
     def vector_recipe_libc(self, target_os, arch):
         env = os.environ.copy()
-        env.update({"TARGET_OS": target_os, "ARCH": arch})
+        env.update({"TARGET_OS": target_os, "ARCH": arch, "UPSTREAM_ASSETS_FILE": str(self.policy)})
         env.pop("ARTIFACT_LIBC", None)
         result = subprocess.run(
             [

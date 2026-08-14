@@ -39,9 +39,21 @@ jobs:
           # flags are provided by the concrete runtime-image shells.
           shellcheck --severity=warning --exclude=SC2034,SC2154,SC3045 "${scripts[@]}"
 
+      - name: Test external release and source contracts
+        run: |
+          set -euo pipefail
+          scripts/test-external-release.sh
+          scripts/test-external-workflows.sh
+          scripts/test-external-source-build.sh
+          scripts/test-portable-audit.sh
+
       - name: Test artifact contracts
         run: |
+          set -euo pipefail
           scripts/test-license-compliance.sh
           scripts/test-upstream-release.sh
+          scripts/test-extract-upstream-archive.sh
+          scripts/test-upstream-artifact.sh
           scripts/test-oci-mirror.sh
           scripts/test-upstream-runtime.sh
+          services/vector/test-smoke.sh

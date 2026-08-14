@@ -1,0 +1,28 @@
+{
+  "github": {
+    "repository": "axllent/mailpit",
+    "release_tag_template": "{version}",
+    "artifact": {
+      "type": "release-assets",
+      "targets": {
+        "darwin-arm64": {
+          "name_template": "mailpit-darwin-arm64.tar.gz"
+        },
+        "linux-amd64": {
+          "name_template": "mailpit-linux-amd64.tar.gz"
+        },
+        "linux-arm64": {
+          "name_template": "mailpit-linux-arm64.tar.gz"
+        }
+      }
+    }
+  },
+  "oci": {
+    "repository": "docker.io/axllent/mailpit",
+    "tag_template": "{version}",
+    "required_platforms": [
+      "linux/amd64",
+      "linux/arm64"
+    ]
+  }
+}

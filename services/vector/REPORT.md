@@ -1,4 +1,4 @@
-# Vector 0.53.0 Release Report
+# Vector external-release report (historical 0.53.0 evidence)
 
 Pre-publication verification record for the Vector upstream-release artifact
 and exact OCI mirror. This report describes the pinned `0.53.0` input; the
@@ -8,8 +8,10 @@ tables until native release and public-image gates complete.
 ## Primary-source pins and licensing
 
 - Upstream source repository: [`vectordotdev/vector`](https://github.com/vectordotdev/vector).
-- Upstream release tag: `v0.53.0` (the public release tag for manual version
-  input `0.53.0`).
+- Manual release input is resolved dynamically from the versionless
+  `external-release.json` descriptor. `0.53.0` below is retained as historical
+  evidence from the last compatibility check, not as a supported-version gate;
+  the descriptor adds the `v` GitHub prefix and `-alpine` OCI suffix.
 - Upstream archive assets are consumed without a source rebuild and are
   verified before extraction:
 
@@ -73,6 +75,11 @@ byte-identical `bin/vector` plus the license and documentation files and their
 digests.
 
 ## Exact OCI mirror input
+
+At attempt time, the plan job resolves the GitHub release and independent OCI
+tag once, then uploads one immutable snapshot and sidecar. Every native build,
+mirror, and release consumer downloads and verifies those exact bytes before
+loading its recipe. The v0.53.0 values below remain historical evidence.
 
 The mirror policy pins the Alpine image independently from the native archive:
 
