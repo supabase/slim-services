@@ -14,6 +14,12 @@ NATIVE_TARGETS = frozenset({"darwin-arm64", "linux-amd64", "linux-arm64"})
 IMAGE_PLATFORMS = frozenset({"linux/amd64", "linux/arm64"})
 VERSION_PATTERN = re.compile(r"v[0-9]+\.[0-9]+\.[0-9]+\Z")
 REPOSITORY_PATTERN = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\Z")
+ASSET_NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
+OCI_SOURCE_PATTERN = re.compile(
+    r"(?P<registry>[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*(?::[0-9]{1,5})?)/"
+    r"(?P<repository>[a-z0-9]+(?:[._-][a-z0-9]+)*(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)*):"
+    r"(?P<tag>[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})\Z"
+)
 HEX_DIGEST_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
 IMAGE_DIGEST_PATTERN = re.compile(r"sha256:[0-9a-f]{64}\Z")
 
@@ -68,14 +74,13 @@ def _validate_image_digest(value: Any, path: str) -> str:
     return value
 
 
-def _validate_asset(asset: Any, repository: str, version: str, target: str, path: str) -> dict[str, str]:
+def _validate_asset(asset: Any, repository: str, version: str, path: str) -> dict[str, str]:
     asset = _require_dict(asset, path)
     _require_keys(asset, {"name", "url", "sha256"}, path)
 
     name = _require_string(asset["name"], f"{path}.name")
-    expected_name = f"mailpit-{target}.tar.gz"
-    if name != expected_name:
-        raise ValueError(f"{path}.name must be {expected_name!r}")
+    if ASSET_NAME_PATTERN.fullmatch(name) is None:
+        raise ValueError(f"{path}.name must be a safe archive basename")
 
     url = _require_string(asset["url"], f"{path}.url")
     expected_url = f"https://github.com/{repository}/releases/download/{version}/{name}"
@@ -86,14 +91,19 @@ def _validate_asset(asset: Any, repository: str, version: str, target: str, path
     return {"name": name, "url": url, "sha256": sha256}
 
 
-def _validate_image(image: Any, repository: str, version: str, path: str) -> dict[str, Any]:
+def _validate_image(image: Any, version: str, path: str) -> dict[str, Any]:
     image = _require_dict(image, path)
     _require_keys(image, {"source", "index_digest", "platforms"}, path)
 
     source = _require_string(image["source"], f"{path}.source")
-    expected_source = f"docker.io/{repository}:{version}"
-    if source != expected_source:
-        raise ValueError(f"{path}.source must be {expected_source!r}")
+    source_match = OCI_SOURCE_PATTERN.fullmatch(source)
+    if source_match is None:
+        raise ValueError(f"{path}.source must be a canonical tagged registry reference")
+    registry = source_match.group("registry")
+    if "." not in registry and ":" not in registry and registry != "localhost":
+        raise ValueError(f"{path}.source must include an explicit registry")
+    if source_match.group("tag") != version:
+        raise ValueError(f"{path}.source tag must equal release version {version!r}")
 
     index_digest = _validate_image_digest(image["index_digest"], f"{path}.index_digest")
     platforms = _require_dict(image["platforms"], f"{path}.platforms")
@@ -116,10 +126,10 @@ def _validate_version_record(version_record: Any, repository: str, version: str,
     assets = _require_dict(version_record["assets"], f"{path}.assets")
     _require_keys(assets, set(NATIVE_TARGETS), f"{path}.assets")
     validated_assets = {
-        target: _validate_asset(assets[target], repository, version, target, f"{path}.assets.{target}")
+        target: _validate_asset(assets[target], repository, version, f"{path}.assets.{target}")
         for target in sorted(NATIVE_TARGETS)
     }
-    validated_image = _validate_image(version_record["image"], repository, version, f"{path}.image")
+    validated_image = _validate_image(version_record["image"], version, f"{path}.image")
     return {"assets": validated_assets, "image": validated_image}
 
 
