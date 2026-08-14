@@ -14,7 +14,9 @@ from typing import Any
 
 
 OCI_INDEX_MEDIA_TYPE = "application/vnd.oci.image.index.v1+json"
+DOCKER_MANIFEST_LIST_MEDIA_TYPE = "application/vnd.docker.distribution.manifest.list.v2+json"
 OCI_MANIFEST_MEDIA_TYPE = "application/vnd.oci.image.manifest.v1+json"
+DOCKER_MANIFEST_MEDIA_TYPE = "application/vnd.docker.distribution.manifest.v2+json"
 IMAGE_DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
 REQUIRED_PLATFORMS = ("linux/amd64", "linux/arm64")
 
@@ -71,10 +73,19 @@ def _validate_index(raw: bytes, label: str) -> tuple[dict[str, Any], str]:
         raise VerificationError(f"{label} must be an OCI index object")
     if value.get("schemaVersion") != 2:
         raise VerificationError(f"{label} has unexpected schemaVersion")
-    if value.get("mediaType") != OCI_INDEX_MEDIA_TYPE:
+    index_media_type = value.get("mediaType")
+    if index_media_type not in {
+        OCI_INDEX_MEDIA_TYPE,
+        DOCKER_MANIFEST_LIST_MEDIA_TYPE,
+    }:
         raise VerificationError(
-            f"{label} has unexpected media type: {value.get('mediaType')!r}"
+            f"{label} has unexpected media type: {index_media_type!r}"
         )
+    child_media_type = (
+        OCI_MANIFEST_MEDIA_TYPE
+        if index_media_type == OCI_INDEX_MEDIA_TYPE
+        else DOCKER_MANIFEST_MEDIA_TYPE
+    )
     manifests = value.get("manifests")
     if not isinstance(manifests, list) or not manifests:
         raise VerificationError(f"{label}.manifests must be a non-empty array")
@@ -84,10 +95,10 @@ def _validate_index(raw: bytes, label: str) -> tuple[dict[str, Any], str]:
         descriptor_label = f"{label}.manifests[{index}]"
         if not isinstance(descriptor, dict):
             raise VerificationError(f"{descriptor_label} must be an object")
-        if descriptor.get("mediaType") != OCI_MANIFEST_MEDIA_TYPE:
+        if descriptor.get("mediaType") != child_media_type:
             raise VerificationError(
                 f"{descriptor_label} has unexpected media type: "
-                f"{descriptor.get('mediaType')!r}"
+                f"{descriptor.get('mediaType')!r} for {index_media_type}"
             )
         _descriptor_digest(descriptor.get("digest"), f"{descriptor_label}.digest")
         size = descriptor.get("size")
@@ -177,6 +188,8 @@ def verify(
         raise VerificationError(
             f"destination index digest mismatch: expected {source_digest}, got {destination_digest}"
         )
+    if destination_raw != source_raw:
+        raise VerificationError("destination index raw bytes differ from source index")
 
     destination_platforms = {
         platform: descriptor["digest"]

@@ -1,0 +1,28 @@
+{
+  "github": {
+    "repository": "vectordotdev/vector",
+    "release_tag_template": "v{version}",
+    "artifact": {
+      "type": "release-assets",
+      "targets": {
+        "darwin-arm64": {
+          "name_template": "vector-{version}-arm64-apple-darwin.tar.gz"
+        },
+        "linux-amd64": {
+          "name_template": "vector-{version}-x86_64-unknown-linux-musl.tar.gz"
+        },
+        "linux-arm64": {
+          "name_template": "vector-{version}-aarch64-unknown-linux-musl.tar.gz"
+        }
+      }
+    }
+  },
+  "oci": {
+    "repository": "docker.io/timberio/vector",
+    "tag_template": "{version}-alpine",
+    "required_platforms": [
+      "linux/amd64",
+      "linux/arm64"
+    ]
+  }
+}

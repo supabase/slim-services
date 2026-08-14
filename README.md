@@ -346,12 +346,16 @@ corresponding GitHub release here. All configured polled services are enabled.
 The PostgreSQL policy accepts only plain `17.x.x.x` releases; PostgreSQL 15,
 OrioleDB, architecture-specific, and other suffixed release tags are ignored.
 
-Mailpit is the non-polled upstream-archive service. Its release workflow uses
-the pinned `axllent/mailpit` archives and mirrors the exact upstream OCI image
-to `ghcr.io/supabase/cli/mailpit:<version>`; it is intentionally absent from
-the generated size/runtime tables until the first publication and anonymous
-pull gate complete. See [the Mailpit report](services/mailpit/REPORT.md) for
-the input digests, normalization, smoke coverage, and publication checklist.
+Mailpit and Vector are the non-polled upstream-archive services. Their release
+workflows accept an explicit version, resolve the versionless descriptor against
+GitHub and the independent OCI repository at plan time, and publish one
+run-scoped snapshot plus digest for every build, mirror, and release consumer.
+The recipe receives that verified snapshot through `UPSTREAM_ASSETS_FILE`; no
+checked-in per-version policy is used. They are intentionally absent from the
+generated size/runtime tables until first publication and the anonymous pull
+gates complete. See the [Mailpit report](services/mailpit/REPORT.md) and [Vector
+report](services/vector/REPORT.md) for historical input digests, normalized
+layouts, smoke coverage, and publication checklists.
 
 After a successful release run, `.github/workflows/release-results.yml`
 downloads the newest published manifest set for every service, regenerates the
@@ -432,6 +436,9 @@ scripts/archive-artifact.sh <artifact-rootfs> [archive-prefix]
 - [Mailpit](services/mailpit/REPORT.md): verified upstream native archives and
   an exact OCI image mirror; publication and anonymous-pull evidence remain
   release gates before generated tables are updated.
+- [Vector](services/vector/REPORT.md): verified upstream native archives and
+  an exact `timberio/vector:0.53.0-alpine` OCI image mirror; native release,
+  anonymous-pull evidence, and later CLI integration remain open gates.
 
 ## Design Principles
 

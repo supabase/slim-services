@@ -44,7 +44,7 @@ def _load_inputs(mapping_raw: str, executables_raw: str) -> tuple[dict[str, str]
     mapping: dict[str, str] = {}
     destinations: set[str] = set()
     for source_value, destination_value in mapping_value.items():
-        source = _relative_path(source_value, "mapping source", nested=False)
+        source = _relative_path(source_value, "mapping source", nested=True)
         destination = _relative_path(destination_value, "mapping destination", nested=True)
         if source in mapping:
             raise ArchiveError(f"duplicate mapping source: {source}")
@@ -55,7 +55,7 @@ def _load_inputs(mapping_raw: str, executables_raw: str) -> tuple[dict[str, str]
 
     executables: set[str] = set()
     for executable_value in executables_value:
-        executable = _relative_path(executable_value, "executable", nested=False)
+        executable = _relative_path(executable_value, "executable", nested=True)
         if executable in executables:
             raise ArchiveError(f"duplicate executable: {executable}")
         executables.add(executable)
@@ -69,31 +69,79 @@ def _load_inputs(mapping_raw: str, executables_raw: str) -> tuple[dict[str, str]
 
 def _validate_members(
     archive: tarfile.TarFile, mapping: dict[str, str], executables: set[str]
-) -> list[tuple[tarfile.TarInfo, str, int]]:
+) -> list[tuple[tarfile.TarInfo, str, str, int]]:
     members = archive.getmembers()
-    seen: set[str] = set()
-    validated: list[tuple[tarfile.TarInfo, str, int]] = []
+    seen_raw: set[str] = set()
+    parsed: list[tuple[tarfile.TarInfo, str]] = []
+    roots: set[str] = set()
 
     for member in members:
-        name = member.name
-        if name in seen:
-            raise ArchiveError(f"duplicate archive member: {name}")
-        seen.add(name)
-        _relative_path(name, "archive member path", nested=False)
-        if not member.isreg():
+        raw_name = member.name
+        if raw_name in seen_raw:
+            raise ArchiveError(f"duplicate archive member: {raw_name}")
+        seen_raw.add(raw_name)
+        name = raw_name[2:] if raw_name.startswith("./") else raw_name
+        normalized_name = name.rstrip("/") if member.isdir() else name
+        _relative_path(normalized_name, "archive member path", nested=True)
+        if not member.isreg() and not member.isdir():
             raise ArchiveError(f"non-regular archive member: {name}")
-        if name not in mapping:
-            continue
         mode = member.mode
         if not isinstance(mode, int) or mode < 0 or mode & ~0o777:
             raise ArchiveError(f"invalid archive mode: {name}")
+        if member.isdir() and "/" not in normalized_name:
+            roots.add(normalized_name)
+        parsed.append((member, normalized_name))
+
+    if len(roots) > 1:
+        raise ArchiveError("multiple archive roots: " + ", ".join(sorted(roots)))
+    root = next(iter(roots), None)
+    normalized_members: list[tuple[tarfile.TarInfo, str | None]] = []
+    root_member_seen = False
+    for member, name in parsed:
+        if root is not None:
+            if name == root:
+                normalized_name = None
+            elif name.startswith(root + "/"):
+                normalized_name = name[len(root) + 1 :]
+            else:
+                raise ArchiveError(f"multiple archive roots: {name}")
+        else:
+            normalized_name = name
+        if normalized_name is not None:
+            if root is None:
+                _relative_path(normalized_name, "archive member path", nested=False)
+            else:
+                _relative_path(normalized_name, "normalized archive member path", nested=True)
+        elif root_member_seen:
+            raise ArchiveError(f"duplicate normalized archive member: {root}")
+        else:
+            root_member_seen = True
+        normalized_members.append((member, normalized_name))
+
+    seen_normalized: set[str] = set()
+    regular_members: set[str] = set()
+    validated: list[tuple[tarfile.TarInfo, str, str, int]] = []
+    for member, name in normalized_members:
+        if name is None:
+            if member.isreg():
+                raise ArchiveError(f"archive root is not a directory: {member.name}")
+            continue
+        if name in seen_normalized:
+            raise ArchiveError(f"duplicate normalized archive member: {name}")
+        seen_normalized.add(name)
+        if member.isdir():
+            continue
+        regular_members.add(name)
+        if name not in mapping:
+            continue
+        mode = member.mode
         is_executable = bool(mode & 0o111)
         if (name in executables) != is_executable:
             raise ArchiveError(f"executable mode mismatch: {name}")
-        validated.append((member, mapping[name], mode & 0o777))
+        validated.append((member, name, mapping[name], mode & 0o777))
 
     expected = set(mapping)
-    actual = set(seen)
+    actual = regular_members
     if actual != expected:
         missing = sorted(expected - actual)
         extra = sorted(actual - expected)
@@ -129,10 +177,10 @@ def _prepare_destinations(rootfs: pathlib.Path, destinations: list[str]) -> None
 def _install(
     archive: tarfile.TarFile,
     rootfs: pathlib.Path,
-    validated: list[tuple[tarfile.TarInfo, str, int]],
+    validated: list[tuple[tarfile.TarInfo, str, str, int]],
 ) -> dict[str, dict[str, str]]:
     report: dict[str, dict[str, str]] = {}
-    for member, destination, mode in sorted(validated, key=lambda item: item[0].name):
+    for member, source, destination, mode in sorted(validated, key=lambda item: item[1]):
         destination_path = rootfs.joinpath(*destination.split("/"))
         source_digest = hashlib.sha256()
         destination_digest = hashlib.sha256()
@@ -155,7 +203,7 @@ def _install(
             os.chmod(destination_path, mode)
         except OSError as error:
             raise ArchiveError(f"could not set mode for archive member: {member.name}") from error
-        report[member.name] = {
+        report[source] = {
             "destination": destination,
             "source_sha256": source_digest.hexdigest(),
             "destination_sha256": destination_digest.hexdigest(),
@@ -175,7 +223,7 @@ def normalize(
     try:
         with tarfile.open(archive_path, "r:*") as archive:
             validated = _validate_members(archive, mapping, executables)
-            _prepare_destinations(rootfs, [destination for _, destination, _ in validated])
+            _prepare_destinations(rootfs, [destination for _, _, destination, _ in validated])
             report = _install(archive, rootfs, validated)
     except (OSError, tarfile.TarError) as error:
         raise ArchiveError(f"could not read archive: {archive_path}") from error
