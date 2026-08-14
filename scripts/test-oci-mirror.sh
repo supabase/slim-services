@@ -6,6 +6,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 python3 - "$ROOT_DIR" <<'PY'
 import hashlib
 import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -16,6 +17,7 @@ import unittest
 ROOT_DIR = pathlib.Path(sys.argv[1])
 sys.argv[1:] = []
 SCRIPT = ROOT_DIR / "scripts" / "verify-oci-mirror.py"
+MIRROR_SCRIPT = ROOT_DIR / "scripts" / "mirror-upstream-image.sh"
 
 
 def digest(raw):
@@ -183,6 +185,63 @@ class VerifyOciMirrorTest(unittest.TestCase):
         result = self.run_verify(destination=fixture_index(attest=False))
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("attestation", result.stderr)
+
+    def test_anonymous_regctl_digest_uses_empty_task_local_configs(self):
+        fake_bin = self.directory / "fake-bin"
+        fake_bin.mkdir()
+        trace = self.directory / "regctl-trace"
+        fake_regctl = fake_bin / "regctl"
+        fake_regctl.write_text(
+            "#!/bin/sh\n"
+            'regctl_empty=no; docker_empty=no\n'
+            '[ -d "${REGCTL_CONFIG-}" ] && [ -z "$(ls -A "$REGCTL_CONFIG")" ] && regctl_empty=yes\n'
+            '[ -d "${DOCKER_CONFIG-}" ] && [ -z "$(ls -A "$DOCKER_CONFIG")" ] && docker_empty=yes\n'
+            'printf "%s\\t%s\\t%s\\t%s\\t%s\\n" "$*" "${REGCTL_CONFIG-}" "${DOCKER_CONFIG-}" "$regctl_empty" "$docker_empty" >> "$FAKE_TRACE"\n'
+            'if [ "$1" = image ] && [ "$2" = digest ]; then printf "%s\\n" "$FAKE_DIGEST"; exit 0; fi\n'
+            'if [ "$1" = image ] && [ "$2" = manifest ]; then cat "$FAKE_RAW"; exit 0; fi\n'
+            'if [ "$1" = image ] && [ "$2" = copy ]; then exit 0; fi\n'
+            'if [ "$1" = artifact ] && [ "$2" = tree ]; then printf "%s\\n" "$FAKE_DIGEST"; exit 0; fi\n'
+            'exit 1\n',
+            encoding="utf-8",
+        )
+        fake_regctl.chmod(0o755)
+        caller_regctl = self.directory / "caller-regctl"
+        caller_docker = self.directory / "caller-docker"
+        caller_regctl.mkdir()
+        caller_docker.mkdir()
+        result = subprocess.run(
+            ["bash", str(MIRROR_SCRIPT), "auth", "v1.2.3", "example.invalid/mailpit", str(self.output_path)],
+            text=True,
+            capture_output=True,
+            env={
+                **os.environ,
+                "PATH": f"{fake_bin}:{os.environ['PATH']}",
+                "UPSTREAM_ASSETS_FILE": str(self.policy_path),
+                "FAKE_TRACE": str(trace),
+                "FAKE_DIGEST": digest(self.source_path.read_bytes()),
+                "FAKE_RAW": str(self.source_path),
+                "REGCTL_CONFIG": str(caller_regctl),
+                "DOCKER_CONFIG": str(caller_docker),
+            },
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        anonymous_lines = [
+            line.split("\t")
+            for line in trace.read_text(encoding="utf-8").splitlines()
+            if "image digest example.invalid/mailpit:v1.2.3" in line
+        ]
+        self.assertTrue(anonymous_lines)
+        _, regctl_config, docker_config, regctl_empty, docker_empty = anonymous_lines[-1]
+        self.assertNotEqual(regctl_config, str(caller_regctl))
+        self.assertNotEqual(docker_config, str(caller_docker))
+        self.assertEqual(regctl_empty, "yes")
+        self.assertEqual(docker_empty, "yes")
+        tree_lines = [
+            line for line in trace.read_text(encoding="utf-8").splitlines() if "artifact tree" in line
+        ]
+        self.assertEqual(len(tree_lines), 2, tree_lines)
+        self.assertTrue(all("artifact tree --digest-tags" in line for line in tree_lines), tree_lines)
 
 
 if __name__ == "__main__":

@@ -54,6 +54,8 @@ source_raw="$work_dir/source-index.json"
 destination_raw="$work_dir/destination-index.json"
 tree_source="$work_dir/source-tree.txt"
 tree_destination="$work_dir/destination-tree.txt"
+tree_source_error="$work_dir/source-tree.error"
+tree_destination_error="$work_dir/destination-tree.error"
 tree_source_digests="$work_dir/source-tree-digests.txt"
 tree_destination_digests="$work_dir/destination-tree-digests.txt"
 
@@ -73,36 +75,52 @@ destination_live_digest="$(regctl image digest "$destination_ref" | tr -d '[:spa
   "destination image digest mismatch: expected $expected_index_digest, got $destination_live_digest"
 regctl image manifest --format raw-body "$destination_ref@$destination_live_digest" >"$destination_raw"
 
-if regctl artifact tree "$source_ref" >"$tree_source" 2>/dev/null; then
-  if regctl artifact tree "$destination_ref@$destination_live_digest" >"$tree_destination" 2>/dev/null; then
-    python3 - "$tree_source" "$tree_source_digests" <<'PY'
-import pathlib
-import re
-import sys
-
-path, output = map(pathlib.Path, sys.argv[1:])
-digests = sorted(set(re.findall(r"sha256:[0-9a-f]{64}", path.read_text(encoding="utf-8"))))
-output.write_text("\n".join(digests) + ("\n" if digests else ""), encoding="utf-8")
-PY
-    python3 - "$tree_destination" "$tree_destination_digests" <<'PY'
-import pathlib
-import re
-import sys
-
-path, output = map(pathlib.Path, sys.argv[1:])
-digests = sorted(set(re.findall(r"sha256:[0-9a-f]{64}", path.read_text(encoding="utf-8"))))
-output.write_text("\n".join(digests) + ("\n" if digests else ""), encoding="utf-8")
-PY
-    cmp -s "$tree_source_digests" "$tree_destination_digests" || fail \
-      "destination external referrer tree differs from upstream"
-    log "external referrer tree matches"
-  else
-    log "external referrer tree unavailable at destination; index verification remains required"
-    rm -f "$tree_source"
+artifact_tree() {
+  local reference="$1"
+  local tree_output="$2"
+  local error_output="$3"
+  if regctl artifact tree --digest-tags "$reference" >"$tree_output" 2>"$error_output"; then
+    return 0
   fi
+  return 1
+}
+
+if artifact_tree "$source_ref" "$tree_source" "$tree_source_error"; then
+  :
 else
-  log "external referrer tree unsupported by registry; embedded descriptors remain required"
+  cat "$tree_source_error" >&2
+  fail "upstream external referrer tree query failed"
 fi
+
+if artifact_tree \
+  "$destination_ref@$destination_live_digest" "$tree_destination" "$tree_destination_error"; then
+  :
+else
+  cat "$tree_destination_error" >&2
+  fail "destination external referrer tree query failed"
+fi
+
+python3 - "$tree_source" "$tree_source_digests" <<'PY'
+import pathlib
+import re
+import sys
+
+path, output = map(pathlib.Path, sys.argv[1:])
+digests = sorted(set(re.findall(r"sha256:[0-9a-f]{64}", path.read_text(encoding="utf-8"))))
+output.write_text("\n".join(digests) + ("\n" if digests else ""), encoding="utf-8")
+PY
+python3 - "$tree_destination" "$tree_destination_digests" <<'PY'
+import pathlib
+import re
+import sys
+
+path, output = map(pathlib.Path, sys.argv[1:])
+digests = sorted(set(re.findall(r"sha256:[0-9a-f]{64}", path.read_text(encoding="utf-8"))))
+output.write_text("\n".join(digests) + ("\n" if digests else ""), encoding="utf-8")
+PY
+cmp -s "$tree_source_digests" "$tree_destination_digests" || fail \
+  "destination external referrer tree differs from upstream"
+log "external referrer tree matches"
 
 "$ROOT_DIR/scripts/verify-oci-mirror.py" \
   "$policy_file" "$version" "$source_raw" "$destination_raw" "$output"
