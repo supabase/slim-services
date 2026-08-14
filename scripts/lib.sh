@@ -15,6 +15,7 @@ SERVICES=(
   auth
   postgres
   mailpit
+  vector
 )
 
 log() {
