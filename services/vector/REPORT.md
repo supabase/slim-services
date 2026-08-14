@@ -46,30 +46,31 @@ the Darwin binary relies only on the declared Apple system libraries and
 frameworks. The generated Darwin manifest records a measured macOS floor of
 `11.0` and no unresolved portability references.
 
-## Current darwin-arm64 evidence
+## Pre-merge native matrix evidence
 
-Evidence below comes from the ignored generated output at
-`artifacts/vector/0.53.0/darwin-arm64/` (it is not committed):
+The [native matrix workflow run 31796344933](https://github.com/supabase/slim-services/actions/runs/31796344933)
+was run at the exact head `53c2b52e73509f536ed4e2ff3248092e3a13e4c2`. It built
+and exercised all three verified upstream archives directly on their native
+hosts; cache reuse was bypassed. Each target ran the same file source → VRL
+transform → file sink flow, proved exactly-once transformed output across a
+stop/restart using the same state directory, cleaned up its temporary state,
+and collected runtime samples.
 
-| Item | Value |
-| --- | ---: |
-| Platform | `darwin/arm64` |
-| Rootfs | `114.3 MiB` |
-| Normalized archive | `vector-0.53.0-darwin-arm64.tar.zst`, `32.1 MiB` |
-| Archive SHA-256 | `1385a3c09950d1bb37feda92bad25df122fe504f5e8bfea346d555142a3a11f3` |
-| SPDX-2.3 SBOM SHA-256 | `384e143d4856a92ea9323b0d15919594df6f1e2f7bd0ed9c485fac3872f50e7a` |
-| Manifest runtime RSS | `22.0 MiB` |
-| Manifest idle CPU | `0.00%` |
-| Manifest runtime samples | `3` after a `10 s` settle |
-| Measured macOS floor | `11.0` |
+| Target | Normalized archive SHA-256 | SPDX-2.3 SBOM SHA-256 | `bin/vector` SHA-256 | RSS | Idle CPU | Manifest portability metadata |
+| --- | --- | --- | --- | ---: | ---: | --- |
+| `darwin/arm64` | `d8508190c546279efa6dcdd2254f215d81ee23aabc25505260c799c5af82f4e7` | `384e143d4856a92ea9323b0d15919594df6f1e2f7bd0ed9c485fac3872f50e7a` | `e4094bb8a9ee4f63242b5c7d47fb417411cf5170f79a3e4e3d529c126a152a83` | `25.7 MiB` | `0.0%` | `libc=null`; macOS floor `11.0` |
+| `linux/amd64` | `1318ccf98ee8e7ab3d77b86d05832c5984c4b80257863fb61e7e57c303486920` | `1473b9dc858893d334077371fc1425834e71472c94f22897f876bee27b717f30` | `30bd4693f0a2631792f7ccd7c7a9ca8c3e0b0052cd9dc59c8c2e3f7fceb537f4` | `62.4 MiB` | `0.0%` | `libc=musl`; assumed host libs `[]`; `os_floor.kind=glibc`, floor `null`, `bundled_glibc=false` |
+| `linux/arm64` | `a9f61f66fef77cc91e19f91a7f4c0bd34f628d4271dd37c51e022690805bf229` | `0b1b596c14d565ad4146a38701840ca649b93076b3bc5deb3a1548573adb1e00` | `8fb5e2c9fbe424d11d278330f1a250683b993b3edf69605a6ac31252009685fc` | `27.2 MiB` | `0.0%` | `libc=musl`; assumed host libs `[]`; `os_floor.kind=glibc`, floor `null`, `bundled_glibc=false` |
 
-The manifest's normalized member provenance includes the byte-identical
-`bin/vector` digest
-`e4094bb8a9ee4f63242b5c7d47fb417411cf5170f79a3e4e3d529c126a152a83`; license
-and documentation member digests are recorded alongside it in the manifest.
-The generated `SHA256SUMS` covers the archive and SBOM. A fresh native smoke
-rerun measured `28.4 MiB` RSS and `0.0%` idle CPU; the difference from the
-generated manifest is expected sampling variance, not a layout change.
+For Linux, `libc=musl` records the verified static-musl archive metadata.
+`os_floor.kind=glibc` is the scanner's fixed contract for reporting a
+GLIBC-symbol floor; it is not a claim about the binary's linkage. The null
+floor and `bundled_glibc=false` correctly record that these static-musl
+binaries neither require host GLIBC symbols nor ship a bundled glibc pair.
+For each row, the run's `SHA256SUMS` covers that target's normalized archive
+and SPDX-2.3 SBOM. Each manifest records normalized-member provenance for the
+byte-identical `bin/vector` plus the license and documentation files and their
+digests.
 
 ## Exact OCI mirror input
 
@@ -99,24 +100,29 @@ linux/arm/v6 sha256:bb69f3cf81937d19c869b83324df833719c4620ced6a4405b21e38e2e16b
 Publication uses `regctl image copy --digest-tags --referrers` from the
 immutable source reference. `scripts/verify-oci-mirror.py` compares raw index
 bytes, required platform digests, and embedded attestations; the mirror helper
-also compares the complete external referrer digest tree and proves anonymous
-destination resolution, pull, and the service smoke. No local GHCR mirror
-publish was performed for this report.
+also compares the complete external referrer digest tree. The real pinned
+source-image smoke is recorded separately below. No local GHCR mirror publish
+was performed for this report.
 
 ## Smoke coverage
 
-The Vector smoke validates the same contract in artifact and image modes: it
-validates a file source → VRL remap → file sink pipeline, checks exactly-once
-transformed output, stops and restarts against the same state directory, and
-records runtime metrics.
-
-Commands passed on the current Darwin host:
+The pre-merge native matrix above validates the same contract for every
+target in direct-host mode (not a Docker image): file source → VRL transform →
+file sink, exactly-once transformed output across restart, temporary-state
+cleanup, and runtime sampling with the build cache bypassed. The OCI mirror
+smoke remains a separate gate against the pinned Alpine image. The pinned
+source-image smoke passed locally on the current Darwin host:
 
 ```text
-ARTIFACT_ROOTFS=artifacts/vector/0.53.0/darwin-arm64/rootfs \
-  services/vector/test-smoke.sh
 IMAGE=docker.io/timberio/vector:0.53.0-alpine services/vector/smoke.sh
 ```
+
+The destination GHCR mirror smoke and anonymous pull remain post-merge gates,
+as listed below.
+
+The repository check `scripts/test-oci-mirror.sh` is fixture-based routing and
+security verification for the mirror helpers; it is not a real Vector image
+smoke and does not replace the command above.
 
 ## Verification record
 
