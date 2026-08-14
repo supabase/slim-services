@@ -143,9 +143,14 @@ def run(host: str, http_port: int, smtp_port: int, pop3_port: int, message_id: s
     if not _canonical_message_id(message_id):
         raise SmokeError("MESSAGE_ID must not be empty")
     timeout = float(os.environ.get("MAILPIT_SMOKE_TIMEOUT", "45"))
+    require_existing = os.environ.get("MAILPIT_SMOKE_REQUIRE_EXISTING") == "1"
     payload = _wait_ready(host, http_port, timeout)
 
     if not _message_present(payload, message_id):
+        if require_existing:
+            raise SmokeError(
+                f"Mailpit message {message_id} is missing before persistence protocol checks"
+            )
         _send_smtp(host, smtp_port, message_id)
 
     deadline = time.monotonic() + timeout

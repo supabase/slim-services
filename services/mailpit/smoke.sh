@@ -57,7 +57,21 @@ message_id="<mailpit-smoke-${RUN_ID}@example.test>"
 smoke_checker="$ROOT_DIR/services/mailpit/smoke.py"
 
 run_checker() {
-  if ! python3 "$smoke_checker" 127.0.0.1 "$http_port" "$smtp_port" "$pop3_port" "$message_id"; then
+  local checker_status
+  if [[ "${1:-0}" == "1" ]]; then
+    if MAILPIT_SMOKE_REQUIRE_EXISTING=1 python3 "$smoke_checker" \
+      127.0.0.1 "$http_port" "$smtp_port" "$pop3_port" "$message_id"; then
+      checker_status=0
+    else
+      checker_status=$?
+    fi
+  elif env -u MAILPIT_SMOKE_REQUIRE_EXISTING python3 "$smoke_checker" \
+    127.0.0.1 "$http_port" "$smtp_port" "$pop3_port" "$message_id"; then
+    checker_status=0
+  else
+    checker_status=$?
+  fi
+  if (( checker_status != 0 )); then
     if [[ -n "$container" ]]; then
       container_logs "$container"
     else
@@ -94,7 +108,7 @@ if [[ -n "$artifact_rootfs" ]]; then
   log "stopping and restarting mailpit artifact against the same database"
   stop_host_mailpit
   start_host_service mailpit "$smoke_log" "${host_env[@]}" -- "$mailpit_bin"
-  run_checker
+  run_checker 1
   record_host_runtime_metrics "$host_service_pid"
 else
   chmod 777 "$state_dir"
@@ -125,7 +139,7 @@ else
   http_port="$(host_port "$container" 8025)"
   smtp_port="$(host_port "$container" 1025)"
   pop3_port="$(host_port "$container" 1110)"
-  run_checker
+  run_checker 1
   record_runtime_metrics "$container"
 fi
 
