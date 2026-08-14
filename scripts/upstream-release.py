@@ -12,7 +12,8 @@ from typing import Any
 
 NATIVE_TARGETS = frozenset({"darwin-arm64", "linux-amd64", "linux-arm64"})
 IMAGE_PLATFORMS = frozenset({"linux/amd64", "linux/arm64"})
-VERSION_PATTERN = re.compile(r"v[0-9]+\.[0-9]+\.[0-9]+\Z")
+POLICY_VERSION_PATTERN = re.compile(r"v?[0-9]+\.[0-9]+\.[0-9]+\Z")
+RELEASE_TAG_PATTERN = re.compile(r"v[0-9]+\.[0-9]+\.[0-9]+\Z")
 REPOSITORY_PATTERN = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\Z")
 ASSET_NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 OCI_SOURCE_PATTERN = re.compile(
@@ -48,9 +49,19 @@ def _require_string(value: Any, path: str) -> str:
 
 def _validate_version(version: Any, path: str) -> str:
     version = _require_string(version, path)
-    if VERSION_PATTERN.fullmatch(version) is None:
-        raise ValueError(f"{path} must be a canonical vMAJOR.MINOR.PATCH version")
+    if POLICY_VERSION_PATTERN.fullmatch(version) is None:
+        raise ValueError(f"{path} must be a canonical MAJOR.MINOR.PATCH version, optionally prefixed with v")
     return version
+
+
+def _validate_release_tag(value: Any, canonical_version: str, path: str) -> str:
+    value = _require_string(value, path)
+    if RELEASE_TAG_PATTERN.fullmatch(value) is None:
+        raise ValueError(f"{path} must be a canonical vMAJOR.MINOR.PATCH release tag")
+    expected = f"v{canonical_version}"
+    if value != expected:
+        raise ValueError(f"{path} must equal canonical release tag {expected!r}")
+    return value
 
 
 def _validate_repository(repository: Any, path: str) -> str:
@@ -74,7 +85,7 @@ def _validate_image_digest(value: Any, path: str) -> str:
     return value
 
 
-def _validate_asset(asset: Any, repository: str, version: str, path: str) -> dict[str, str]:
+def _validate_asset(asset: Any, repository: str, release_tag: str, path: str) -> dict[str, str]:
     asset = _require_dict(asset, path)
     _require_keys(asset, {"name", "url", "sha256"}, path)
 
@@ -83,7 +94,7 @@ def _validate_asset(asset: Any, repository: str, version: str, path: str) -> dic
         raise ValueError(f"{path}.name must be a safe archive basename")
 
     url = _require_string(asset["url"], f"{path}.url")
-    expected_url = f"https://github.com/{repository}/releases/download/{version}/{name}"
+    expected_url = f"https://github.com/{repository}/releases/download/{release_tag}/{name}"
     if url != expected_url:
         raise ValueError(f"{path}.url must be the canonical GitHub release URL {expected_url!r}")
 
@@ -91,7 +102,9 @@ def _validate_asset(asset: Any, repository: str, version: str, path: str) -> dic
     return {"name": name, "url": url, "sha256": sha256}
 
 
-def _validate_image(image: Any, version: str, path: str) -> dict[str, Any]:
+def _validate_image(
+    image: Any, legacy_version_tag: str | None, path: str
+) -> dict[str, Any]:
     image = _require_dict(image, path)
     _require_keys(image, {"source", "index_digest", "platforms"}, path)
 
@@ -102,8 +115,8 @@ def _validate_image(image: Any, version: str, path: str) -> dict[str, Any]:
     registry = source_match.group("registry")
     if "." not in registry and ":" not in registry and registry != "localhost":
         raise ValueError(f"{path}.source must include an explicit registry")
-    if source_match.group("tag") != version:
-        raise ValueError(f"{path}.source tag must equal release version {version!r}")
+    if legacy_version_tag is not None and source_match.group("tag") != legacy_version_tag:
+        raise ValueError(f"{path}.source tag must equal release version {legacy_version_tag!r}")
 
     index_digest = _validate_image_digest(image["index_digest"], f"{path}.index_digest")
     platforms = _require_dict(image["platforms"], f"{path}.platforms")
@@ -121,16 +134,38 @@ def _validate_image(image: Any, version: str, path: str) -> dict[str, Any]:
 
 def _validate_version_record(version_record: Any, repository: str, version: str, path: str) -> dict[str, Any]:
     version_record = _require_dict(version_record, path)
-    _require_keys(version_record, {"assets", "image"}, path)
+    expected_keys = {"assets", "image", "release_tag"}
+    actual_keys = set(version_record)
+    missing = sorted({"assets", "image"} - actual_keys)
+    unexpected = sorted(actual_keys - expected_keys)
+    if missing:
+        raise ValueError(f"{path} missing required keys: {', '.join(missing)}")
+    if unexpected:
+        raise ValueError(f"{path} has unexpected keys: {', '.join(unexpected)}")
+
+    canonical_version = version.removeprefix("v")
+    if version.startswith("v") and "release_tag" not in version_record:
+        release_tag = version
+    else:
+        if "release_tag" not in version_record:
+            raise ValueError(f"{path} missing required keys: release_tag")
+        release_tag = _validate_release_tag(
+            version_record["release_tag"], canonical_version, f"{path}.release_tag"
+        )
 
     assets = _require_dict(version_record["assets"], f"{path}.assets")
     _require_keys(assets, set(NATIVE_TARGETS), f"{path}.assets")
     validated_assets = {
-        target: _validate_asset(assets[target], repository, version, f"{path}.assets.{target}")
+        target: _validate_asset(
+            assets[target], repository, release_tag, f"{path}.assets.{target}"
+        )
         for target in sorted(NATIVE_TARGETS)
     }
-    validated_image = _validate_image(version_record["image"], version, f"{path}.image")
-    return {"assets": validated_assets, "image": validated_image}
+    legacy_version_tag = version if version.startswith("v") else None
+    validated_image = _validate_image(
+        version_record["image"], legacy_version_tag, f"{path}.image"
+    )
+    return {"release_tag": release_tag, "assets": validated_assets, "image": validated_image}
 
 
 def load_policy(path: pathlib.Path) -> dict[str, Any]:
@@ -181,6 +216,16 @@ def resolve_asset(policy: dict[str, Any], version: str, target: str) -> dict[str
     return {key: asset[key] for key in ("name", "url", "sha256")}
 
 
+def resolve_release_tag(policy: dict[str, Any], version: str) -> str:
+    """Return the exact upstream GitHub release tag for a canonical version."""
+
+    record = _version_record(policy, version)
+    release_tag = record.get("release_tag")
+    if not isinstance(release_tag, str):
+        raise ValueError(f"release {version} has no GitHub release tag")
+    return release_tag
+
+
 def resolve_image(policy: dict[str, Any], version: str) -> dict[str, Any]:
     """Return the validated container image metadata for one release."""
 
@@ -199,7 +244,7 @@ def resolve_image(policy: dict[str, Any], version: str) -> dict[str, Any]:
 
 def _main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("asset", "image"))
+    parser.add_argument("command", choices=("asset", "image", "release-tag"))
     parser.add_argument("policy", type=pathlib.Path)
     parser.add_argument("version")
     parser.add_argument("target", nargs="?")
@@ -211,14 +256,21 @@ def _main(argv: list[str] | None = None) -> int:
             if args.target is None:
                 raise ValueError("asset command requires TARGET")
             result = resolve_asset(policy, args.version, args.target)
-        else:
+        elif args.command == "image":
             if args.target is not None:
                 raise ValueError("image command accepts only POLICY and VERSION")
             result = resolve_image(policy, args.version)
+        else:
+            if args.target is not None:
+                raise ValueError("release-tag command accepts only POLICY and VERSION")
+            result = resolve_release_tag(policy, args.version)
     except (OSError, TypeError, ValueError, json.JSONDecodeError) as error:
         parser.error(str(error))
 
-    print(json.dumps(result, sort_keys=True, separators=(",", ":")))
+    if args.command == "release-tag":
+        print(result)
+    else:
+        print(json.dumps(result, sort_keys=True, separators=(",", ":")))
     return 0
 
 

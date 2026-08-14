@@ -147,6 +147,22 @@ jobs:
           fi
 
           source_ref="$VERSION"
+          upstream_release_tag="$VERSION"
+          if [[ "$artifact_source" == "upstream-archive" ]]; then
+            policy_file="$(
+              bash -c '
+                set -euo pipefail
+                source scripts/lib.sh
+                load_recipe "$1" >/dev/null
+                printf "%s" "$UPSTREAM_ASSETS_FILE"
+              ' _ "$SERVICE"
+            )"
+            [[ "$policy_file" = /* ]] || policy_file="$GITHUB_WORKSPACE/$policy_file"
+            upstream_release_tag="$(
+              python3 scripts/upstream-release.py release-tag \
+                "$policy_file" "$VERSION"
+            )"
+          fi
           if [[ "$release_source" == "dockerhub" ]]; then
             upstream_tag="$(
               curl -fsSL \
@@ -191,7 +207,7 @@ jobs:
               }
           else
             if ! upstream_release="$(
-              gh api "repos/$upstream_repository/releases/tags/$VERSION" \
+              gh api "repos/$upstream_repository/releases/tags/$upstream_release_tag" \
                 --jq '[.tag_name, (.draft | tostring), (.prerelease | tostring)] | @tsv'
             )"; then
               printf '%s is not a published upstream release of %s\n' \
@@ -200,9 +216,9 @@ jobs:
             fi
             IFS=$'\t' read -r upstream_tag upstream_draft upstream_prerelease \
               <<< "$upstream_release"
-            if [[ "$upstream_tag" != "$VERSION" || "$upstream_draft" != "false" || "$upstream_prerelease" != "false" ]]; then
+            if [[ "$upstream_tag" != "$upstream_release_tag" || "$upstream_draft" != "false" || "$upstream_prerelease" != "false" ]]; then
               printf '%s must be an exact, stable, published upstream release of %s\n' \
-                "$VERSION" "$upstream_repository" >&2
+                "$upstream_release_tag" "$upstream_repository" >&2
               exit 1
             fi
           fi

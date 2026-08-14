@@ -30,6 +30,18 @@ CONTENTS = {
     "LICENSE": (b"Mailpit license\n", 0o644),
     "README.md": (b"Mailpit readme\n", 0o644),
 }
+ROOT = "vector-x86_64-unknown-linux-gnu"
+ROOTED_MAPPING = {
+    "bin/vector": "bin/vector",
+    "LICENSE": "share/licenses/vector/LICENSE",
+    "config/default.toml": "share/vector/default.toml",
+}
+ROOTED_EXECUTABLES = ["bin/vector"]
+ROOTED_CONTENTS = {
+    "bin/vector": (b"vector executable bytes\x00\x01\n", 0o755),
+    "LICENSE": (b"Vector license\n", 0o644),
+    "config/default.toml": (b"[sources]\n", 0o644),
+}
 
 
 def add_member(archive, name, payload=None, mode=0o644, kind=tarfile.REGTYPE, linkname=""):
@@ -54,6 +66,20 @@ def valid_entries():
     return [
         (name, payload, mode)
         for name, (payload, mode) in CONTENTS.items()
+    ]
+
+
+def rooted_entries():
+    return [
+        (ROOT, None, 0o755, tarfile.DIRTYPE, ""),
+        (f"{ROOT}/bin", None, 0o755, tarfile.DIRTYPE, ""),
+        (f"{ROOT}/config", None, 0o755, tarfile.DIRTYPE, ""),
+        (f"{ROOT}/share", None, 0o755, tarfile.DIRTYPE, ""),
+        (f"{ROOT}/share/licenses", None, 0o755, tarfile.DIRTYPE, ""),
+        (f"{ROOT}/share/vector", None, 0o755, tarfile.DIRTYPE, ""),
+        (f"{ROOT}/bin/vector", *ROOTED_CONTENTS["bin/vector"]),
+        (f"{ROOT}/LICENSE", *ROOTED_CONTENTS["LICENSE"]),
+        (f"{ROOT}/config/default.toml", *ROOTED_CONTENTS["config/default.toml"]),
     ]
 
 
@@ -108,6 +134,33 @@ class ExtractUpstreamArchiveTest(unittest.TestCase):
             source_digest = hashlib.sha256((rootfs / "bin/mailpit").read_bytes()).hexdigest()
             self.assertEqual(source_digest, hashlib.sha256(CONTENTS["mailpit"][0]).hexdigest())
 
+    def test_installs_rooted_nested_archive_after_normalizing_root(self):
+        with tempfile.TemporaryDirectory() as directory:
+            directory = pathlib.Path(directory)
+            archive = directory / "vector.tar.gz"
+            rootfs = directory / "rootfs"
+            write_archive(archive, rooted_entries())
+
+            result = self.invoke(archive, rootfs, ROOTED_MAPPING, ROOTED_EXECUTABLES)
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            report = json.loads(result.stdout)
+            expected_report = {
+                "members": {
+                    source: {
+                        "destination": destination,
+                        "source_sha256": hashlib.sha256(ROOTED_CONTENTS[source][0]).hexdigest(),
+                        "destination_sha256": hashlib.sha256(ROOTED_CONTENTS[source][0]).hexdigest(),
+                    }
+                    for source, destination in ROOTED_MAPPING.items()
+                }
+            }
+            self.assertEqual(report, expected_report)
+            for source, destination in ROOTED_MAPPING.items():
+                installed = rootfs / destination
+                self.assertEqual(installed.read_bytes(), ROOTED_CONTENTS[source][0])
+                self.assertEqual(stat.S_IMODE(installed.stat().st_mode), ROOTED_CONTENTS[source][1])
+
     def assert_rejected(self, entries, label, diagnostic, mapping=MAPPING, executables=EXECUTABLES):
         with self.subTest(label=label):
             with tempfile.TemporaryDirectory() as directory:
@@ -131,6 +184,26 @@ class ExtractUpstreamArchiveTest(unittest.TestCase):
     def test_rejects_duplicate_members(self):
         entries = valid_entries() + [("mailpit", *CONTENTS["mailpit"])]
         self.assert_rejected(entries, "duplicate member", "duplicate archive member")
+
+    def test_rejects_multiple_archive_roots(self):
+        entries = rooted_entries() + [("other-root", None, 0o755, tarfile.DIRTYPE, "")]
+        self.assert_rejected(
+            entries,
+            "multiple roots",
+            "multiple archive roots",
+            ROOTED_MAPPING,
+            ROOTED_EXECUTABLES,
+        )
+
+    def test_rejects_duplicate_normalized_members(self):
+        entries = rooted_entries() + [(f"{ROOT}/bin/vector/", None, 0o755, tarfile.DIRTYPE, "")]
+        self.assert_rejected(
+            entries,
+            "duplicate normalized member",
+            "duplicate archive member",
+            ROOTED_MAPPING,
+            ROOTED_EXECUTABLES,
+        )
 
     def test_rejects_links_devices_and_fifos(self):
         cases = [
