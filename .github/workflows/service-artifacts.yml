@@ -299,6 +299,7 @@ jobs:
           key: artifact-v1-${{ matrix.service }}-${{ matrix.platform_dir }}-${{ steps.vars.outputs.fingerprint }}
           path: |
             ${{ steps.vars.outputs.artifact_dir }}/*.tar.zst
+            ${{ steps.vars.outputs.artifact_dir }}/*.sbom.spdx.json
             ${{ steps.vars.outputs.artifact_dir }}/SHA256SUMS
             ${{ steps.vars.outputs.artifact_dir }}/manifest.json
 
@@ -370,6 +371,7 @@ jobs:
           key: artifact-v1-${{ matrix.service }}-${{ matrix.platform_dir }}-${{ steps.vars.outputs.fingerprint }}
           path: |
             ${{ steps.vars.outputs.artifact_dir }}/*.tar.zst
+            ${{ steps.vars.outputs.artifact_dir }}/*.sbom.spdx.json
             ${{ steps.vars.outputs.artifact_dir }}/SHA256SUMS
             ${{ steps.vars.outputs.artifact_dir }}/manifest.json
 
@@ -381,6 +383,7 @@ jobs:
           retention-days: 7
           path: |
             ${{ steps.vars.outputs.artifact_dir }}/*.tar.zst
+            ${{ steps.vars.outputs.artifact_dir }}/*.sbom.spdx.json
             ${{ steps.vars.outputs.artifact_dir }}/SHA256SUMS
             ${{ steps.vars.outputs.artifact_dir }}/manifest.json
 
