@@ -14,6 +14,7 @@ SERVICES=(
   pgmeta
   auth
   postgres
+  mailpit
 )
 
 log() {

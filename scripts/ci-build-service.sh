@@ -53,6 +53,10 @@ log "CI target: service=$service version=$version target=$TARGET_OS/$ARCH"
 load_recipe "$service"
 export GLIBC_FLOOR_MAX="${GLIBC_FLOOR_MAX:-}"
 export MACOS_FLOOR_MAX="${MACOS_FLOOR_MAX:-}"
+mirror_mode=0
+if [[ "${IMAGE_RELEASE_MODE:-derived}" == "mirror" ]]; then
+  mirror_mode=1
+fi
 
 if [[ "$TARGET_OS" == "linux" && "${TARGET_LIBC:-glibc}" != "glibc" ]]; then
   fail "TARGET_LIBC=${TARGET_LIBC} is a reserved target flavor; no musl builds are implemented yet"
@@ -140,12 +144,19 @@ fi
 # rootfs the final image is built from and run the identical smoke — pure
 # duplication. Smoke the artifact directly only where no image follows
 # (darwin), or when explicitly requested.
-if [[ "$TARGET_OS" != "linux" || "${FORCE_ARTIFACT_SMOKE:-0}" == "1" ]]; then
+if [[ "$TARGET_OS" != "linux" || "${FORCE_ARTIFACT_SMOKE:-0}" == "1" || "$mirror_mode" == "1" ]]; then
   log "smoking $service artifact for $platform_dir"
   runtime_metrics_file="$artifact_dir/runtime-metrics.json"
   rm -f "$runtime_metrics_file"
-  SLIM_RUNTIME_METRICS_FILE="$runtime_metrics_file" \
-    "$ROOT_DIR/scripts/smoke.sh" "$service" --artifact "$rootfs"
+  if [[ "$mirror_mode" == "1" && "$TARGET_OS" == "linux" ]]; then
+    log "mirror mode: forcing direct Linux artifact smoke"
+    SLIM_DIRECT_LINUX_ARTIFACT_SMOKE=1 \
+      SLIM_RUNTIME_METRICS_FILE="$runtime_metrics_file" \
+      "$ROOT_DIR/scripts/smoke.sh" "$service" --artifact "$rootfs"
+  else
+    SLIM_RUNTIME_METRICS_FILE="$runtime_metrics_file" \
+      "$ROOT_DIR/scripts/smoke.sh" "$service" --artifact "$rootfs"
+  fi
 
   # On darwin this is the only smoke, so these are the artifact's runtime
   # numbers; on Linux (FORCE_ARTIFACT_SMOKE) the image smoke below overwrites.
@@ -186,7 +197,30 @@ with open(out_path, "w", encoding="utf-8") as out:
 print(f"[slim] checksums written: {out_path}")
 PY
 
-if [[ "$TARGET_OS" == "linux" ]]; then
+archive_path="$(python3 - "$archive_prefix" <<'PY'
+import glob
+import sys
+
+archives = sorted(glob.glob(sys.argv[1] + ".tar*"))
+if len(archives) != 1:
+    raise SystemExit(f"expected exactly one distribution archive, found {len(archives)}")
+print(archives[0])
+PY
+)"
+artifact_source="$(python3 - "$manifest" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as stream:
+    print(json.load(stream).get("artifact_source", ""))
+PY
+)"
+if [[ "$artifact_source" == "upstream-release-archive" ]]; then
+  "$ROOT_DIR/scripts/record-archive-digest.py" "$manifest" "$archive_path" \
+    "$artifact_dir/SHA256SUMS"
+fi
+
+if [[ "$TARGET_OS" == "linux" && "$mirror_mode" != "1" ]]; then
   image_tag="${IMAGE_TAG:-local/$service:slim-$version-linux-$ARCH}"
 
   log "building Linux Docker image: $image_tag"
@@ -238,6 +272,8 @@ PY
   else
     log "skipping local image smoke because DOCKER_PUSH=1"
   fi
+elif [[ "$TARGET_OS" == "linux" && "$mirror_mode" == "1" ]]; then
+  log "mirror mode: skipping artifact-derived Docker image construction"
 elif [[ "$TARGET_OS" == "darwin" ]]; then
   log "Darwin target complete; Docker images are only produced for Linux targets"
 else
