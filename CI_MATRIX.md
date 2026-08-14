@@ -72,7 +72,7 @@ Archive filenames include service, version, and platform, for example:
 Every other promoted service builds through
 `.github/workflows/service-artifacts.yml`: a `workflow_dispatch` matrix of
 services (auth, postgrest, realtime, pooler, analytics, storage, edge-runtime,
-studio, pgmeta, postgres, mailpit)
+studio, pgmeta, postgres, mailpit, vector)
 times targets (`linux-arm64` on `ubuntu-24.04-arm`, `linux-amd64` on
 `ubuntu-24.04`, `darwin-arm64` on `macos-14`), each running
 `scripts/ci-build-service.sh` and uploading the archive, `SHA256SUMS`, and
@@ -82,10 +82,12 @@ shared nixpkgs pin). Linux jobs additionally smoke the artifact as a real
 host process (`SLIM_DIRECT_LINUX_ARTIFACT_SMOKE=1`) — the CLI's no-Docker
 mode — on top of the derived-image smoke.
 
-Mailpit is the one upstream-archive/mirror entry in this set: its three native
-archives still use the same target matrix and direct artifact smoke, while the
-Linux release path skips derived-image construction and mirrors the pinned
-upstream OCI index to `ghcr.io/supabase/cli/mailpit:<version>`.
+Mailpit and Vector are upstream-archive/mirror entries in this set: their three
+native archives use the same target matrix and direct artifact smoke, while the
+Linux release path skips derived-image construction and mirrors each pinned
+upstream OCI index to `ghcr.io/supabase/cli/mailpit:<version>` or
+`ghcr.io/supabase/cli/vector:<version>`. Vector `0.53.0` mirrors
+`docker.io/timberio/vector:0.53.0-alpine` without rebuilding it.
 
 Native-first (HOST_NATIVE_PLAN.md): the archive on every target is the
 host-native artifact — relocatable, audit-clean, runnable straight from the

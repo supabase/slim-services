@@ -158,14 +158,14 @@ anonymous_digest="$(
 [[ "$anonymous_digest" == "$expected_index_digest" ]] || fail \
   "anonymous destination digest mismatch: expected $expected_index_digest, got $anonymous_digest"
 
-if [[ "$service" == "mailpit" ]]; then
+if [[ "${IMAGE_RELEASE_MODE:-derived}" == "mirror" ]]; then
   require_cmd docker
-  log "proving anonymous destination pull and Mailpit image smoke"
+  log "proving anonymous destination pull and $service image smoke"
   DOCKER_CONFIG="$anonymous_docker_config" docker pull "$destination_ref"
-  DOCKER_CONFIG="$anonymous_docker_config" IMAGE="$destination_ref" \
-    "$ROOT_DIR/services/mailpit/smoke.sh"
+  DOCKER_CONFIG="$anonymous_docker_config" \
+    "$ROOT_DIR/scripts/smoke.sh" "$service" --image "$destination_ref"
 else
-  log "skipping Mailpit image smoke for service $service"
+  log "skipping mirror image smoke for service $service"
 fi
 
 log "exact OCI mirror verified: $destination_ref"

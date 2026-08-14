@@ -243,6 +243,73 @@ class VerifyOciMirrorTest(unittest.TestCase):
         self.assertEqual(len(tree_lines), 2, tree_lines)
         self.assertTrue(all("artifact tree --digest-tags" in line for line in tree_lines), tree_lines)
 
+    def test_vector_release_policy_and_manual_dispatch_route(self):
+        config_path = ROOT_DIR / ".github" / "service-release-sources.json"
+        workflow_path = ROOT_DIR / ".github" / "workflows" / "service-release.yml"
+        artifacts_workflow_path = ROOT_DIR / ".github" / "workflows" / "service-artifacts.yml"
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+        vector = config["services"]["vector"]
+        self.assertEqual(vector["repository"], "vectordotdev/vector")
+        self.assertEqual(vector["artifact_source"], "upstream-archive")
+        self.assertEqual(vector["image_release"], "mirror")
+        self.assertEqual(vector["image_repository"], "timberio/vector")
+        self.assertEqual(vector["tag_pattern"], r"^[0-9]+\.[0-9]+\.[0-9]+$")
+        self.assertFalse(vector["poll"])
+
+        workflow = workflow_path.read_text(encoding="utf-8")
+        self.assertIn("          - vector\n", workflow)
+        self.assertIn(
+            "            auth|postgrest|realtime|pooler|analytics|storage|edge-runtime|studio|pgmeta|postgres|mailpit|vector) ;;",
+            workflow,
+        )
+        self.assertIn("upstream-release.py release-tag", workflow)
+        self.assertIn('release_tag="$SERVICE-$VERSION"', workflow)
+        self.assertIn(
+            "default: auth postgrest realtime pooler analytics storage edge-runtime studio pgmeta postgres mailpit vector",
+            artifacts_workflow_path.read_text(encoding="utf-8"),
+        )
+
+    def test_mirror_smoke_routing_is_recipe_driven_and_keeps_mailpit(self):
+        mirror_script = MIRROR_SCRIPT.read_text(encoding="utf-8")
+        vector_recipe = (ROOT_DIR / "services" / "vector" / "recipe.env").read_text(encoding="utf-8")
+        mailpit_recipe = (ROOT_DIR / "services" / "mailpit" / "recipe.env").read_text(encoding="utf-8")
+
+        self.assertIn('IMAGE_RELEASE_MODE="mirror"', vector_recipe)
+        self.assertIn('IMAGE_RELEASE_MODE="mirror"', mailpit_recipe)
+        self.assertIn("IMAGE_RELEASE_MODE", mirror_script)
+        self.assertIn('"$ROOT_DIR/scripts/smoke.sh" "$service" --image "$destination_ref"', mirror_script)
+        self.assertNotIn('if [[ "$service" == "mailpit" ]]', mirror_script)
+
+    def test_vector_is_skipped_by_the_release_poller(self):
+        fake_bin = self.directory / "fake-gh-bin"
+        fake_bin.mkdir()
+        fake_gh = fake_bin / "gh"
+        fake_gh.write_text(
+            "#!/bin/sh\n"
+            'printf "%s\\n" "$*" >> "$FAKE_GH_TRACE"\n'
+            "exit 1\n",
+            encoding="utf-8",
+        )
+        fake_gh.chmod(0o755)
+        trace = self.directory / "gh-trace"
+        result = subprocess.run(
+            [str(ROOT_DIR / "scripts" / "poll-service-releases.sh")],
+            text=True,
+            capture_output=True,
+            env={
+                **os.environ,
+                "PATH": f"{fake_bin}:{os.environ['PATH']}",
+                "GH_TOKEN": "test-token",
+                "POLL_SERVICE": "vector",
+                "POLL_DRY_RUN": "1",
+                "SERVICE_RELEASE_CONFIG": str(ROOT_DIR / ".github" / "service-release-sources.json"),
+                "FAKE_GH_TRACE": str(trace),
+            },
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(trace.exists(), trace.read_text(encoding="utf-8") if trace.exists() else "")
+
 
 if __name__ == "__main__":
     unittest.main()
