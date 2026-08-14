@@ -162,8 +162,16 @@ if [[ "${IMAGE_RELEASE_MODE:-derived}" == "mirror" ]]; then
   require_cmd docker
   log "proving anonymous destination pull and $service image smoke"
   DOCKER_CONFIG="$anonymous_docker_config" docker pull "$destination_ref"
-  DOCKER_CONFIG="$anonymous_docker_config" \
-    "$ROOT_DIR/scripts/smoke.sh" "$service" --image "$destination_ref"
+  if [[ -n "${MIRROR_SMOKE_SCRIPT:-}" ]]; then
+    smoke_script="$MIRROR_SMOKE_SCRIPT"
+    [[ "$smoke_script" = /* ]] || smoke_script="$ROOT_DIR/$smoke_script"
+    [[ -x "$smoke_script" ]] || fail "mirror smoke script is not executable: $smoke_script"
+    DOCKER_CONFIG="$anonymous_docker_config" IMAGE="$destination_ref" \
+      "$smoke_script"
+  else
+    DOCKER_CONFIG="$anonymous_docker_config" \
+      "$ROOT_DIR/scripts/smoke.sh" "$service" --image "$destination_ref"
+  fi
 else
   log "skipping mirror image smoke for service $service"
 fi

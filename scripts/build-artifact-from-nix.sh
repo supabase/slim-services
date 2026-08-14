@@ -11,6 +11,11 @@ Usage: scripts/build-artifact-from-nix.sh SERVICE [VERSION]
 
 Build SERVICE from a configured Nix flake/package and export runtime files
 into the common artifact layout.
+
+Source-backed recipes may declare NIX_SOURCE_ARGS_JSON, a JSON object mapping
+Nix argument names to snapshot selectors (version, repository, or source.*).
+When UPSTREAM_ASSETS_FILE is also set, the verified snapshot supplies the
+source metadata and those arguments are passed to Nix in declaration order.
 EOF
 }
 
@@ -37,8 +42,8 @@ DEFAULT_NIX_SYSTEM="$(nix_system_for "$TARGET_OS" "$ARCH")"
 
 load_recipe "$service"
 
-SOURCE_DIR="${SOURCE_DIR:?recipe must define SOURCE_DIR}"
-SOURCE_REF="${SOURCE_REF:?recipe must define SOURCE_REF}"
+SOURCE_DIR="${SOURCE_DIR:-}"
+SOURCE_REF="${SOURCE_REF:-}"
 BASE_IMAGE="${BASE_IMAGE:?recipe must define BASE_IMAGE}"
 ENTRYPOINT_JSON="${ENTRYPOINT_JSON:?recipe must define ENTRYPOINT_JSON}"
 CMD_JSON="${CMD_JSON:-[]}"
@@ -55,6 +60,113 @@ NIX_BUILD_COMMAND_TEMPLATE="${NIX_BUILD_COMMAND_TEMPLATE:-}"
 NIX_PACKAGE_OVERLAY="${NIX_PACKAGE_OVERLAY:-}"
 NIX_PACKAGE_OVERLAY_DEST="${NIX_PACKAGE_OVERLAY_DEST:-}"
 NIX_DERIVE_MIX_DEPS_HASH="${NIX_DERIVE_MIX_DEPS_HASH:-false}"
+
+external_source=0
+source_metadata_json=""
+source_repository=""
+nix_source_args_json="{}"
+nix_source_args_file=""
+nix_source_arg_values=()
+if [[ -n "${NIX_SOURCE_ARGS_JSON:-}" ]]; then
+  [[ -n "${UPSTREAM_ASSETS_FILE:-}" ]] || fail "NIX_SOURCE_ARGS_JSON requires UPSTREAM_ASSETS_FILE"
+  source_policy_file="$UPSTREAM_ASSETS_FILE"
+  [[ "$source_policy_file" = /* ]] || source_policy_file="$ROOT_DIR/$source_policy_file"
+  [[ -f "$source_policy_file" ]] || fail "upstream source snapshot not found: $source_policy_file"
+
+  source_metadata_json="$(python3 "$ROOT_DIR/scripts/upstream-release.py" source "$source_policy_file" "$VERSION")" \
+    || fail "Nix backend requires a source record for $service $VERSION"
+  source_repository="$(ROOT_DIR_ENV="$ROOT_DIR" python3 - "$source_policy_file" <<'PY'
+import importlib.util
+import os
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+resolver = pathlib.Path(os.environ["ROOT_DIR_ENV"]) / "scripts" / "upstream-release.py"
+spec = importlib.util.spec_from_file_location("upstream_release", resolver)
+if spec is None or spec.loader is None:
+    raise SystemExit("could not load snapshot validator")
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+print(module.load_policy(path)["repository"])
+PY
+  )" || fail "could not validate upstream source snapshot: $source_policy_file"
+
+  nix_source_args_file="$(mktemp "${TMPDIR:-/tmp}/slim-nix-source-args.XXXXXX")"
+  cleanup_nix_source_args() { rm -f "$nix_source_args_file" "$nix_source_args_file.json"; }
+  trap cleanup_nix_source_args EXIT
+  if ! SOURCE_METADATA_JSON="$source_metadata_json" \
+    NIX_SOURCE_ARGS_JSON="$NIX_SOURCE_ARGS_JSON" \
+    SOURCE_REPOSITORY="$source_repository" \
+    WORKFLOW_VERSION="$VERSION" \
+    python3 - "$nix_source_args_file" <<'PY'
+import json
+import os
+import re
+import sys
+
+output = sys.argv[1]
+
+def reject_duplicate_keys(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate Nix argument name: {key!r}")
+        result[key] = value
+    return result
+
+try:
+    mapping = json.loads(
+        os.environ["NIX_SOURCE_ARGS_JSON"], object_pairs_hook=reject_duplicate_keys
+    )
+except (KeyError, json.JSONDecodeError, ValueError) as error:
+    raise SystemExit(f"NIX_SOURCE_ARGS_JSON must be valid JSON: {error}")
+if not isinstance(mapping, dict) or not mapping:
+    raise SystemExit("NIX_SOURCE_ARGS_JSON must be a non-empty JSON object")
+
+argument_pattern = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
+source = json.loads(os.environ["SOURCE_METADATA_JSON"])
+repository = os.environ["SOURCE_REPOSITORY"]
+version = os.environ["WORKFLOW_VERSION"]
+resolved = {}
+with open(output, "w", encoding="utf-8") as stream:
+    for name, selector in mapping.items():
+        if not isinstance(name, str) or argument_pattern.fullmatch(name) is None:
+            raise SystemExit(f"unsafe Nix argument name: {name!r}")
+        if not isinstance(selector, str):
+            raise SystemExit(f"unsafe source selector for {name}: {selector!r}")
+        if selector == "version":
+            value = version
+        elif selector == "repository":
+            value = repository
+        elif selector.startswith("source.") and selector[7:] in source:
+            value = source[selector[7:]]
+        else:
+            raise SystemExit(f"unknown source selector for {name}: {selector!r}")
+        if not isinstance(value, str) or not value or any(ord(char) < 0x20 or ord(char) == 0x7F for char in value):
+            raise SystemExit(f"unsafe source value for {name}: {value!r}")
+        resolved[name] = selector
+        stream.write(f"{name}\t{value}\n")
+with open(output + ".json", "w", encoding="utf-8") as stream:
+    json.dump(resolved, stream, separators=(",", ":"))
+PY
+  then
+    fail "could not resolve Nix source argument mapping"
+  fi
+  nix_source_args_json="$(cat "$nix_source_args_file.json")"
+  while IFS=$'\t' read -r arg_name arg_value; do
+    [[ -n "$arg_name" ]] || continue
+    nix_source_arg_values+=(--argstr "$arg_name" "$arg_value")
+  done < "$nix_source_args_file"
+  external_source=1
+  log "using verified upstream source snapshot for $service $VERSION"
+fi
+
+if [[ "$external_source" == "0" ]]; then
+  [[ -n "$SOURCE_DIR" ]] || fail "recipe must define SOURCE_DIR"
+  [[ -n "$SOURCE_REF" ]] || fail "recipe must define SOURCE_REF"
+fi
+
 derived_hash_specs=()
 if declare -p NIX_DERIVED_HASH_SPECS >/dev/null 2>&1; then
   derived_hash_specs=("${NIX_DERIVED_HASH_SPECS[@]}")
@@ -63,7 +175,7 @@ elif [[ "$NIX_DERIVE_MIX_DEPS_HASH" == "true" ]]; then
   derived_hash_specs=("mix-deps:mix_deps_hash")
 fi
 
-source_abs="$ROOT_DIR/$SOURCE_DIR"
+source_abs="$ROOT_DIR/${SOURCE_DIR:-}"
 artifact_dir="$ROOT_DIR/artifacts/$service/$VERSION/$(artifact_platform_dir "$TARGET_OS" "$ARCH")"
 rootfs="$artifact_dir/rootfs"
 manifest="$artifact_dir/manifest.json"
@@ -72,26 +184,27 @@ out_link="$artifact_dir/nix-result"
 derived_hashes_file="$artifact_dir/nix-derived-hashes.json"
 derived_hashes_json="{}"
 
-[[ -d "$source_abs" ]] || fail "source submodule directory not found: $SOURCE_DIR"
-[[ -f "$source_abs/.git" || -d "$source_abs/.git" ]] || fail "source directory is not a git checkout: $SOURCE_DIR"
+actual_ref=""
+if [[ "$external_source" == "0" ]]; then
+  [[ -d "$source_abs" ]] || fail "source submodule directory not found: $SOURCE_DIR"
+  [[ -f "$source_abs/.git" || -d "$source_abs/.git" ]] || fail "source directory is not a git checkout: $SOURCE_DIR"
 
-expected_ref="$(resolve_source_ref "$source_abs" "$SOURCE_REF")"
-actual_ref="$(git -C "$source_abs" rev-parse HEAD)"
-if [[ "$actual_ref" != "$expected_ref" ]]; then
-  fail "$SOURCE_DIR is at $actual_ref, expected $SOURCE_REF ($expected_ref). Run: git submodule update --init --recursive"
-fi
+  expected_ref="$(resolve_source_ref "$source_abs" "$SOURCE_REF")"
+  actual_ref="$(git -C "$source_abs" rev-parse HEAD)"
+  if [[ "$actual_ref" != "$expected_ref" ]]; then
+    fail "$SOURCE_DIR is at $actual_ref, expected $SOURCE_REF ($expected_ref). Run: git submodule update --init --recursive"
+  fi
 
-if [[ -n "$(git -C "$source_abs" status --short)" ]]; then
-  fail "$SOURCE_DIR has local modifications; Nix artifact builds require clean submodules"
-fi
-
-rm -rf "$rootfs"
-mkdir -p "$rootfs" "$artifact_dir"
-rm -f "$out_link"
-rm -f "$derived_hashes_file"
-
-if ! declare -p NIX_COPY_PATHS >/dev/null 2>&1 && [[ "${NIX_OUTPUT_KIND:-copy-paths}" != "rootfs" ]]; then
-  fail "recipe must define NIX_COPY_PATHS for Nix backend"
+  if [[ -n "$(git -C "$source_abs" status --short)" ]]; then
+    fail "$SOURCE_DIR has local modifications; Nix artifact builds require clean submodules"
+  fi
+else
+  actual_ref="$(SOURCE_METADATA_JSON="$source_metadata_json" python3 - <<'PY'
+import json
+import os
+print(json.loads(os.environ["SOURCE_METADATA_JSON"])["commit"])
+PY
+  )"
 fi
 
 host_nix_system=""
@@ -115,9 +228,30 @@ if [[ "$resolved_nix_runner" == "local" && -n "$host_nix_system" && "$host_nix_s
   fail "local Nix runner is $host_nix_system, but target is $NIX_SYSTEM. Use a native runner for $TARGET_OS/$ARCH."
 fi
 
+if [[ "$external_source" == "1" ]]; then
+  [[ "$resolved_nix_runner" == "local" ]] || {
+    fail "external source builds require NIX_RUNNER=local"
+  }
+  [[ "$NIX_BUILD_MODE" == "nix-build" ]] || {
+    fail "external source builds require NIX_BUILD_MODE=nix-build"
+  }
+  [[ -z "$NIX_BUILD_COMMAND_TEMPLATE" ]] || {
+    fail "external source builds do not support NIX_BUILD_COMMAND_TEMPLATE"
+  }
+fi
+
+rm -rf "$rootfs"
+mkdir -p "$rootfs" "$artifact_dir"
+rm -f "$out_link"
+rm -f "$derived_hashes_file"
+
+if ! declare -p NIX_COPY_PATHS >/dev/null 2>&1 && [[ "${NIX_OUTPUT_KIND:-copy-paths}" != "rootfs" ]]; then
+  fail "recipe must define NIX_COPY_PATHS for Nix backend"
+fi
+
 nix_flake_for_build="$NIX_FLAKE"
 build_dir=""
-if [[ "$resolved_nix_runner" == "local" && -n "$NIX_PACKAGE_OVERLAY" ]]; then
+if [[ "$resolved_nix_runner" == "local" && -n "$NIX_PACKAGE_OVERLAY" && "$external_source" == "0" ]]; then
   overlay_abs="$ROOT_DIR/$NIX_PACKAGE_OVERLAY"
   [[ -e "$overlay_abs" ]] || fail "Nix package overlay not found: $NIX_PACKAGE_OVERLAY"
   NIX_PACKAGE_OVERLAY_DEST="${NIX_PACKAGE_OVERLAY_DEST:-nix/$(basename "$NIX_PACKAGE_OVERLAY")}"
@@ -168,6 +302,7 @@ case "$resolved_nix_runner" in
         (
           cd "$ROOT_DIR"
           if [[ ${#derived_hash_specs[@]} -gt 0 ]]; then
+            [[ "$external_source" == "0" ]] || fail "external Nix source builds cannot use derived hash discovery"
             "$ROOT_DIR/scripts/nix-build-with-derived-hashes.sh" \
               flake "$nix_installable" - "$VERSION" \
               "$out_link" "$derived_hashes_file" \
@@ -179,9 +314,14 @@ case "$resolved_nix_runner" in
             log "using explicit Nix build command template"
             bash -lc "$NIX_BUILD_COMMAND_TEMPLATE"
           else
-            nix --extra-experimental-features "nix-command flakes" build \
-              "$nix_installable" \
-              --out-link "$out_link"
+            if [[ ${#nix_source_arg_values[@]} -gt 0 ]]; then
+              nix --extra-experimental-features "nix-command flakes" build \
+                "${nix_source_arg_values[@]}" "$nix_installable" \
+                --out-link "$out_link"
+            else
+              nix --extra-experimental-features "nix-command flakes" build \
+                "$nix_installable" --out-link "$out_link"
+            fi
           fi
         )
         ;;
@@ -189,13 +329,19 @@ case "$resolved_nix_runner" in
         (
           cd "$ROOT_DIR"
           if [[ ${#derived_hash_specs[@]} -gt 0 ]]; then
+            [[ "$external_source" == "0" ]] || fail "external Nix source builds cannot use derived hash discovery"
             "$ROOT_DIR/scripts/nix-build-with-derived-hashes.sh" \
               nix-build "$nix_flake_for_build/${NIX_EXPRESSION:-.}" \
               "$NIX_ATTR" "$VERSION" "$out_link" "$derived_hashes_file" \
               "${derived_hash_specs[@]}"
           else
-            nix-build "$nix_flake_for_build/${NIX_EXPRESSION:-.}" \
-              -A "$NIX_ATTR" --out-link "$out_link"
+            if [[ ${#nix_source_arg_values[@]} -gt 0 ]]; then
+              nix-build "$nix_flake_for_build/${NIX_EXPRESSION:-.}" \
+                -A "$NIX_ATTR" "${nix_source_arg_values[@]}" --out-link "$out_link"
+            else
+              nix-build "$nix_flake_for_build/${NIX_EXPRESSION:-.}" \
+                -A "$NIX_ATTR" --out-link "$out_link"
+            fi
           fi
         )
         ;;
@@ -323,6 +469,9 @@ assumed_host_libs_json="$(portable_host_libs_json)"
 # them via the environment rather than interpolating them into Python source.
 NIX_DERIVED_HASHES_ENV="$derived_hashes_json" \
 NIX_BUILD_COMMAND_TEMPLATE_ENV="$NIX_BUILD_COMMAND_TEMPLATE" \
+NIX_SOURCE_METADATA_ENV="$source_metadata_json" \
+NIX_SOURCE_REPOSITORY_ENV="$source_repository" \
+NIX_SOURCE_ARGS_ENV="$nix_source_args_json" \
 python3 - "$manifest" "$archive" "$archive_bytes" <<PY
 import json
 import os
@@ -332,6 +481,8 @@ _, manifest_path, archive_path, archive_bytes_raw = sys.argv
 archive_name = os.path.basename(archive_path) if archive_path else None
 archive_bytes = int(archive_bytes_raw) if archive_bytes_raw else None
 nix_derived_hashes = json.loads(os.environ.get("NIX_DERIVED_HASHES_ENV", "{}"))
+source_metadata = json.loads(os.environ.get("NIX_SOURCE_METADATA_ENV", "{}") or "{}")
+source_args = json.loads(os.environ.get("NIX_SOURCE_ARGS_ENV", "{}") or "{}")
 
 manifest = {
     "service": "$service",
@@ -343,6 +494,8 @@ manifest = {
     "source_dir": "$SOURCE_DIR",
     "source_ref": "$SOURCE_REF",
     "source_commit": "$actual_ref",
+    "upstream_source": source_metadata or None,
+    "upstream_source_repository": os.environ.get("NIX_SOURCE_REPOSITORY_ENV") or None,
     "upstream_image": "$UPSTREAM_IMAGE",
     "base_image": "$BASE_IMAGE",
     "entrypoint": json.loads("""$ENTRYPOINT_JSON"""),
@@ -351,6 +504,7 @@ manifest = {
     "nix_flake": "$NIX_FLAKE",
     "nix_flake_for_build": "$nix_flake_for_build",
     "nix_attr": "$NIX_ATTR",
+    "nix_source_args": source_args,
     "nix_build_mode": "$NIX_BUILD_MODE",
     "nix_build_command_template": os.environ.get("NIX_BUILD_COMMAND_TEMPLATE_ENV", ""),
     "nix_output_kind": "${NIX_OUTPUT_KIND:-copy-paths}",

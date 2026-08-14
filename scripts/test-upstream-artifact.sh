@@ -88,6 +88,7 @@ class UpstreamArtifactTest(unittest.TestCase):
             "repository": "axllent/mailpit",
             "versions": {
                 "v1.30.2": {
+                    "release_tag": "v1.30.2",
                     "assets": assets,
                     "image": {
                         "source": "docker.io/axllent/mailpit:v1.30.2",
