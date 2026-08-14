@@ -69,6 +69,15 @@
       "tag_pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
       "external_release_descriptor": "services/vector/external-release.json",
       "poll": false
+    },
+    "imgproxy": {
+      "repository": "imgproxy/imgproxy",
+      "artifact_source": "external-source",
+      "image_release": "mirror",
+      "image_repository": "imgproxy/imgproxy",
+      "tag_pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$",
+      "external_release_descriptor": "services/imgproxy/external-release.json",
+      "poll": false
     }
   }
 }

@@ -141,10 +141,20 @@ class VerifyOciMirrorTest(unittest.TestCase):
             encoding="utf-8",
         )
         smoke.chmod(0o755)
-        for service in ("mailpit", "vector"):
+        for service in ("mailpit", "vector", "imgproxy"):
             service_dir = repo / "services" / service
             service_dir.mkdir(parents=True)
             shutil.copy2(ROOT_DIR / "services" / service / "recipe.env", service_dir / "recipe.env")
+            if service == "imgproxy":
+                smoke = service_dir / "smoke.sh"
+                smoke.write_text(
+                    "#!/bin/sh\n"
+                    '[ -n "$IMAGE" ]\n'
+                    '[ -d "${DOCKER_CONFIG-}" ] && [ -z "$(ls -A "$DOCKER_CONFIG")" ]\n'
+                    'printf "default-smoke\\t%s\\t%s\\t%s\\n" "imgproxy" "$IMAGE" "$DOCKER_CONFIG" >> "$FAKE_TRACE"\n',
+                    encoding="utf-8",
+                )
+                smoke.chmod(0o755)
         if custom:
             custom_smoke = repo / "services" / "mailpit" / "custom-smoke.sh"
             custom_smoke.write_text(
@@ -350,9 +360,9 @@ class VerifyOciMirrorTest(unittest.TestCase):
         self.assertEqual(len(tree_lines), 2, tree_lines)
         self.assertTrue(all("artifact tree --digest-tags" in line for line in tree_lines), tree_lines)
 
-    def test_mailpit_and_vector_recipes_execute_default_smoke_route(self):
+    def test_mirror_recipes_execute_default_smoke_route(self):
         repo = self.mirror_repo()
-        for service in ("mailpit", "vector"):
+        for service in ("mailpit", "vector", "imgproxy"):
             result, trace, output = self.run_recipe_mirror(service, repo)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertTrue(output.is_file())

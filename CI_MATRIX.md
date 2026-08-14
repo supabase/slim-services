@@ -83,13 +83,16 @@ host process (`SLIM_DIRECT_LINUX_ARTIFACT_SMOKE=1`) — the CLI's no-Docker
 mode — on top of the derived-image smoke.
 
 Mailpit and Vector are upstream-archive/mirror entries selected explicitly for
-artifact runs through the `external_versions` JSON input. Their three native
-archives use the same target matrix and direct artifact smoke, while the Linux
-release path skips derived-image construction and mirrors the exact OCI index
-resolved at plan time. The release workflow freezes one descriptor-derived
-snapshot (including archive and platform digests) and every consumer verifies
-that same run-scoped artifact before loading a recipe. Historical release facts
-remain in the service reports; no current version is required in the checkout.
+artifact runs through the `external_versions` JSON input. Imgproxy is a
+source-built Nix/external-source mirror entry selected the same way, with its
+explicit `vMAJOR.MINOR.PATCH` version. Mailpit and Vector's three native
+archives use the same target matrix and direct artifact smoke; imgproxy uses
+its pinned Nix source snapshot. The Linux release path skips derived-image
+construction and mirrors the exact OCI index resolved at plan time. The
+release workflow freezes one descriptor-derived snapshot (including archive,
+source, and platform digests) and every consumer verifies that same run-scoped
+artifact before loading a recipe. Historical release facts remain in the
+service reports; no current version is required in the checkout.
 
 Native-first (HOST_NATIVE_PLAN.md): the archive on every target is the
 host-native artifact — relocatable, audit-clean, runnable straight from the

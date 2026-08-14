@@ -21,6 +21,7 @@ The primary upstream projects are:
 | Studio | [Supabase](https://github.com/supabase/supabase) | Apache-2.0 |
 | Mailpit | [Mailpit](https://github.com/axllent/mailpit) | MIT |
 | Vector | [Vector](https://github.com/vectordotdev/vector) | MPL-2.0 |
+| Imgproxy | [imgproxy](https://github.com/imgproxy/imgproxy) | MIT |
 
 Each generated runtime archive includes the license and notice files found in
 its dependency closure under `share/licenses/`. Each release also includes an
