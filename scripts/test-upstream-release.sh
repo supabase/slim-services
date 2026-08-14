@@ -29,18 +29,18 @@ VALID_POLICY = {
         "v1.0.0": {
             "assets": {
                 "darwin-arm64": {
-                    "name": "mailpit-v1.0.0-darwin-arm64.tar.gz",
-                    "url": "https://github.com/axllent/mailpit/releases/download/v1.0.0/mailpit-v1.0.0-darwin-arm64.tar.gz",
+                    "name": "mailpit-darwin-arm64.tar.gz",
+                    "url": "https://github.com/axllent/mailpit/releases/download/v1.0.0/mailpit-darwin-arm64.tar.gz",
                     "sha256": "a" * 64,
                 },
                 "linux-amd64": {
-                    "name": "mailpit-v1.0.0-linux-amd64.tar.gz",
-                    "url": "https://github.com/axllent/mailpit/releases/download/v1.0.0/mailpit-v1.0.0-linux-amd64.tar.gz",
+                    "name": "mailpit-linux-amd64.tar.gz",
+                    "url": "https://github.com/axllent/mailpit/releases/download/v1.0.0/mailpit-linux-amd64.tar.gz",
                     "sha256": "b" * 64,
                 },
                 "linux-arm64": {
-                    "name": "mailpit-v1.0.0-linux-arm64.tar.gz",
-                    "url": "https://github.com/axllent/mailpit/releases/download/v1.0.0/mailpit-v1.0.0-linux-arm64.tar.gz",
+                    "name": "mailpit-linux-arm64.tar.gz",
+                    "url": "https://github.com/axllent/mailpit/releases/download/v1.0.0/mailpit-linux-arm64.tar.gz",
                     "sha256": "c" * 64,
                 },
             },
@@ -76,8 +76,8 @@ class UpstreamReleasePolicyTest(unittest.TestCase):
         self.assertEqual(
             upstream_release.resolve_asset(policy, "v1.0.0", "linux-amd64"),
             {
-                "name": "mailpit-v1.0.0-linux-amd64.tar.gz",
-                "url": "https://github.com/axllent/mailpit/releases/download/v1.0.0/mailpit-v1.0.0-linux-amd64.tar.gz",
+                "name": "mailpit-linux-amd64.tar.gz",
+                "url": "https://github.com/axllent/mailpit/releases/download/v1.0.0/mailpit-linux-amd64.tar.gz",
                 "sha256": "b" * 64,
             },
         )
@@ -110,7 +110,7 @@ class UpstreamReleasePolicyTest(unittest.TestCase):
         policy = copy.deepcopy(VALID_POLICY)
         policy["versions"]["v1.0.0"]["assets"]["linux-amd64"]["url"] = (
             "http://github.com/axllent/mailpit/releases/download/v1.0.0/"
-            "mailpit-v1.0.0-linux-amd64.tar.gz"
+            "mailpit-linux-amd64.tar.gz"
         )
         self.assert_invalid(policy, "noncanonical GitHub URL")
 
@@ -123,7 +123,7 @@ class UpstreamReleasePolicyTest(unittest.TestCase):
         policy = copy.deepcopy(VALID_POLICY)
         policy["versions"]["v1.0.0"]["assets"]["linux-amd64"]["url"] = (
             "https://github.com/axllent/mailpit/releases/download/v9.9.9/"
-            "mailpit-v1.0.0-linux-amd64.tar.gz"
+            "mailpit-linux-amd64.tar.gz"
         )
         self.assert_invalid(policy, "mismatched release URL components")
 

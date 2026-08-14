@@ -73,7 +73,7 @@ def _validate_asset(asset: Any, repository: str, version: str, target: str, path
     _require_keys(asset, {"name", "url", "sha256"}, path)
 
     name = _require_string(asset["name"], f"{path}.name")
-    expected_name = f"mailpit-{version}-{target}.tar.gz"
+    expected_name = f"mailpit-{target}.tar.gz"
     if name != expected_name:
         raise ValueError(f"{path}.name must be {expected_name!r}")
 
