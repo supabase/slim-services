@@ -367,6 +367,24 @@ def test_release_aggregate_checksums_cover_external_evidence():
             assert_true(hashlib.sha256(target.read_bytes()).hexdigest() == digest, f"aggregate checksum mismatch: {relative_path}")
 
 
+def test_service_artifact_persistence_includes_sbom():
+    ruby = (
+        "require 'yaml'; require 'json'; "
+        "data=YAML.safe_load(File.read(ARGV[0]), aliases: true); "
+        "steps=data.fetch('jobs').fetch('build').fetch('steps'); "
+        "selected=steps.select { |step| ['Restore identical artifact from cache', 'Save artifact to cache', 'Upload archive + checksums + manifest'].include?(step['name']) }; "
+        "puts JSON.generate(selected)"
+    )
+    result = run(["ruby", "-e", ruby, str(ROOT / ".github" / "workflows" / "service-artifacts.yml")])
+    assert_true(result.returncode == 0, result.stderr)
+    steps = json.loads(result.stdout)
+    expected = {"Restore identical artifact from cache", "Save artifact to cache", "Upload archive + checksums + manifest"}
+    assert_true({step.get("name") for step in steps} == expected, "artifact persistence steps changed unexpectedly")
+    for step in steps:
+        path = step.get("with", {}).get("path", "")
+        assert_true("*.sbom.spdx.json" in path, f"{step['name']} omits the service SBOM")
+
+
 tests = [value for name, value in globals().items() if name.startswith("test_")]
 for test in tests:
     test()
