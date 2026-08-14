@@ -28,6 +28,7 @@ VALID_POLICY = {
     "repository": "axllent/mailpit",
     "versions": {
         "v1.0.0": {
+            "release_tag": "v1.0.0",
             "assets": {
                 "darwin-arm64": {
                     "name": "mailpit-darwin-arm64.tar.gz",
@@ -85,6 +86,30 @@ VECTOR_POLICY = {
                 "platforms": {
                     "linux/amd64": "sha256:" + "5" * 64,
                     "linux/arm64": "sha256:" + "6" * 64,
+                },
+            },
+        }
+    },
+}
+
+SOURCE_POLICY = {
+    "repository": "imgproxy/imgproxy",
+    "versions": {
+        "3.30.0": {
+            "release_tag": "v3.30.0",
+            "source": {
+                "commit": "a" * 40,
+                "url": "https://github.com/imgproxy/imgproxy/archive/" + "a" * 40 + ".tar.gz",
+                "sha256": "b" * 64,
+                "fetch_from_github_hash": "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+                "vendorHash": "sha256-AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=",
+            },
+            "image": {
+                "source": "docker.io/imgproxy/imgproxy:3.30.0",
+                "index_digest": "sha256:" + "c" * 64,
+                "platforms": {
+                    "linux/amd64": "sha256:" + "d" * 64,
+                    "linux/arm64": "sha256:" + "e" * 64,
                 },
             },
         }
@@ -163,6 +188,43 @@ class UpstreamReleasePolicyTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "v0.53.0\n")
 
+    def test_resolves_source_snapshot_without_network(self):
+        policy = upstream_release.load_policy(self.write_policy(SOURCE_POLICY))
+        self.assertEqual(
+            upstream_release.resolve_source(policy, "3.30.0"),
+            SOURCE_POLICY["versions"]["3.30.0"]["source"],
+        )
+        policy_path = self.write_policy(SOURCE_POLICY)
+        result = subprocess.run(
+            [sys.executable, str(MODULE_PATH), "source", str(policy_path), "3.30.0"],
+            cwd=ROOT_DIR,
+            text=True,
+            capture_output=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), SOURCE_POLICY["versions"]["3.30.0"]["source"])
+
+    def test_accepts_registry_validated_version_and_independent_release_tag(self):
+        policy = copy.deepcopy(VECTOR_POLICY)
+        record = policy["versions"].pop("0.53.0")
+        policy["versions"]["2026.08"] = record
+        record["release_tag"] = "release-2026.08"
+        for asset in record["assets"].values():
+            asset["url"] = asset["url"].replace("v0.53.0", "release-2026.08", 1)
+        record["image"]["source"] = "docker.io/timberio/vector:build-2026.08"
+        loaded = upstream_release.load_policy(self.write_policy(policy))
+        self.assertEqual(upstream_release.resolve_release_tag(loaded, "2026.08"), "release-2026.08")
+
+    def test_rejects_source_with_conflated_or_malformed_hashes(self):
+        for field, value in (
+            ("sha256", "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
+            ("fetch_from_github_hash", "b" * 64),
+            ("fetch_from_github_hash", "sha256-A="),
+        ):
+            policy = copy.deepcopy(SOURCE_POLICY)
+            policy["versions"]["3.30.0"]["source"][field] = value
+            self.assert_invalid(policy, f"malformed source {field}")
+
     def test_rejects_unknown_version_and_target(self):
         policy = upstream_release.load_policy(self.write_policy(VALID_POLICY))
 
@@ -226,7 +288,7 @@ class UpstreamReleasePolicyTest(unittest.TestCase):
 
     def test_rejects_malformed_release_tag(self):
         policy = copy.deepcopy(VECTOR_POLICY)
-        policy["versions"]["0.53.0"]["release_tag"] = "0.53.0"
+        policy["versions"]["0.53.0"]["release_tag"] = "bad tag"
         self.assert_invalid(policy, "malformed release tag")
 
     def test_rejects_release_url_using_canonical_version(self):
