@@ -96,6 +96,7 @@ def _validate_members(
         raise ArchiveError("multiple archive roots: " + ", ".join(sorted(roots)))
     root = next(iter(roots), None)
     normalized_members: list[tuple[tarfile.TarInfo, str | None]] = []
+    root_member_seen = False
     for member, name in parsed:
         if root is not None:
             if name == root:
@@ -111,6 +112,10 @@ def _validate_members(
                 _relative_path(normalized_name, "archive member path", nested=False)
             else:
                 _relative_path(normalized_name, "normalized archive member path", nested=True)
+        elif root_member_seen:
+            raise ArchiveError(f"duplicate normalized archive member: {root}")
+        else:
+            root_member_seen = True
         normalized_members.append((member, normalized_name))
 
     seen_normalized: set[str] = set()
