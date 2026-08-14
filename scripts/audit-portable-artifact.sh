@@ -102,9 +102,13 @@ PY
     ;;
   --linux)
     require_cmd file
-    require_cmd ldd
     require_cmd readelf
     require_cmd python3
+    case "$(uname -m)" in
+      aarch64|arm64) allowed_interp="/lib/ld-linux-aarch64.so.1" ;;
+      x86_64|amd64) allowed_interp="/lib64/ld-linux-x86-64.so.2" ;;
+      *) fail "unsupported audit architecture: $(uname -m)" ;;
+    esac
     # Resolve against the artifact's own library dirs first (including Debian
     # multiarch dirs) so bundled libs don't get checked against older host
     # copies of the same soname.
@@ -112,18 +116,52 @@ PY
     for dir in "$rootfs"/lib/*-linux-gnu* "$rootfs"/usr/lib/*-linux-gnu*; do
       [[ -d "$dir" ]] && lib_path="$lib_path:$dir"
     done
+    bundled_loader=""
+    for candidate in "$rootfs$allowed_interp" "$rootfs/lib/$(basename "$allowed_interp")"; do
+      if [[ -x "$candidate" ]]; then
+        bundled_loader="$candidate"
+        break
+      fi
+    done
+    [[ -n "$bundled_loader" ]] || require_cmd ldd
     unresolved="$(
       find "$rootfs" -type f 2>/dev/null \
         | while IFS= read -r file_path; do
-            if file "$file_path" | grep -q 'ELF'; then
-              # ldd exits nonzero on statically linked binaries; that is a
-              # pass, not an audit error, so keep pipefail from killing the
-              # scan. (No apostrophes here: bash 3.2 on macOS mis-parses
-              # quotes in comments inside command substitutions.)
-              LD_LIBRARY_PATH="$lib_path:${LD_LIBRARY_PATH:-}" \
-                ldd "$file_path" 2>/dev/null \
-                | awk -v file="$file_path" '/not found/ { print file " -> " $0 }' \
-                || true
+            # Ask file(1) for description-only output; never let words in an
+            # ELF filename influence static/dynamic classification.
+            file_description="$(file -b -- "$file_path" 2>/dev/null || true)"
+            if [[ "$file_description" == *ELF* ]]; then
+              if [[ "$file_path" == "$bundled_loader" ]]; then
+                continue
+              elif [[ -n "$bundled_loader" ]]; then
+                # Host ldd can crash or resolve against the wrong libc when an
+                # artifact bundles glibc. Ask the artifact loader directly so
+                # this is also a hermetic dependency-resolution proof.
+                loader_output=""
+                if loader_output="$("$bundled_loader" --library-path "$lib_path" --list "$file_path" 2>&1)"; then
+                  awk -v file="$file_path" '/not found/ { print file " -> " $0 }' <<< "$loader_output"
+                else
+                  printf '%s -> bundled loader audit failed: %s\n' "$file_path" "$loader_output"
+                fi
+              else
+                ldd_output=""
+                ldd_status=0
+                if ldd_output="$(
+                  LD_LIBRARY_PATH="$lib_path:${LD_LIBRARY_PATH:-}" \
+                    ldd "$file_path" 2>&1
+                )"; then
+                  ldd_status=0
+                else
+                  ldd_status=$?
+                fi
+                if [[ "$ldd_status" -ne 0 ]]; then
+                  if [[ "$file_description" != *"statically linked"* && "$file_description" != *"static-pie"* ]]; then
+                    printf '%s -> ldd audit failed (status %s): %s\n' \
+                      "$file_path" "$ldd_status" "$ldd_output"
+                  fi
+                fi
+                awk -v file="$file_path" '/not found/ { print file " -> " $0 }' <<< "$ldd_output"
+              fi
               # Absolute store paths in NEEDED/RPATH RESOLVE on a build
               # machine (its /nix/store exists), so the ldd pass above cannot
               # catch them — reject the strings themselves. (Real leak seen:
@@ -143,11 +181,6 @@ PY
     # where that store exists) or a musl loader on a glibc target — breaks
     # the moment the archive lands on a clean host. (Real leak class seen:
     # a bundled Nix store subtree whose ELFs kept their store interpreters.)
-    case "$(uname -m)" in
-      aarch64|arm64) allowed_interp="/lib/ld-linux-aarch64.so.1" ;;
-      x86_64|amd64) allowed_interp="/lib64/ld-linux-x86-64.so.2" ;;
-      *) fail "unsupported audit architecture: $(uname -m)" ;;
-    esac
     bad_interps="$(
       find "$rootfs" -type f 2>/dev/null \
         | while IFS= read -r file_path; do

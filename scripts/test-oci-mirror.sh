@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import pathlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -24,9 +25,9 @@ def digest(raw):
     return "sha256:" + hashlib.sha256(raw).hexdigest()
 
 
-def descriptor(value, *, platform=None, annotations=None):
+def descriptor(value, *, platform=None, annotations=None, media_type=None):
     item = {
-        "mediaType": "application/vnd.oci.image.manifest.v1+json",
+        "mediaType": media_type or "application/vnd.oci.image.manifest.v1+json",
         "digest": value,
         "size": 123,
     }
@@ -37,11 +38,14 @@ def descriptor(value, *, platform=None, annotations=None):
     return item
 
 
-def fixture_index(*, include_arm=True, duplicate_amd64=False, media_type=None, attest=True):
+def fixture_index(
+    *, include_arm=True, duplicate_amd64=False, media_type=None, child_media_type=None, attest=True
+):
     manifests = [
         descriptor(
             "sha256:" + "f" * 64,
             platform={"architecture": "amd64", "os": "linux"},
+            media_type=child_media_type,
         )
     ]
     if include_arm:
@@ -49,6 +53,7 @@ def fixture_index(*, include_arm=True, duplicate_amd64=False, media_type=None, a
             descriptor(
                 "sha256:" + "6" * 64,
                 platform={"architecture": "arm64", "os": "linux"},
+                media_type=child_media_type,
             )
         )
     if duplicate_amd64:
@@ -56,6 +61,7 @@ def fixture_index(*, include_arm=True, duplicate_amd64=False, media_type=None, a
             descriptor(
                 "sha256:" + "e" * 64,
                 platform={"architecture": "amd64", "os": "linux"},
+                media_type=child_media_type,
             )
         )
     if attest:
@@ -66,6 +72,7 @@ def fixture_index(*, include_arm=True, duplicate_amd64=False, media_type=None, a
                     "vnd.docker.reference.digest": "sha256:" + "f" * 64,
                     "vnd.docker.reference.type": "attestation-manifest",
                 },
+                media_type=child_media_type,
             )
         )
     return {
@@ -92,6 +99,7 @@ class VerifyOciMirrorTest(unittest.TestCase):
             "repository": "axllent/mailpit",
             "versions": {
                 "v1.2.3": {
+                    "release_tag": "v1.2.3",
                     "assets": {
                         target: {
                             "name": f"mailpit-{target}.tar.gz",
@@ -117,6 +125,85 @@ class VerifyOciMirrorTest(unittest.TestCase):
 
     def tearDown(self):
         self.temp.cleanup()
+
+    def mirror_repo(self, *, custom=False):
+        repo = self.directory / ("custom-repo" if custom else "default-repo")
+        scripts = repo / "scripts"
+        scripts.mkdir(parents=True)
+        for name in ("lib.sh", "mirror-upstream-image.sh", "verify-oci-mirror.py", "upstream-release.py"):
+            shutil.copy2(ROOT_DIR / "scripts" / name, scripts / name)
+        smoke = scripts / "smoke.sh"
+        smoke.write_text(
+            "#!/bin/sh\n"
+            '[ "$2" = --image ]\n'
+            '[ -d "${DOCKER_CONFIG-}" ] && [ -z "$(ls -A "$DOCKER_CONFIG")" ]\n'
+            'printf "default-smoke\\t%s\\t%s\\t%s\\n" "$1" "$3" "$DOCKER_CONFIG" >> "$FAKE_TRACE"\n',
+            encoding="utf-8",
+        )
+        smoke.chmod(0o755)
+        for service in ("mailpit", "vector"):
+            service_dir = repo / "services" / service
+            service_dir.mkdir(parents=True)
+            shutil.copy2(ROOT_DIR / "services" / service / "recipe.env", service_dir / "recipe.env")
+        if custom:
+            custom_smoke = repo / "services" / "mailpit" / "custom-smoke.sh"
+            custom_smoke.write_text(
+                "#!/bin/sh\n"
+                '[ -n "$IMAGE" ]\n'
+                '[ -d "${DOCKER_CONFIG-}" ] && [ -z "$(ls -A "$DOCKER_CONFIG")" ]\n'
+                'printf "custom-smoke\\t%s\\t%s\\n" "$IMAGE" "$DOCKER_CONFIG" >> "$FAKE_TRACE"\n',
+                encoding="utf-8",
+            )
+            custom_smoke.chmod(0o755)
+            recipe = repo / "services" / "mailpit" / "recipe.env"
+            with recipe.open("a", encoding="utf-8") as stream:
+                stream.write('MIRROR_SMOKE_SCRIPT="services/mailpit/custom-smoke.sh"\n')
+        return repo
+
+    def run_recipe_mirror(self, service, repo):
+        fake_bin = self.directory / f"fake-{service}-bin"
+        fake_bin.mkdir()
+        trace = self.directory / f"{service}-mirror-trace"
+        fake_regctl = fake_bin / "regctl"
+        fake_regctl.write_text(
+            "#!/bin/sh\n"
+            'empty=no; [ -d "${REGCTL_CONFIG-}" ] && [ -z "$(ls -A "$REGCTL_CONFIG")" ] && empty=yes\n'
+            'printf "regctl\\t%s\\t%s\\n" "$*" "$empty" >> "$FAKE_TRACE"\n'
+            'if [ "$1" = image ] && [ "$2" = digest ]; then printf "%s\\n" "$FAKE_DIGEST"; exit 0; fi\n'
+            'if [ "$1" = image ] && [ "$2" = manifest ]; then cat "$FAKE_RAW"; exit 0; fi\n'
+            'if [ "$1" = image ] && [ "$2" = copy ]; then exit 0; fi\n'
+            'if [ "$1" = artifact ] && [ "$2" = tree ]; then printf "%s\\n" "$FAKE_DIGEST"; exit 0; fi\n'
+            "exit 1\n",
+            encoding="utf-8",
+        )
+        fake_regctl.chmod(0o755)
+        fake_docker = fake_bin / "docker"
+        fake_docker.write_text(
+            "#!/bin/sh\n"
+            'empty=no; [ -d "${DOCKER_CONFIG-}" ] && [ -z "$(ls -A "$DOCKER_CONFIG")" ] && empty=yes\n'
+            'printf "docker\\t%s\\t%s\\n" "$*" "$empty" >> "$FAKE_TRACE"\n'
+            "[ \"$1\" = pull ]\n",
+            encoding="utf-8",
+        )
+        fake_docker.chmod(0o755)
+        destination = f"example.invalid/{service}"
+        output = self.directory / f"{service}-provenance.json"
+        result = subprocess.run(
+            [str(repo / "scripts" / "mirror-upstream-image.sh"), service, "v1.2.3", destination, str(output)],
+            cwd=repo,
+            text=True,
+            capture_output=True,
+            env={
+                **os.environ,
+                "PATH": f"{fake_bin}:{os.environ['PATH']}",
+                "UPSTREAM_ASSETS_FILE": str(self.policy_path),
+                "FAKE_TRACE": str(trace),
+                "FAKE_DIGEST": digest(self.source_path.read_bytes()),
+                "FAKE_RAW": str(self.source_path),
+            },
+            check=False,
+        )
+        return result, trace, output
 
     def run_verify(self, source=None, destination=None):
         if source is not None:
@@ -172,14 +259,34 @@ class VerifyOciMirrorTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("platform linux/amd64", result.stderr)
 
-    def test_missing_duplicate_and_unexpected_media_type_fail(self):
+    def test_missing_and_duplicate_platforms_fail(self):
         for index in (
             fixture_index(include_arm=False),
             fixture_index(duplicate_amd64=True),
-            fixture_index(media_type="application/vnd.docker.distribution.manifest.list.v2+json"),
         ):
             result = self.run_verify(source=index)
             self.assertNotEqual(result.returncode, 0)
+
+    def test_docker_manifest_list_family_is_accepted(self):
+        index = fixture_index(
+            media_type="application/vnd.docker.distribution.manifest.list.v2+json",
+            child_media_type="application/vnd.docker.distribution.manifest.v2+json",
+        )
+        source = raw(index)
+        self.source_path.write_bytes(source)
+        self.dest_path.write_bytes(source)
+        policy = json.loads(self.policy_path.read_text(encoding="utf-8"))
+        policy["versions"]["v1.2.3"]["image"]["index_digest"] = digest(source)
+        self.policy_path.write_text(json.dumps(policy), encoding="utf-8")
+        result = self.run_verify()
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_mismatched_docker_child_media_type_fails(self):
+        index = fixture_index(
+            media_type="application/vnd.docker.distribution.manifest.list.v2+json"
+        )
+        result = self.run_verify(source=index)
+        self.assertNotEqual(result.returncode, 0)
 
     def test_lost_embedded_attestation_fails(self):
         result = self.run_verify(destination=fixture_index(attest=False))
@@ -243,42 +350,32 @@ class VerifyOciMirrorTest(unittest.TestCase):
         self.assertEqual(len(tree_lines), 2, tree_lines)
         self.assertTrue(all("artifact tree --digest-tags" in line for line in tree_lines), tree_lines)
 
-    def test_vector_release_policy_and_manual_dispatch_route(self):
-        config_path = ROOT_DIR / ".github" / "service-release-sources.json"
-        workflow_path = ROOT_DIR / ".github" / "workflows" / "service-release.yml"
-        artifacts_workflow_path = ROOT_DIR / ".github" / "workflows" / "service-artifacts.yml"
-        config = json.loads(config_path.read_text(encoding="utf-8"))
-        vector = config["services"]["vector"]
-        self.assertEqual(vector["repository"], "vectordotdev/vector")
-        self.assertEqual(vector["artifact_source"], "upstream-archive")
-        self.assertEqual(vector["image_release"], "mirror")
-        self.assertEqual(vector["image_repository"], "timberio/vector")
-        self.assertEqual(vector["tag_pattern"], r"^[0-9]+\.[0-9]+\.[0-9]+$")
-        self.assertFalse(vector["poll"])
+    def test_mailpit_and_vector_recipes_execute_default_smoke_route(self):
+        repo = self.mirror_repo()
+        for service in ("mailpit", "vector"):
+            result, trace, output = self.run_recipe_mirror(service, repo)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(output.is_file())
+            lines = trace.read_text(encoding="utf-8").splitlines()
+            smoke = [line.split("\t") for line in lines if line.startswith("default-smoke\t")]
+            self.assertEqual(smoke[0][1:3], [service, f"example.invalid/{service}:v1.2.3"])
+            self.assertTrue(smoke[0][3])
+            pulls = [line.split("\t") for line in lines if line.startswith("docker\t")]
+            self.assertTrue(any("pull example.invalid/" + service + ":v1.2.3" in line[1] and line[2] == "yes" for line in pulls))
+            regctl = [line.split("\t") for line in lines if line.startswith("regctl\t")]
+            self.assertTrue(any("image digest" in line[1] and line[2] == "yes" for line in regctl))
 
-        workflow = workflow_path.read_text(encoding="utf-8")
-        self.assertIn("          - vector\n", workflow)
-        self.assertIn(
-            "            auth|postgrest|realtime|pooler|analytics|storage|edge-runtime|studio|pgmeta|postgres|mailpit|vector) ;;",
-            workflow,
-        )
-        self.assertIn("upstream-release.py release-tag", workflow)
-        self.assertIn('release_tag="$SERVICE-$VERSION"', workflow)
-        self.assertIn(
-            "default: auth postgrest realtime pooler analytics storage edge-runtime studio pgmeta postgres mailpit vector",
-            artifacts_workflow_path.read_text(encoding="utf-8"),
-        )
-
-    def test_mirror_smoke_routing_is_recipe_driven_and_keeps_mailpit(self):
-        mirror_script = MIRROR_SCRIPT.read_text(encoding="utf-8")
-        vector_recipe = (ROOT_DIR / "services" / "vector" / "recipe.env").read_text(encoding="utf-8")
-        mailpit_recipe = (ROOT_DIR / "services" / "mailpit" / "recipe.env").read_text(encoding="utf-8")
-
-        self.assertIn('IMAGE_RELEASE_MODE="mirror"', vector_recipe)
-        self.assertIn('IMAGE_RELEASE_MODE="mirror"', mailpit_recipe)
-        self.assertIn("IMAGE_RELEASE_MODE", mirror_script)
-        self.assertIn('"$ROOT_DIR/scripts/smoke.sh" "$service" --image "$destination_ref"', mirror_script)
-        self.assertNotIn('if [[ "$service" == "mailpit" ]]', mirror_script)
+    def test_recipe_declared_custom_smoke_receives_image_and_anonymous_config(self):
+        repo = self.mirror_repo(custom=True)
+        result, trace, output = self.run_recipe_mirror("mailpit", repo)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(output.is_file())
+        lines = trace.read_text(encoding="utf-8").splitlines()
+        custom = [line.split("\t") for line in lines if line.startswith("custom-smoke\t")]
+        self.assertEqual(custom[0][1], "example.invalid/mailpit:v1.2.3")
+        self.assertTrue(custom[0][2])
+        pulls = [line.split("\t") for line in lines if line.startswith("docker\t")]
+        self.assertTrue(any(line[2] == "yes" for line in pulls))
 
     def test_vector_is_skipped_by_the_release_poller(self):
         fake_bin = self.directory / "fake-gh-bin"
