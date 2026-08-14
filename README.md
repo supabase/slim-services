@@ -346,12 +346,15 @@ corresponding GitHub release here. All configured polled services are enabled.
 The PostgreSQL policy accepts only plain `17.x.x.x` releases; PostgreSQL 15,
 OrioleDB, architecture-specific, and other suffixed release tags are ignored.
 
-Mailpit is the non-polled upstream-archive service. Its release workflow uses
-the pinned `axllent/mailpit` archives and mirrors the exact upstream OCI image
-to `ghcr.io/supabase/cli/mailpit:<version>`; it is intentionally absent from
-the generated size/runtime tables until the first publication and anonymous
-pull gate complete. See [the Mailpit report](services/mailpit/REPORT.md) for
-the input digests, normalization, smoke coverage, and publication checklist.
+Mailpit and Vector are the non-polled upstream-archive services. Their release
+workflows use pinned native archives and mirror the exact upstream OCI images
+to `ghcr.io/supabase/cli/mailpit:<version>` and
+`ghcr.io/supabase/cli/vector:<version>`, respectively. They are intentionally
+absent from the generated size/runtime tables until first publication and the
+anonymous pull gates complete. See the [Mailpit report](services/mailpit/REPORT.md)
+and [Vector report](services/vector/REPORT.md) for input digests, normalized
+layouts, smoke coverage, and publication checklists. Vector release `0.53.0`
+uses `docker.io/timberio/vector:0.53.0-alpine` as its pinned mirror source.
 
 After a successful release run, `.github/workflows/release-results.yml`
 downloads the newest published manifest set for every service, regenerates the
@@ -432,6 +435,9 @@ scripts/archive-artifact.sh <artifact-rootfs> [archive-prefix]
 - [Mailpit](services/mailpit/REPORT.md): verified upstream native archives and
   an exact OCI image mirror; publication and anonymous-pull evidence remain
   release gates before generated tables are updated.
+- [Vector](services/vector/REPORT.md): verified upstream native archives and
+  an exact `timberio/vector:0.53.0-alpine` OCI image mirror; native release,
+  anonymous-pull evidence, and later CLI integration remain open gates.
 
 ## Design Principles
 
