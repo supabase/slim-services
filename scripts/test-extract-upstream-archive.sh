@@ -83,6 +83,10 @@ def rooted_entries():
     ]
 
 
+def dot_rooted_entries():
+    return [(f"./{entry[0]}", *entry[1:]) for entry in rooted_entries()]
+
+
 class ExtractUpstreamArchiveTest(unittest.TestCase):
     def invoke(self, archive, rootfs, mapping=MAPPING, executables=EXECUTABLES):
         return subprocess.run(
@@ -160,6 +164,22 @@ class ExtractUpstreamArchiveTest(unittest.TestCase):
                 installed = rootfs / destination
                 self.assertEqual(installed.read_bytes(), ROOTED_CONTENTS[source][0])
                 self.assertEqual(stat.S_IMODE(installed.stat().st_mode), ROOTED_CONTENTS[source][1])
+
+    def test_installs_rooted_archive_with_conventional_dot_prefix(self):
+        with tempfile.TemporaryDirectory() as directory:
+            directory = pathlib.Path(directory)
+            archive = directory / "vector-dot-prefix.tar.gz"
+            rootfs = directory / "rootfs"
+            write_archive(archive, dot_rooted_entries())
+
+            result = self.invoke(archive, rootfs, ROOTED_MAPPING, ROOTED_EXECUTABLES)
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            report = json.loads(result.stdout)
+            self.assertEqual(set(report["members"]), set(ROOTED_MAPPING))
+            for source, destination in ROOTED_MAPPING.items():
+                installed = rootfs / destination
+                self.assertEqual(installed.read_bytes(), ROOTED_CONTENTS[source][0])
 
     def assert_rejected(self, entries, label, diagnostic, mapping=MAPPING, executables=EXECUTABLES):
         with self.subTest(label=label):

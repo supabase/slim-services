@@ -76,10 +76,11 @@ def _validate_members(
     roots: set[str] = set()
 
     for member in members:
-        name = member.name
-        if name in seen_raw:
-            raise ArchiveError(f"duplicate archive member: {name}")
-        seen_raw.add(name)
+        raw_name = member.name
+        if raw_name in seen_raw:
+            raise ArchiveError(f"duplicate archive member: {raw_name}")
+        seen_raw.add(raw_name)
+        name = raw_name[2:] if raw_name.startswith("./") else raw_name
         normalized_name = name.rstrip("/") if member.isdir() else name
         _relative_path(normalized_name, "archive member path", nested=True)
         if not member.isreg() and not member.isdir():
