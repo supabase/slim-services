@@ -37,6 +37,8 @@ ROOTED_MAPPING = {
     "config/default.toml": "share/vector/default.toml",
 }
 ROOTED_EXECUTABLES = ["bin/vector"]
+MIXED_ROOT_MAPPING = {"bin/vector": "bin/vector"}
+MIXED_ROOT_EXECUTABLES = ["bin/vector"]
 ROOTED_CONTENTS = {
     "bin/vector": (b"vector executable bytes\x00\x01\n", 0o755),
     "LICENSE": (b"Vector license\n", 0o644),
@@ -223,6 +225,21 @@ class ExtractUpstreamArchiveTest(unittest.TestCase):
             "duplicate archive member",
             ROOTED_MAPPING,
             ROOTED_EXECUTABLES,
+        )
+
+    def test_rejects_mixed_dot_prefix_duplicate_root(self):
+        entries = [
+            ("root", None, 0o755, tarfile.DIRTYPE, ""),
+            ("./root", None, 0o755, tarfile.DIRTYPE, ""),
+            ("root/bin", None, 0o755, tarfile.DIRTYPE, ""),
+            ("root/bin/vector", *ROOTED_CONTENTS["bin/vector"]),
+        ]
+        self.assert_rejected(
+            entries,
+            "mixed root spelling",
+            "duplicate normalized archive member",
+            MIXED_ROOT_MAPPING,
+            MIXED_ROOT_EXECUTABLES,
         )
 
     def test_rejects_links_devices_and_fifos(self):
