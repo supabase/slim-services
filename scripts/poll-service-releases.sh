@@ -23,13 +23,15 @@ command -v python3 >/dev/null 2>&1 || {
 }
 
 if [[ "${1:-}" == "--validate-config" ]]; then
-  python3 - "$CONFIG_FILE" <<'PY'
+  python3 - "$CONFIG_FILE" "$ROOT_DIR" <<'PY'
 import json
+import pathlib
 import re
 import sys
 
 with open(sys.argv[1], encoding="utf-8") as fh:
     data = json.load(fh)
+root = pathlib.Path(sys.argv[2]).resolve()
 
 services = data.get("services")
 if not isinstance(services, dict) or not services:
@@ -51,7 +53,7 @@ for service, config in services.items():
     if release_source not in {"github", "dockerhub"}:
         raise SystemExit(f"unsupported release source for {service}: {release_source}")
     artifact_source = config.get("artifact_source", "source")
-    if artifact_source not in {"source", "upstream-archive"}:
+    if artifact_source not in {"source", "upstream-archive", "external-source"}:
         raise SystemExit(f"unsupported artifact source for {service}: {artifact_source}")
     image_release = config.get("image_release", "derived")
     if image_release not in {"derived", "mirror"}:
@@ -67,6 +69,15 @@ for service, config in services.items():
             raise SystemExit(
                 f"{message} for {service}: {image_repository}"
             )
+    descriptor = config.get("external_release_descriptor")
+    if descriptor is not None:
+        if not isinstance(descriptor, str) or not descriptor:
+            raise SystemExit(f"external_release_descriptor must be a non-empty path for {service}")
+        if config.get("poll") is True:
+            raise SystemExit(f"external descriptor service must set poll=false for {service}")
+        descriptor_path = root / descriptor
+        if not descriptor_path.is_file() or descriptor_path.is_symlink():
+            raise SystemExit(f"external descriptor not found for {service}: {descriptor_path}")
 
 print(f"validated {len(services)} service release sources")
 PY
@@ -205,7 +216,7 @@ with open(sys.argv[1], encoding="utf-8") as fh:
     services = json.load(fh)["services"]
 
 for service, config in services.items():
-    if config.get("poll") is True:
+    if config.get("poll") is True and not config.get("external_release_descriptor"):
         print(
             service,
             config["repository"],

@@ -58,6 +58,7 @@
       "image_release": "mirror",
       "image_repository": "axllent/mailpit",
       "tag_pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$",
+      "external_release_descriptor": "services/mailpit/external-release.json",
       "poll": false
     },
     "vector": {
@@ -66,6 +67,7 @@
       "image_release": "mirror",
       "image_repository": "timberio/vector",
       "tag_pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+      "external_release_descriptor": "services/vector/external-release.json",
       "poll": false
     }
   }

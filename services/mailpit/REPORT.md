@@ -1,4 +1,4 @@
-# Mailpit v1.30.2 Release Report
+# Mailpit external-release report (historical v1.30.2 evidence)
 
 Pre-publication verification record for the Mailpit upstream-release artifact
 and exact OCI mirror. Mailpit is not included in the generated README size or
@@ -8,7 +8,9 @@ has been reconciled.
 ## Upstream and licensing
 
 - Upstream repository: [`axllent/mailpit`](https://github.com/axllent/mailpit).
-- Release: `v1.30.2` (the only supported Mailpit input for this release work).
+- Manual release input is resolved dynamically from the versionless
+  `external-release.json` descriptor. `v1.30.2` below is retained as historical
+  evidence from the last compatibility check, not as a supported-version gate.
 - License: MIT. The normalized archive carries the upstream `LICENSE` file at
   `share/licenses/mailpit/LICENSE`; the repository-level notice is recorded in
   [THIRD_PARTY_NOTICES.md](../../THIRD_PARTY_NOTICES.md).
@@ -17,8 +19,8 @@ has been reconciled.
 
 ### Native release assets
 
-The policy in `services/mailpit/upstream-assets.json` pins these exact assets
-and SHA-256 values:
+The historical v1.30.2 snapshot produced from the descriptor pinned these exact
+assets and SHA-256 values:
 
 | Target | Published asset | SHA-256 |
 | --- | --- | --- |
@@ -49,6 +51,11 @@ bind addresses, POP3 authentication, reverse-DNS behavior, and SQLite state
 path at invocation time.
 
 ## Docker input and exact mirror
+
+At attempt time, the plan job resolves GitHub release assets and the independent
+Mailpit OCI tag once, writes the immutable snapshot and sidecar, and all build,
+mirror, and release jobs verify that artifact before recipe loading. The values
+below are preserved only to document the prior v1.30.2 verification.
 
 The source image policy pins:
 

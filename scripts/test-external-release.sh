@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 python3 - "$ROOT_DIR" <<'PY'
+import base64
 import hashlib
 import json
 import os
@@ -35,6 +36,7 @@ class ExternalReleaseIntegrationTest:
         self.archive = self.root / "archive.tar.gz"
         self.archive.write_bytes(b"controlled source archive\n")
         self.archive_sha256 = hashlib.sha256(self.archive.read_bytes()).hexdigest()
+        self.archive_sri = "sha256-" + base64.b64encode(hashlib.sha256(self.archive.read_bytes()).digest()).decode("ascii")
         self.default_assets = [
             {
                 "name": "mailpit-linux-amd64.tar.gz",
@@ -132,11 +134,22 @@ shutil.copyfile(os.environ["FAKE_ARCHIVE"], output)
         self.write_executable(
             "nix",
             r'''#!/usr/bin/env python3
+import base64
+import hashlib
 import json
 import os, sys
-if sys.argv[1:] != ["store", "prefetch-file", "--json", "--unpack", os.environ["FAKE_SOURCE_URL"]]:
+from pathlib import Path
+from urllib.parse import urlparse
+if len(sys.argv) != 6 or sys.argv[1:4] != ["store", "prefetch-file", "--json"] or sys.argv[4] != "--unpack":
     raise SystemExit("unexpected nix arguments: " + " ".join(sys.argv[1:]))
-print(json.dumps({"hash": "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}))
+source_uri = sys.argv[5]
+if not source_uri.startswith("file://"):
+    raise SystemExit("nix must prefetch the local file URI")
+source_path = Path(urlparse(source_uri).path)
+if source_path.read_bytes() != Path(os.environ["FAKE_ARCHIVE"]).read_bytes():
+    raise SystemExit("nix received bytes different from curl archive")
+digest = base64.b64encode(hashlib.sha256(source_path.read_bytes()).digest()).decode("ascii")
+print(json.dumps({"hash": "sha256-" + digest}))
 ''',
         )
 
@@ -303,7 +316,7 @@ print(json.dumps({"hash": "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}
             json.dumps(
                 {
                     "commit": self.commit,
-                    "fetch_from_github_hash": "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+                    "fetch_from_github_hash": self.archive_sri,
                     "sha256": self.archive_sha256,
                     "url": "https://github.com/acme/mailpit/archive/" + self.commit + ".tar.gz",
                 },
@@ -522,7 +535,7 @@ print(json.dumps({"hash": "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}
             json.dumps(
                 {
                     "commit": self.commit,
-                    "fetch_from_github_hash": "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+                    "fetch_from_github_hash": self.archive_sri,
                     "sha256": self.archive_sha256,
                     "url": "https://github.com/acme/imgproxy/archive/" + self.commit + ".tar.gz",
                 },
