@@ -42,4 +42,5 @@ jobs:
       - name: Test artifact contracts
         run: |
           scripts/test-license-compliance.sh
+          scripts/test-upstream-release.sh
           scripts/test-upstream-runtime.sh
