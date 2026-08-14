@@ -151,4 +151,3 @@ CLI-2139 remains open until all of the following are recorded after merge:
    Vector image smoke with empty local registry credentials.
 3. Complete later CLI integration (download/verify and process-compose stack
    lifecycle acceptance) before closing the CLI work.
-
