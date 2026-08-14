@@ -88,7 +88,7 @@ artifact_dir="$ROOT_DIR/artifacts/$service/$VERSION/$target"
 rootfs="$artifact_dir/rootfs"
 manifest="$artifact_dir/manifest.json"
 sbom="$artifact_dir/$service-$VERSION-$target.sbom.spdx.json"
-archive="$artifact_dir/$service-$VERSION-$target.tar.zst"
+archive=""
 
 if [[ -d "$rootfs" ]]; then
   chmod -R u+w "$rootfs" 2>/dev/null || true
@@ -107,6 +107,7 @@ installed_members="$(python3 "$ROOT_DIR/scripts/extract-upstream-archive.py" \
 rootfs_kib="$(du -sk "$rootfs" | awk '{print $1}')"
 archive_bytes="None"
 if [[ "${ARTIFACT_ARCHIVE_ON_BUILD:-1}" == "1" ]]; then
+  archive="$artifact_dir/$service-$VERSION-$target.tar.zst"
   log "creating normalized tar.zst archive"
   tar -C "$rootfs" -cf - . | zstd -q -19 -o "$archive"
   archive_bytes="$(wc -c < "$archive" | tr -d ' ')"
@@ -162,6 +163,22 @@ PY
 
 if [[ -n "$archive" ]]; then
   "$ROOT_DIR/scripts/measure-artifact.sh" "$rootfs" "$archive"
+  sums="$artifact_dir/SHA256SUMS"
+  python3 - "$archive" "$sbom" "$sums" <<'PY'
+import hashlib
+import os
+import sys
+
+archive_path, sbom_path, sums_path = sys.argv[1:]
+with open(sums_path, "w", encoding="utf-8") as output:
+    for path in (archive_path, sbom_path):
+        digest = hashlib.sha256()
+        with open(path, "rb") as stream:
+            for chunk in iter(lambda: stream.read(1 << 20), b""):
+                digest.update(chunk)
+        output.write(f"{digest.hexdigest()}  {os.path.basename(path)}\n")
+PY
+  "$ROOT_DIR/scripts/record-archive-digest.py" "$manifest" "$archive" "$sums"
 else
   "$ROOT_DIR/scripts/measure-artifact.sh" "$rootfs"
 fi

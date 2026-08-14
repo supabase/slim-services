@@ -132,6 +132,15 @@ class UpstreamArtifactTest(unittest.TestCase):
         self.assertTrue((self.artifact_dir / manifest["sbom"]).is_file())
         archive = self.artifact_dir / manifest["archive"]
         self.assertEqual(archive.suffixes[-2:], [".tar", ".zst"])
+        sums = self.artifact_dir / "SHA256SUMS"
+        self.assertTrue(sums.is_file())
+        archive_sha256 = hashlib.sha256(archive.read_bytes()).hexdigest()
+        self.assertIn(f"{archive_sha256}  {archive.name}\n", sums.read_text(encoding="utf-8"))
+        self.assertEqual(manifest["archive_sha256"], archive_sha256)
+        self.assertEqual(
+            manifest["provenance"]["normalized_archive"],
+            {"name": archive.name, "sha256": archive_sha256},
+        )
 
     def test_wrong_digest_fails_before_extraction(self):
         self.write_policy("0" * 64)
