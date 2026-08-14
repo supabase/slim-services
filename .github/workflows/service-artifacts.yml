@@ -23,7 +23,7 @@ name: Service artifacts
       services:
         description: Space-separated services to build (default = all promoted).
         required: false
-        default: auth postgrest realtime pooler analytics storage edge-runtime studio pgmeta postgres
+        default: auth postgrest realtime pooler analytics storage edge-runtime studio pgmeta postgres mailpit
       targets:
         description: Space-separated targets (linux-arm64 linux-amd64 darwin-arm64).
         required: false
@@ -104,11 +104,35 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          version="$(TARGET_OS="${{ matrix.target_os }}" ARCH="${{ matrix.arch }}" bash -c '
+          recipe_metadata="$(TARGET_OS="${{ matrix.target_os }}" ARCH="${{ matrix.arch }}" SERVICE="${{ matrix.service }}" bash -c '
             source scripts/lib.sh
-            load_recipe "${{ matrix.service }}" >/dev/null 2>&1
-            printf "%s" "$SOURCE_REF"
+            load_recipe "$SERVICE" >/dev/null 2>&1
+            printf "%s|%s|%s" "${ARTIFACT_BACKEND:-docker-source}" "${SOURCE_REF:-}" "${UPSTREAM_ASSETS_FILE:-}"
           ')"
+          IFS='|' read -r artifact_backend source_ref upstream_assets_file <<< "$recipe_metadata"
+          if [[ "$artifact_backend" == "upstream-archive" ]]; then
+            policy_file="$upstream_assets_file"
+            [[ "$policy_file" = /* ]] || policy_file="${GITHUB_WORKSPACE:-$PWD}/$policy_file"
+          version="$(python3 - "$policy_file" <<'PY'
+          import json
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as stream:
+              versions = json.load(stream)["versions"]
+          if len(versions) != 1:
+              raise SystemExit(
+                  "upstream-archive standalone builds require exactly one configured version"
+              )
+          print(next(iter(versions)))
+          PY
+            )"
+          else
+            [[ -n "$source_ref" ]] || {
+              printf 'source-backed service has no SOURCE_REF: %s\n' "${{ matrix.service }}" >&2
+              exit 1
+            }
+            version="$source_ref"
+          fi
           artifact_dir="artifacts/${{ matrix.service }}/${version}/${{ matrix.platform_dir }}"
           # Content fingerprint of everything that determines this artifact:
           # the service dir (recipe, overlay, Dockerfile.slim, smoke, nix
@@ -116,15 +140,19 @@ jobs:
           # scripts/, and this workflow. Same fingerprint => identical
           # artifact => the build/smoke below can be skipped and the cached
           # archive re-uploaded.
-          fingerprint="$(
-            {
-              git rev-parse "HEAD:services/${{ matrix.service }}"
+          fingerprint="$({
+            git rev-parse "HEAD:services/${{ matrix.service }}"
+            if [[ "$artifact_backend" == "upstream-archive" ]]; then
+              git rev-parse "HEAD:services/${{ matrix.service }}/upstream-assets.json"
+            else
               git ls-tree HEAD "sources/${{ matrix.service }}"
-              git rev-parse "HEAD:scripts"
-              git rev-parse "HEAD:.github/workflows/service-artifacts.yml"
-            } | shasum -a 256 | cut -d' ' -f1
+            fi
+            git rev-parse "HEAD:scripts"
+            git rev-parse "HEAD:.github/workflows/service-artifacts.yml"
+          } | shasum -a 256 | cut -d' ' -f1
           )"
           {
+            printf 'artifact_backend=%s\n' "$artifact_backend"
             printf 'version=%s\n' "$version"
             printf 'artifact_dir=%s\n' "$artifact_dir"
             printf 'fingerprint=%s\n' "$fingerprint"
@@ -153,7 +181,7 @@ jobs:
         run: echo "identical artifact already built (fingerprint ${{ steps.vars.outputs.fingerprint }}); skipping build and smoke, re-uploading the cached archive"
 
       - name: Checkout service source
-        if: steps.artifact-cache.outputs.cache-hit != 'true'
+        if: steps.artifact-cache.outputs.cache-hit != 'true' && steps.vars.outputs.artifact_backend != 'upstream-archive'
         run: |
           set -euo pipefail
           git submodule update --init --depth 1 "sources/${{ matrix.service }}"
@@ -161,11 +189,11 @@ jobs:
       # Nix drives every native build (BEAM packages, Node/libpq pins, and
       # the Docker-free harness postgres on macOS).
       - name: Install Nix
-        if: steps.artifact-cache.outputs.cache-hit != 'true'
+        if: steps.artifact-cache.outputs.cache-hit != 'true' && steps.vars.outputs.artifact_backend != 'upstream-archive'
         uses: nixbuild/nix-quick-install-action@9f63be77f412a248c9d9a65a4c82cf066cdf8f0c # v35
 
       - name: Restore/save Nix store cache
-        if: steps.artifact-cache.outputs.cache-hit != 'true'
+        if: steps.artifact-cache.outputs.cache-hit != 'true' && steps.vars.outputs.artifact_backend != 'upstream-archive'
         uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
         with:
           primary-key: nix-host-native-${{ matrix.service }}-${{ matrix.platform_dir }}-${{ hashFiles(format('services/{0}/recipe.env', matrix.service), format('services/{0}/nix/**', matrix.service), format('services/{0}/build-host.sh', matrix.service), 'scripts/nix-build-with-derived-mix-hash.sh', 'scripts/nixpkgs-pin.sh') }}
@@ -175,11 +203,11 @@ jobs:
           gc-max-store-size-macos: 8G
 
       - name: Set up Docker Buildx
-        if: matrix.target_os == 'linux' && steps.artifact-cache.outputs.cache-hit != 'true'
+        if: matrix.target_os == 'linux' && steps.artifact-cache.outputs.cache-hit != 'true' && steps.vars.outputs.artifact_backend != 'upstream-archive'
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
       - name: Set up Go
-        if: matrix.service == 'auth' && steps.artifact-cache.outputs.cache-hit != 'true'
+        if: matrix.service == 'auth' && steps.artifact-cache.outputs.cache-hit != 'true' && steps.vars.outputs.artifact_backend != 'upstream-archive'
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: sources/auth/go.mod

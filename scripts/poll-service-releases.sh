@@ -50,11 +50,22 @@ for service, config in services.items():
     release_source = config.get("release_source", "github")
     if release_source not in {"github", "dockerhub"}:
         raise SystemExit(f"unsupported release source for {service}: {release_source}")
-    if release_source == "dockerhub":
-        image_repository = config.get("image_repository", "")
+    artifact_source = config.get("artifact_source", "source")
+    if artifact_source not in {"source", "upstream-archive"}:
+        raise SystemExit(f"unsupported artifact source for {service}: {artifact_source}")
+    image_release = config.get("image_release", "derived")
+    if image_release not in {"derived", "mirror"}:
+        raise SystemExit(f"unsupported image release mode for {service}: {image_release}")
+    image_repository = config.get("image_repository", "")
+    if release_source == "dockerhub" or image_release == "mirror":
         if not re.fullmatch(r"[^/]+/[^/]+", image_repository):
+            message = (
+                "invalid Docker Hub image repository"
+                if release_source == "dockerhub"
+                else "invalid mirror image repository"
+            )
             raise SystemExit(
-                f"invalid Docker Hub image repository for {service}: {image_repository}"
+                f"{message} for {service}: {image_repository}"
             )
 
 print(f"validated {len(services)} service release sources")
@@ -67,7 +78,7 @@ fi
   exit 1
 }
 
-while IFS=$'\t' read -r service upstream_repository tag_pattern release_source upstream_image_repository; do
+while IFS=$'\t' read -r service upstream_repository tag_pattern release_source upstream_image_repository artifact_source image_release; do
   [[ -z "$POLL_SERVICE" || "$service" == "$POLL_SERVICE" ]] || continue
 
   version=""
@@ -194,13 +205,15 @@ with open(sys.argv[1], encoding="utf-8") as fh:
     services = json.load(fh)["services"]
 
 for service, config in services.items():
-    if config.get("poll"):
+    if config.get("poll") is True:
         print(
             service,
             config["repository"],
             config["tag_pattern"],
             config.get("release_source", "github"),
             config.get("image_repository", "-"),
+            config.get("artifact_source", "source"),
+            config.get("image_release", "derived"),
             sep="\t",
         )
 PY

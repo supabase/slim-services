@@ -13,6 +13,7 @@ Build SERVICE with the backend selected by services/SERVICE/recipe.env:
 - ARTIFACT_BACKEND=nix
 - ARTIFACT_BACKEND=docker-source
 - ARTIFACT_BACKEND=image
+- ARTIFACT_BACKEND=upstream-archive
 
 Target selection:
   TARGET_OS=linux|darwin  defaults to the host OS
@@ -59,6 +60,9 @@ case "${ARTIFACT_BACKEND:-docker-source}" in
   image)
     [[ "$TARGET_OS" == "linux" ]] || fail "image extraction artifacts are only supported for linux targets"
     exec "$ROOT_DIR/scripts/build-artifact-from-image.sh" "$service" "$@"
+    ;;
+  upstream-archive)
+    exec "$ROOT_DIR/scripts/build-artifact-from-upstream.sh" "$service" "$@"
     ;;
   *)
     fail "unknown ARTIFACT_BACKEND for $service: ${ARTIFACT_BACKEND:-}"
