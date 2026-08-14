@@ -1,0 +1,17 @@
+{
+  "github": {
+    "repository": "imgproxy/imgproxy",
+    "release_tag_template": "{version}",
+    "artifact": {
+      "type": "source-tag"
+    }
+  },
+  "oci": {
+    "repository": "ghcr.io/imgproxy/imgproxy",
+    "tag_template": "{version}",
+    "required_platforms": [
+      "linux/amd64",
+      "linux/arm64"
+    ]
+  }
+}

@@ -64,18 +64,30 @@ def test_external_descriptors_are_versionless_and_assets_are_removed():
         assert_true({k: v["name_template"] for k, v in targets.items()} == assets, service)
         assert_true(not (descriptor_path.parent / "upstream-assets.json").exists(), service)
 
+    descriptor_path = ROOT / "services" / "imgproxy" / "external-release.json"
+    descriptor = json.loads(descriptor_path.read_text(encoding="utf-8"))
+    assert_true(descriptor["github"]["repository"] == "imgproxy/imgproxy", "imgproxy")
+    assert_true(descriptor["github"]["release_tag_template"] == "{version}", "imgproxy")
+    assert_true(descriptor["github"]["artifact"] == {"type": "source-tag"}, "imgproxy source-tag descriptor")
+    assert_true(descriptor["oci"]["repository"] == "ghcr.io/imgproxy/imgproxy", "imgproxy OCI registry")
+    assert_true(descriptor["oci"]["tag_template"] == "{version}", "imgproxy OCI tag")
+    assert_true(not (descriptor_path.parent / "upstream-assets.json").exists(), "imgproxy per-version policy")
+
 
 def test_registry_has_one_canonical_descriptor_path_and_external_defaults_are_off():
     config = json.loads((ROOT / ".github" / "service-release-sources.json").read_text(encoding="utf-8"))
-    for service in ("mailpit", "vector"):
+    for service in ("mailpit", "vector", "imgproxy"):
         entry = config["services"][service]
         assert_true(entry.get("external_release_descriptor") in {
             f"services/{service}/external-release.json"
         }, f"missing canonical descriptor path for {service}")
-        assert_true(entry["artifact_source"] == "upstream-archive", service)
+        expected_artifact_source = "external-source" if service == "imgproxy" else "upstream-archive"
+        assert_true(entry["artifact_source"] == expected_artifact_source, service)
         assert_true(entry["image_release"] == "mirror", service)
         assert_true(entry["poll"] is False, service)
-
+        if service == "imgproxy":
+            assert_true(entry["image_repository"] == "imgproxy/imgproxy", "imgproxy registry repository")
+            assert_true(entry["tag_pattern"] == r"^v[0-9]+\.[0-9]+\.[0-9]+$", "imgproxy exact v tag pattern")
 
 def test_poll_validation_rejects_descriptor_dispatch():
     poll = ROOT / "scripts" / "poll-service-releases.sh"
@@ -96,6 +108,7 @@ def test_external_versions_planner_rejects_omitted_unused_and_nonexternal_entrie
     validator = ROOT / "scripts" / "validate-external-versions.sh"
     cases = [
         ("mailpit", "{}"),
+        ("imgproxy", "{}"),
         ("auth", '{"auth":"v1.2.3"}'),
         ("mailpit", '{"mailpit":"v1.2.3","vector":"0.53.0"}'),
         ("mailpit", '{"mailpit":"1.2.3"}'),
@@ -106,6 +119,8 @@ def test_external_versions_planner_rejects_omitted_unused_and_nonexternal_entrie
         assert_true(result.returncode != 0, f"invalid external map accepted: {services} {versions}")
     result = run([str(validator), "auth", "{}"])
     assert_true(result.returncode == 0 and result.stdout.strip() == "{}", result.stderr)
+    result = run([str(validator), "imgproxy", '{"imgproxy":"v3.8.0"}'])
+    assert_true(result.returncode == 0 and result.stdout.strip() == '{"imgproxy":"v3.8.0"}', result.stderr)
 
 
 def test_plan_resolves_once_and_verifies_offline_snapshot():
@@ -131,32 +146,57 @@ def test_plan_resolves_once_and_verifies_offline_snapshot():
                 "0.54.0-alpine",
                 ("vector-0.54.0-arm64-apple-darwin.tar.gz", "vector-0.54.0-x86_64-unknown-linux-musl.tar.gz", "vector-0.54.0-aarch64-unknown-linux-musl.tar.gz"),
             ),
+            (
+                "imgproxy",
+                "v3.8.0",
+                "v3.8.0",
+                "ghcr.io/imgproxy/imgproxy",
+                "v3.8.0",
+                None,
+            ),
         ):
-            repository = "axllent/mailpit" if service == "mailpit" else "vectordotdev/vector"
+            repository = {
+                "mailpit": "axllent/mailpit",
+                "vector": "vectordotdev/vector",
+                "imgproxy": "imgproxy/imgproxy",
+            }[service]
             digests = ("a" * 64, "b" * 64, "c" * 64)
+            record = {
+                "release_tag": release_tag,
+                "image": {
+                    "source": f"{image_repository}:{image_tag}",
+                    "index_digest": "sha256:" + "1" * 64,
+                    "platforms": {
+                        "linux/amd64": "sha256:" + "2" * 64,
+                        "linux/arm64": "sha256:" + "3" * 64,
+                    },
+                },
+            }
+            if service == "imgproxy":
+                commit = "f" * 40
+                record["source"] = {
+                    "commit": commit,
+                    "url": f"https://github.com/{repository}/archive/{commit}.tar.gz",
+                    "sha256": "e" * 64,
+                    "fetch_from_github_hash": "sha256-" + "A" * 43 + "=",
+                    "vendorHash": "sha256-AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=",
+                }
+            else:
+                record["assets"] = {
+                    target: {
+                        "name": name,
+                        "url": f"https://github.com/{repository}/releases/download/{release_tag}/{name}",
+                        "sha256": digest,
+                    }
+                    for target, name, digest in zip(
+                        ("darwin-arm64", "linux-amd64", "linux-arm64"), names, digests
+                    )
+                }
             snapshots[service] = {
                 "repository": repository,
                 "versions": {
                     version: {
-                        "release_tag": release_tag,
-                        "assets": {
-                            target: {
-                                "name": name,
-                                "url": f"https://github.com/{repository}/releases/download/{release_tag}/{name}",
-                                "sha256": digest,
-                            }
-                            for target, name, digest in zip(
-                                ("darwin-arm64", "linux-amd64", "linux-arm64"), names, digests
-                            )
-                        },
-                        "image": {
-                            "source": f"{image_repository}:{image_tag}",
-                            "index_digest": "sha256:" + "1" * 64,
-                            "platforms": {
-                                "linux/amd64": "sha256:" + "2" * 64,
-                                "linux/arm64": "sha256:" + "3" * 64,
-                            },
-                        },
+                        **record,
                     }
                 },
             }
@@ -169,7 +209,7 @@ def test_plan_resolves_once_and_verifies_offline_snapshot():
             )
         resolver.write_text(
             "#!/bin/sh\n"
-            "printf '%s|%s|%s\\n' \"$1\" \"$2\" \"$3\" >> \"$TRACE\"\n"
+            "printf '%s|%s|%s|%s\\n' \"$1\" \"$2\" \"$3\" \"${4-}\" >> \"$TRACE\"\n"
             "output=\"$3\"\n"
             "case \"$1\" in\n"
             + "".join(resolver_cases)
@@ -183,7 +223,7 @@ def test_plan_resolves_once_and_verifies_offline_snapshot():
         )
         resolver.chmod(0o755)
         outputs = {}
-        for service, version in (("mailpit", "v9.9.9"), ("vector", "0.54.0")):
+        for service, version in (("mailpit", "v9.9.9"), ("vector", "0.54.0"), ("imgproxy", "v3.8.0")):
             output = temp_path / f"{service}.json"
             result = run(
                 [str(PLAN), service, version, str(output)],
@@ -199,7 +239,11 @@ def test_plan_resolves_once_and_verifies_offline_snapshot():
             verified = run([str(VERIFY), str(output), version])
             assert_true(verified.returncode == 0, verified.stderr)
         trace_lines = trace.read_text(encoding="utf-8").splitlines()
-        assert_true(len(trace_lines) == 2 and all(line.count("|") == 2 for line in trace_lines), "resolver was not invoked exactly once per service")
+        assert_true(len(trace_lines) == 3, "resolver was not invoked exactly once per service")
+        trace_fields = [line.split("|", 3) for line in trace_lines]
+        assert_true(all(len(fields) == 4 for fields in trace_fields), "resolver hook trace is malformed")
+        assert_true(all(not fields[3] for fields in trace_fields[:2]), "unexpected lock hook for archive service")
+        assert_true(trace_fields[2][3].endswith("services/imgproxy/external-source-lock.sh"), "imgproxy lock hook was not passed to resolver")
         output = outputs["mailpit"]
         output.write_bytes(output.read_bytes() + b"tampered")
         tampered = run([str(VERIFY), str(output), "v9.9.9"])
@@ -216,8 +260,25 @@ def test_artifacts_requires_explicit_external_versions_and_no_external_defaults(
     result = run(["ruby", "-e", ruby, str(ROOT / ".github" / "workflows" / "service-artifacts.yml")])
     assert_true(result.returncode == 0, result.stderr)
     parsed = json.loads(result.stdout)
-    assert_true("mailpit" not in parsed["services"] and "vector" not in parsed["services"], "external service remains in defaults")
+    assert_true(
+        all(service not in parsed["services"] for service in ("mailpit", "vector", "imgproxy")),
+        "external service remains in defaults",
+    )
     assert_true(parsed["external_versions"] == "{}", "external_versions must default to an explicit empty map")
+
+
+def test_imgproxy_is_a_manual_release_choice_and_allowlisted():
+    ruby = (
+        "require 'yaml'; require 'json'; "
+        "data=YAML.safe_load(File.read(ARGV[0]), aliases: true); "
+        "input=data.fetch('on').fetch('workflow_dispatch').fetch('inputs').fetch('service'); "
+        "puts JSON.generate({options: input.fetch('options'), run: data.fetch('jobs').fetch('plan').fetch('steps').find { |s| s['name'] == 'Validate inputs and check existing release' }.fetch('run')})"
+    )
+    result = run(["ruby", "-e", ruby, str(ROOT / ".github" / "workflows" / "service-release.yml")])
+    assert_true(result.returncode == 0, result.stderr)
+    parsed = json.loads(result.stdout)
+    assert_true("imgproxy" in parsed["options"], "imgproxy missing from manual service choice")
+    assert_true("imgproxy" in parsed["run"], "imgproxy missing from manual release allowlist")
 
 
 def test_workflow_downloads_and_verifies_snapshot_before_recipe_build_consumers():

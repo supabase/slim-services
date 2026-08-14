@@ -16,6 +16,7 @@ SERVICES=(
   postgres
   mailpit
   vector
+  imgproxy
 )
 
 log() {

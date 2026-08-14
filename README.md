@@ -346,16 +346,18 @@ corresponding GitHub release here. All configured polled services are enabled.
 The PostgreSQL policy accepts only plain `17.x.x.x` releases; PostgreSQL 15,
 OrioleDB, architecture-specific, and other suffixed release tags are ignored.
 
-Mailpit and Vector are the non-polled upstream-archive services. Their release
-workflows accept an explicit version, resolve the versionless descriptor against
-GitHub and the independent OCI repository at plan time, and publish one
-run-scoped snapshot plus digest for every build, mirror, and release consumer.
-The recipe receives that verified snapshot through `UPSTREAM_ASSETS_FILE`; no
-checked-in per-version policy is used. They are intentionally absent from the
-generated size/runtime tables until first publication and the anonymous pull
-gates complete. See the [Mailpit report](services/mailpit/REPORT.md) and [Vector
-report](services/vector/REPORT.md) for historical input digests, normalized
-layouts, smoke coverage, and publication checklists.
+Mailpit and Vector are the non-polled upstream-archive services. Imgproxy is a
+non-polled source-built Nix/external-source service. Their release workflows
+accept an explicit version, resolve the versionless descriptor against GitHub
+and the independent OCI repository at plan time, and publish one run-scoped
+snapshot plus digest for every build, mirror, and release consumer. The recipe
+receives that verified snapshot through `UPSTREAM_ASSETS_FILE`; no checked-in
+per-version policy is used. They are intentionally absent from the generated
+size/runtime tables until first publication and the anonymous pull gates
+complete. See the [Mailpit report](services/mailpit/REPORT.md), [Vector
+report](services/vector/REPORT.md), and [imgproxy report](services/imgproxy/REPORT.md)
+for historical input digests, normalized layouts, smoke coverage, and
+publication checklists.
 
 After a successful release run, `.github/workflows/release-results.yml`
 downloads the newest published manifest set for every service, regenerates the
@@ -439,6 +441,9 @@ scripts/archive-artifact.sh <artifact-rootfs> [archive-prefix]
 - [Vector](services/vector/REPORT.md): verified upstream native archives and
   an exact `timberio/vector:0.53.0-alpine` OCI image mirror; native release,
   anonymous-pull evidence, and later CLI integration remain open gates.
+- [Imgproxy](services/imgproxy/REPORT.md): source-built portable Nix artifact
+  with libvips codec coverage and an exact `ghcr.io/imgproxy/imgproxy` OCI
+  image mirror; native release and anonymous-pull evidence remain release gates.
 
 ## Design Principles
 
