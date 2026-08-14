@@ -44,7 +44,7 @@ class UpstreamArtifactTest(unittest.TestCase):
     def setUp(self):
         self.directory = pathlib.Path(tempfile.mkdtemp(prefix="slim-upstream-artifact-test."))
         self.addCleanup(shutil.rmtree, self.directory)
-        self.archive = self.directory / "mailpit-v1.30.2-linux-amd64.tar.gz"
+        self.archive = self.directory / "mailpit-linux-amd64.tar.gz"
         self.digest = write_archive(self.archive)
         self.policy = self.directory / "policy.json"
         self.write_policy(self.digest)
@@ -76,7 +76,7 @@ class UpstreamArtifactTest(unittest.TestCase):
     def write_policy(self, digest: str):
         assets = {}
         for target in ("darwin-arm64", "linux-amd64", "linux-arm64"):
-            name = f"mailpit-v1.30.2-{target}.tar.gz"
+            name = f"mailpit-{target}.tar.gz"
             assets[target] = {
                 "name": name,
                 "url": f"https://github.com/axllent/mailpit/releases/download/v1.30.2/{name}",
