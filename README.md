@@ -317,7 +317,13 @@ at a time. It verifies that the requested version is an exact, stable,
 published release tag in the configured upstream repository, checks out only
 that tag (never a branch such as `main`), and builds the complete
 `linux-amd64`, `linux-arm64`, and `darwin-arm64` artifact matrix. Publication
-only starts after every artifact and Docker smoke passes:
+for a derived-image service begins only after every artifact and Docker image
+smoke passes. Mirror services follow a separate gate: the workflow verifies
+the pinned upstream source, copies the exact OCI index and referrers, verifies
+the destination digest/referrer set, and requires anonymous destination
+resolution plus pull/service smoke before the GitHub release is published and
+the release is considered qualified. Public package visibility still requires
+post-publication confirmation.
 
 - Portable archives, platform manifests, and a combined `SHA256SUMS` are
   attached to the GitHub release `<service>-<version>`.
