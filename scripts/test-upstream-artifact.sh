@@ -71,7 +71,9 @@ class UpstreamArtifactTest(unittest.TestCase):
             }
         )
         self.artifact_dir = ROOT_DIR / "artifacts" / "mailpit" / "v1.30.2" / "linux-amd64"
+        self.darwin_artifact_dir = ROOT_DIR / "artifacts" / "mailpit" / "v1.30.2" / "darwin-arm64"
         self.addCleanup(shutil.rmtree, self.artifact_dir, ignore_errors=True)
+        self.addCleanup(shutil.rmtree, self.darwin_artifact_dir, ignore_errors=True)
 
     def write_policy(self, digest: str):
         assets = {}
@@ -100,14 +102,35 @@ class UpstreamArtifactTest(unittest.TestCase):
         }
         self.policy.write_text(json.dumps(policy), encoding="utf-8")
 
-    def run_build(self):
+    def run_build(self, **env_overrides):
+        env = self.env.copy()
+        env.update(env_overrides)
         return subprocess.run(
             [str(BUILD), "mailpit", "v1.30.2"],
             cwd=ROOT_DIR,
-            env=self.env,
+            env=env,
             text=True,
             capture_output=True,
         )
+
+    def vector_recipe_libc(self, target_os, arch):
+        env = os.environ.copy()
+        env.update({"TARGET_OS": target_os, "ARCH": arch})
+        env.pop("ARTIFACT_LIBC", None)
+        result = subprocess.run(
+            [
+                "bash",
+                "-c",
+                "set -euo pipefail; source scripts/lib.sh; load_recipe vector; printf '%s' "
+                '"${ARTIFACT_LIBC-}"',
+            ],
+            cwd=ROOT_DIR,
+            env=env,
+            text=True,
+            capture_output=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout
 
     def test_build_verifies_then_normalizes_archive_and_records_provenance(self):
         result = self.run_build()
@@ -120,6 +143,7 @@ class UpstreamArtifactTest(unittest.TestCase):
         self.assertEqual((rootfs / "share/doc/mailpit/README.md").read_bytes(), CONTENTS["README.md"][0])
 
         manifest = json.loads((self.artifact_dir / "manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["libc"], "glibc")
         self.assertEqual(manifest["artifact_source"], "upstream-release-archive")
         self.assertEqual(manifest["provenance"]["kind"], "repackaged-upstream-release")
         self.assertEqual(manifest["provenance"]["repository"], "axllent/mailpit")
@@ -141,6 +165,29 @@ class UpstreamArtifactTest(unittest.TestCase):
             manifest["provenance"]["normalized_archive"],
             {"name": archive.name, "sha256": archive_sha256},
         )
+
+    def test_linux_archive_libc_override_is_recorded(self):
+        result = self.run_build(ARTIFACT_LIBC="musl")
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        manifest = json.loads((self.artifact_dir / "manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["libc"], "musl")
+
+    def test_darwin_archive_libc_remains_null_with_inherited_override(self):
+        result = self.run_build(TARGET_OS="darwin", ARCH="arm64", ARTIFACT_LIBC="musl")
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        manifest = json.loads((self.darwin_artifact_dir / "manifest.json").read_text(encoding="utf-8"))
+        self.assertIsNone(manifest["libc"])
+
+    def test_vector_recipe_only_overrides_libc_for_linux(self):
+        self.assertEqual(self.vector_recipe_libc("linux", "amd64"), "musl")
+        self.assertEqual(self.vector_recipe_libc("darwin", "arm64"), "")
+
+    def test_invalid_linux_archive_libc_override_is_rejected(self):
+        result = self.run_build(ARTIFACT_LIBC="uclibc")
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("ARTIFACT_LIBC must be glibc or musl", result.stderr)
 
     def test_wrong_digest_fails_before_extraction(self):
         self.write_policy("0" * 64)

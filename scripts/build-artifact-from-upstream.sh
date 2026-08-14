@@ -39,6 +39,14 @@ UPSTREAM_ARCHIVE_MAPPING_JSON="${UPSTREAM_ARCHIVE_MAPPING_JSON:?recipe must defi
 UPSTREAM_ARCHIVE_EXECUTABLES_JSON="${UPSTREAM_ARCHIVE_EXECUTABLES_JSON:?recipe must define UPSTREAM_ARCHIVE_EXECUTABLES_JSON}"
 ENTRYPOINT_JSON="${ENTRYPOINT_JSON:?recipe must define ENTRYPOINT_JSON}"
 CMD_JSON="${CMD_JSON:-[]}"
+artifact_libc=""
+if [[ "$TARGET_OS" == "linux" ]]; then
+  artifact_libc="${ARTIFACT_LIBC:-glibc}"
+  case "$artifact_libc" in
+    glibc|musl) ;;
+    *) fail "ARTIFACT_LIBC must be glibc or musl, got: $artifact_libc" ;;
+  esac
+fi
 
 policy_file="$UPSTREAM_ASSETS_FILE"
 [[ "$policy_file" = /* ]] || policy_file="$ROOT_DIR/$policy_file"
@@ -125,7 +133,7 @@ manifest = {
     "platform": "$PLATFORM",
     "arch": "$ARCH",
     "target": "$target",
-    "libc": "glibc" if "$TARGET_OS" == "linux" else None,
+    "libc": "$artifact_libc" or None,
     "artifact_source": "upstream-release-archive",
     "provenance": {
         "kind": "repackaged-upstream-release",
