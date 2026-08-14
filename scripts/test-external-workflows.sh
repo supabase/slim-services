@@ -190,6 +190,11 @@ def test_plan_resolves_once_and_verifies_offline_snapshot():
                 env={"TRACE": str(trace), "EXTERNAL_RELEASE_RESOLVER": str(resolver)},
             )
             assert_true(result.returncode == 0, result.stderr)
+            try:
+                metadata = json.loads(result.stdout)
+            except json.JSONDecodeError as error:
+                raise AssertionError(f"planner stdout must be one JSON document: {result.stdout!r}") from error
+            assert_true(metadata["service"] == service and metadata["version"] == version, "planner metadata is incorrect")
             outputs[service] = output
             verified = run([str(VERIFY), str(output), version])
             assert_true(verified.returncode == 0, verified.stderr)
