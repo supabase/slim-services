@@ -19,6 +19,7 @@ The primary upstream projects are:
 | Realtime | [Supabase Realtime](https://github.com/supabase/realtime) | Apache-2.0 |
 | Storage | [Supabase Storage](https://github.com/supabase/storage) | Apache-2.0 |
 | Studio | [Supabase](https://github.com/supabase/supabase) | Apache-2.0 |
+| Mailpit | [Mailpit](https://github.com/axllent/mailpit) | MIT |
 
 Each generated runtime archive includes the license and notice files found in
 its dependency closure under `share/licenses/`. Each release also includes an
