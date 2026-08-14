@@ -112,7 +112,9 @@ if [[ -n "$lock_script" ]]; then
   command+=("$lock_script")
 fi
 "${command[@]}"
-"$ROOT_DIR/scripts/verify-external-release.sh" "$output" "$version"
+# Keep the planner's stdout machine-readable: verification status belongs on
+# stderr so workflow consumers can parse exactly one metadata JSON document.
+"$ROOT_DIR/scripts/verify-external-release.sh" "$output" "$version" >&2
 
 python3 - "$output" "$metadata" <<'PY'
 import json
