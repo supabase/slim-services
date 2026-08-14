@@ -1,0 +1,33 @@
+{
+  "repository": "vectordotdev/vector",
+  "versions": {
+    "0.53.0": {
+      "release_tag": "v0.53.0",
+      "assets": {
+        "darwin-arm64": {
+          "name": "vector-0.53.0-arm64-apple-darwin.tar.gz",
+          "url": "https://github.com/vectordotdev/vector/releases/download/v0.53.0/vector-0.53.0-arm64-apple-darwin.tar.gz",
+          "sha256": "a42c59263abbbcae012a2c0f73c3e916dc220305b2a223725f2324ae18efcd80"
+        },
+        "linux-amd64": {
+          "name": "vector-0.53.0-x86_64-unknown-linux-musl.tar.gz",
+          "url": "https://github.com/vectordotdev/vector/releases/download/v0.53.0/vector-0.53.0-x86_64-unknown-linux-musl.tar.gz",
+          "sha256": "799d1d1502c746d767172c92f31fd6424ea7879e3dcab5826b67717799d4f306"
+        },
+        "linux-arm64": {
+          "name": "vector-0.53.0-aarch64-unknown-linux-musl.tar.gz",
+          "url": "https://github.com/vectordotdev/vector/releases/download/v0.53.0/vector-0.53.0-aarch64-unknown-linux-musl.tar.gz",
+          "sha256": "f525fd7e66307ef069ad4359a0f889fba402b0b8bb3ca75198143f567021c5ca"
+        }
+      },
+      "image": {
+        "source": "docker.io/timberio/vector:0.53.0-alpine",
+        "index_digest": "sha256:ca92d617e905953c3f852e7e88061f7039460e733522e3f0c21bc6ae946b2558",
+        "platforms": {
+          "linux/amd64": "sha256:7a74872eb7791f65357b200813bcf613c8dedcac561b4f1a68f9d290f6e6a40c",
+          "linux/arm64": "sha256:d2d5381f69b885c1b10d396623bf8d5ce825bcb8f8efcdb14a3154223c13b3b7"
+        }
+      }
+    }
+  }
+}
