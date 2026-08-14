@@ -19,6 +19,7 @@ run-name: Release ${{ inputs.service }} ${{ inputs.version }}
           - studio
           - pgmeta
           - postgres
+          - mailpit
       version:
         description: Published stable upstream release or image tag.
         required: true
@@ -57,11 +58,14 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     outputs:
+      artifact_source: ${{ steps.plan.outputs.artifact_source }}
+      image_release: ${{ steps.plan.outputs.image_release }}
       image_repository: ${{ steps.plan.outputs.image_repository }}
       matrix: ${{ steps.plan.outputs.matrix }}
       publish: ${{ steps.plan.outputs.publish }}
       release_tag: ${{ steps.plan.outputs.release_tag }}
       source_ref: ${{ steps.plan.outputs.source_ref }}
+      upstream_image_repository: ${{ steps.plan.outputs.upstream_image_repository }}
       upstream_asset_sha256: ${{ steps.plan.outputs.upstream_asset_sha256 }}
       upstream_asset_url: ${{ steps.plan.outputs.upstream_asset_url }}
     steps:
@@ -86,7 +90,7 @@ jobs:
           set -euo pipefail
 
           case "$SERVICE" in
-            auth|postgrest|realtime|pooler|analytics|storage|edge-runtime|studio|pgmeta|postgres) ;;
+            auth|postgrest|realtime|pooler|analytics|storage|edge-runtime|studio|pgmeta|postgres|mailpit) ;;
             *)
               printf 'unsupported release service: %s\n' "$SERVICE" >&2
               exit 1
@@ -108,12 +112,33 @@ jobs:
               config["repository"],
               config["tag_pattern"],
               config.get("release_source", "github"),
+              config.get("artifact_source", "source"),
+              config.get("image_release", "derived"),
               config.get("image_repository", "-"),
               sep="\t",
           )
           PY
           )"
-          IFS=$'\t' read -r upstream_repository tag_pattern release_source upstream_image_repository <<< "$config_line"
+          IFS=$'\t' read -r upstream_repository tag_pattern release_source artifact_source image_release upstream_image_repository <<< "$config_line"
+
+          case "$artifact_source" in
+            source|upstream-archive) ;;
+            *)
+              printf 'unsupported artifact source for %s: %s\n' "$SERVICE" "$artifact_source" >&2
+              exit 1
+              ;;
+          esac
+          case "$image_release" in
+            derived|mirror) ;;
+            *)
+              printf 'unsupported image release mode for %s: %s\n' "$SERVICE" "$image_release" >&2
+              exit 1
+              ;;
+          esac
+          if [[ "$image_release" == "mirror" && ! "$upstream_image_repository" =~ ^[^/]+/[^/]+$ ]]; then
+            printf 'mirror image release requires an upstream image repository for %s\n' "$SERVICE" >&2
+            exit 1
+          fi
 
           if [[ ! "$VERSION" =~ $tag_pattern ]]; then
             printf 'version is not an allowed release tag for %s: %s (expected %s)\n' \
@@ -217,11 +242,14 @@ jobs:
 
           matrix='{"include":[{"target_os":"linux","arch":"arm64","platform_dir":"linux-arm64","runner":"large-linux-arm"},{"target_os":"linux","arch":"amd64","platform_dir":"linux-amd64","runner":"large-linux-x86"},{"target_os":"darwin","arch":"arm64","platform_dir":"darwin-arm64","runner":"macos-14-xlarge"}]}'
           {
+            printf 'artifact_source=%s\n' "$artifact_source"
+            printf 'image_release=%s\n' "$image_release"
             printf 'image_repository=%s\n' "$image_repository"
             printf 'matrix=%s\n' "$matrix"
             printf 'publish=%s\n' "$publish"
             printf 'release_tag=%s\n' "$release_tag"
             printf 'source_ref=%s\n' "$source_ref"
+            printf 'upstream_image_repository=%s\n' "$upstream_image_repository"
             printf 'upstream_asset_sha256=%s\n' "$upstream_asset_sha256"
             printf 'upstream_asset_url=%s\n' "$upstream_asset_url"
           } >> "$GITHUB_OUTPUT"
@@ -244,6 +272,7 @@ jobs:
 
       - name: Checkout requested upstream release
         id: source
+        if: needs.plan.outputs.artifact_source == 'source'
         shell: bash
         env:
           ARCH: ${{ matrix.arch }}
@@ -282,9 +311,11 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Install Nix
+        if: needs.plan.outputs.artifact_source == 'source'
         uses: nixbuild/nix-quick-install-action@9f63be77f412a248c9d9a65a4c82cf066cdf8f0c # v35
 
       - name: Restore/save Nix store cache
+        if: needs.plan.outputs.artifact_source == 'source'
         uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
         with:
           primary-key: release-${{ inputs.service }}-${{ matrix.platform_dir }}-${{ hashFiles(format('services/{0}/recipe.env', inputs.service), format('services/{0}/nix/**', inputs.service), format('services/{0}/build-host.sh', inputs.service), 'scripts/nix-build-with-derived-mix-hash.sh', 'scripts/nixpkgs-pin.sh') }}
@@ -294,11 +325,11 @@ jobs:
           gc-max-store-size-macos: 8G
 
       - name: Set up Docker Buildx
-        if: matrix.target_os == 'linux'
+        if: matrix.target_os == 'linux' && needs.plan.outputs.artifact_source == 'source' && needs.plan.outputs.image_release == 'derived'
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
       - name: Set up Go
-        if: inputs.service == 'auth'
+        if: inputs.service == 'auth' && needs.plan.outputs.artifact_source == 'source'
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: sources/auth/go.mod
@@ -362,7 +393,7 @@ jobs:
             "$release_dir/$SERVICE-$VERSION-$PLATFORM_DIR.SHA256SUMS"
 
       - name: Save exact smoked image for publication
-        if: matrix.target_os == 'linux'
+        if: matrix.target_os == 'linux' && needs.plan.outputs.image_release == 'derived'
         shell: bash
         env:
           ARCH: ${{ matrix.arch }}
@@ -400,7 +431,7 @@ jobs:
           path: release-assets/
 
       - name: Upload exact smoked image
-        if: matrix.target_os == 'linux'
+        if: matrix.target_os == 'linux' && needs.plan.outputs.image_release == 'derived'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-image-${{ inputs.service }}-${{ inputs.version }}-${{ matrix.arch }}
@@ -422,6 +453,7 @@ jobs:
       packages: write
     steps:
       - name: Download exact smoked images
+        if: needs.plan.outputs.image_release == 'derived'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: release-image-${{ inputs.service }}-${{ inputs.version }}-*
@@ -429,7 +461,34 @@ jobs:
           merge-multiple: true
 
       - name: Set up Docker Buildx
+        if: needs.plan.outputs.image_release == 'derived'
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Checkout mirror helper
+        if: needs.plan.outputs.image_release == 'mirror'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install regctl
+        if: needs.plan.outputs.image_release == 'mirror'
+        shell: bash
+        run: |
+          set -euo pipefail
+          regctl_version="v0.11.5"
+          expected_sha256="c93aa7638749f5aaac1a8e01787321889c78f0101809bb2880343478d0ba0467"
+          curl -fsSL \
+            "https://github.com/regclient/regclient/releases/download/${regctl_version}/regctl-linux-amd64" \
+            -o "$RUNNER_TEMP/regctl"
+          actual_sha256="$(sha256sum "$RUNNER_TEMP/regctl" | cut -d' ' -f1)"
+          [[ "$actual_sha256" == "$expected_sha256" ]] || {
+            printf 'regctl checksum mismatch: expected %s, got %s\n' \
+              "$expected_sha256" "$actual_sha256" >&2
+            exit 1
+          }
+          chmod +x "$RUNNER_TEMP/regctl"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
 
       - name: Log in to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -440,6 +499,7 @@ jobs:
 
       - name: Push platform images and publish manifest
         id: publish
+        if: needs.plan.outputs.image_release == 'derived'
         shell: bash
         env:
           IMAGE_REPOSITORY: ${{ needs.plan.outputs.image_repository }}
@@ -486,7 +546,27 @@ jobs:
             printf 'image_tag=%s\n' "$image_tag"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Record published image
+      - name: Mirror upstream OCI image
+        id: mirror
+        if: needs.plan.outputs.image_release == 'mirror'
+        shell: bash
+        env:
+          IMAGE_REPOSITORY: ${{ needs.plan.outputs.image_repository }}
+          SERVICE: ${{ inputs.service }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          scripts/mirror-upstream-image.sh \
+            "$SERVICE" "$VERSION" "$IMAGE_REPOSITORY" mirror-provenance.json
+          digest="$(python3 -c 'import json; print(json.load(open("mirror-provenance.json"))["destination_index_digest"])')"
+          image_tag="$IMAGE_REPOSITORY:$VERSION"
+          {
+            printf 'digest=%s\n' "$digest"
+            printf 'image_tag=%s\n' "$image_tag"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Record published derived image
+        if: needs.plan.outputs.image_release == 'derived'
         shell: bash
         env:
           DIGEST: ${{ steps.publish.outputs.digest }}
@@ -501,12 +581,41 @@ jobs:
               fh.write("\n")
           PY
 
+      - name: Record published mirrored image
+        if: needs.plan.outputs.image_release == 'mirror'
+        shell: bash
+        env:
+          DIGEST: ${{ steps.mirror.outputs.digest }}
+          IMAGE_TAG: ${{ steps.mirror.outputs.image_tag }}
+        run: |
+          python3 - "$IMAGE_TAG" "$DIGEST" <<'PY'
+          import json
+          import sys
+
+          with open("published-image.json", "w", encoding="utf-8") as fh:
+              json.dump({
+                  "image": sys.argv[1],
+                  "digest": sys.argv[2],
+                  "image_release": "mirror",
+                  "provenance": "mirror-provenance.json",
+              }, fh, indent=2)
+              fh.write("\n")
+          PY
+
       - name: Upload published image metadata
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: published-image-${{ inputs.service }}-${{ inputs.version }}
           retention-days: 7
           path: published-image.json
+
+      - name: Upload OCI mirror provenance
+        if: needs.plan.outputs.image_release == 'mirror'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: mirror-provenance-${{ inputs.service }}-${{ inputs.version }}
+          retention-days: 7
+          path: mirror-provenance.json
 
   publish-release:
     name: publish ${{ inputs.service }} release
@@ -532,13 +641,30 @@ jobs:
         with:
           name: published-image-${{ inputs.service }}-${{ inputs.version }}
 
+      - name: Download OCI mirror provenance
+        if: needs.plan.outputs.image_release == 'mirror'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: mirror-provenance-${{ inputs.service }}-${{ inputs.version }}
+          path: mirror-provenance
+
       - name: Prepare checksums and release notes
         shell: bash
         env:
+          IMAGE_RELEASE: ${{ needs.plan.outputs.image_release }}
           SERVICE: ${{ inputs.service }}
           VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
+          if [[ "$IMAGE_RELEASE" == "mirror" ]]; then
+            provenance="mirror-provenance/mirror-provenance.json"
+            [[ -f "$provenance" ]] || {
+              printf 'OCI mirror provenance not found: %s\n' "$provenance" >&2
+              exit 1
+            }
+            cp "$provenance" "release-assets/$SERVICE-$VERSION.oci-provenance.json"
+          fi
+
           find release-assets -name '*.SHA256SUMS' -type f -print0 \
             | sort -z \
             | xargs -0 cat \
@@ -567,6 +693,27 @@ jobs:
 
           Verify a downloaded archive with the attached \`SHA256SUMS\` file.
           EOF
+
+          if [[ "$IMAGE_RELEASE" == "mirror" ]]; then
+            python3 - "release-assets/$SERVICE-$VERSION.oci-provenance.json" "$image" >> release-notes.md <<'PY'
+          import json
+          import sys
+
+          provenance_path, destination_image = sys.argv[1:]
+          with open(provenance_path, encoding="utf-8") as stream:
+              provenance = json.load(stream)
+          print()
+          print("Exact OCI mirror provenance:")
+          print(f"- Provenance asset: `{provenance_path.rsplit('/', 1)[-1]}`")
+          print(f"- Upstream immutable reference: `{provenance['source_ref']}`")
+          print(f"- Upstream index digest: `{provenance['pinned_index_digest']}`")
+          print(f"- Destination immutable reference: `{destination_image}@{provenance['destination_index_digest']}`")
+          for platform, digest in sorted(provenance["platforms"].items()):
+              print(f"- {platform} immutable reference: `{destination_image}@{digest}`")
+          for digest in provenance.get("embedded_attestations", []):
+              print(f"- Embedded attestation descriptor: `{digest}`")
+          PY
+          fi
 
       - name: Create or update GitHub release
         shell: bash
