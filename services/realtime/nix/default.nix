@@ -89,6 +89,17 @@ let
   pname = "realtime";
   version = serviceVersion;
 
+  # rustler_precompiled normally downloads native archives while compiling a
+  # dependency. That cannot happen in the release derivation's network-isolated
+  # sandbox, so stage the archive while fetchMixDeps has fixed-output network
+  # access and carry it into the writable dependency copy used by mixRelease.
+  # Force Lumis's legacy x86_64 build so the artifact does not inherit AVX/FMA
+  # requirements from the CI builder CPU.
+  lumisEnvironment = lib.optionalString
+    (pkgs.stdenv.isLinux && pkgs.stdenv.hostPlatform.isx86_64) ''
+      export LUMIS_USE_LEGACY_ARTIFACTS=true
+    '';
+
   # Exclude the overlay itself (and repo noise) so editing packaging files does
   # not invalidate the deps fetcher's fixed-output derivation.
   src = lib.cleanSourceWith {
@@ -114,12 +125,39 @@ let
       else
         derivedHashes.mix_deps_hash or lib.fakeHash;
     mixEnv = "prod";
+    postInstall = ''
+      if [ -d "$MIX_DEPS_PATH/lumis" ]; then
+        export RUSTLER_PRECOMPILED_GLOBAL_CACHE_PATH="$out/.rustler-precompiled"
+        ${lumisEnvironment}
+        # Compile only Lumis's required Elixir dependencies before Lumis. The
+        # fetcher deliberately has no general dependency build phase.
+        mix deps.compile nimble_options --no-deps-check
+        mix deps.compile rustler_precompiled --no-deps-check
+        mix deps.compile lumis --no-deps-check
+
+        # Metadata embeds build paths and is only needed by publisher tasks.
+        # The checked NIF archive is the sole input the release build consumes.
+        rm -f "$RUSTLER_PRECOMPILED_GLOBAL_CACHE_PATH"/metadata-*.exs
+        archive_count="$(find "$RUSTLER_PRECOMPILED_GLOBAL_CACHE_PATH" -maxdepth 1 \
+          -type f -name '*.tar.gz' | wc -l | tr -d ' ')"
+        [ "$archive_count" = 1 ] || {
+          echo "expected exactly one cached Lumis NIF archive, found $archive_count" >&2
+          exit 1
+        }
+      fi
+    '';
   };
 
   release = mixRelease {
     inherit pname version src;
     mixEnv = "prod";
     mixFodDeps = mixDeps;
+    preConfigure = ''
+      if [ -d "$MIX_DEPS_PATH/.rustler-precompiled" ]; then
+        export RUSTLER_PRECOMPILED_GLOBAL_CACHE_PATH="$MIX_DEPS_PATH/.rustler-precompiled"
+        ${lumisEnvironment}
+      fi
+    '';
 
     # The release includes ERTS by default; keep the generated start scripts.
     removeCookie = false;
