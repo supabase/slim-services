@@ -10,7 +10,7 @@ This repo asks a simple question, on three axes:
 
 <!-- generated:release-summary:begin -->
 For the latest published Linux ARM64 release set (10 services), upstream images
-total **2047.7 MiB** compressed; the slim set totals **566.7 MiB** (**72.3%**
+total **2047.9 MiB** compressed; the slim set totals **566.7 MiB** (**72.3%**
 smaller — exact numbers below). Every published service also ships measured
 steady-state RSS and idle-CPU numbers, and a minimal core stack (postgres +
 auth + postgrest) idles at roughly **64 MiB of RSS per stack** with near-zero
@@ -72,11 +72,11 @@ override because its exact release tag is unavailable on Docker Hub.
 | Postgres | `17.6.1.163` (all PG17 extensions, minimal preload) | `349.8 MiB` | `132.7 MiB` | `62.1%` | `46.8 MiB` | `0.01%` | [release](https://github.com/supabase/slim-services/releases/tag/postgres-17.6.1.163) · [report](services/postgres/REPORT.md) |
 | PostgREST | `v16.1` | `6.1 MiB` | `5.9 MiB` | `3.8%` | `8.3 MiB` | `0.07%` | [release](https://github.com/supabase/slim-services/releases/tag/postgrest-v16.1) · [report](services/postgrest/REPORT.md) |
 | Auth | `v2.195.0` | `26.0 MiB` | `11.5 MiB` | `55.7%` | `9.0 MiB` | `0.01%` | [release](https://github.com/supabase/slim-services/releases/tag/auth-v2.195.0) · [report](services/auth/REPORT.md) |
-| Realtime | `v2.129.0` | `121.4 MiB` | `32.3 MiB` | `73.4%` | `178.3 MiB` | `0.24%` | [release](https://github.com/supabase/slim-services/releases/tag/realtime-v2.129.0) · [report](services/realtime/REPORT.md) |
-| Storage | `v1.70.0` | `223.8 MiB` | `51.0 MiB` | `77.2%` | `215.2 MiB` | `0.01%` | [release](https://github.com/supabase/slim-services/releases/tag/storage-v1.70.0) · [report](services/storage/REPORT.md) |
+| Realtime | `v2.129.1` | `121.4 MiB` | `32.3 MiB` | `73.4%` | `180.0 MiB` | `0.24%` | [release](https://github.com/supabase/slim-services/releases/tag/realtime-v2.129.1) · [report](services/realtime/REPORT.md) |
+| Storage | `v1.70.1` | `223.8 MiB` | `51.0 MiB` | `77.2%` | `215.8 MiB` | `0.01%` | [release](https://github.com/supabase/slim-services/releases/tag/storage-v1.70.1) · [report](services/storage/REPORT.md) |
 | Edge Runtime | `v1.74.3` (no-AI) | `360.6 MiB` | `52.7 MiB` | `85.4%` | `18.1 MiB` | `0.01%` | [release](https://github.com/supabase/slim-services/releases/tag/edge-runtime-v1.74.3) · [report](services/edge-runtime/REPORT.md) |
 | Studio | `2026.08.17-sha-0c1da8f` | `306.5 MiB` | `126.7 MiB` | `58.7%` | `186.9 MiB` | `0.00%` | [release](https://github.com/supabase/slim-services/releases/tag/studio-2026.08.17-sha-0c1da8f) · [report](services/studio/REPORT.md) |
-| Analytics | `v1.50.2` | `261.1 MiB` | `58.5 MiB` | `77.6%` | `504.2 MiB` | `0.36%` | [release](https://github.com/supabase/slim-services/releases/tag/analytics-v1.50.2) · [report](services/analytics/REPORT.md) |
+| Analytics | `v1.50.3` | `261.3 MiB` | `58.5 MiB` | `77.6%` | `495.2 MiB` | `0.29%` | [release](https://github.com/supabase/slim-services/releases/tag/analytics-v1.50.3) · [report](services/analytics/REPORT.md) |
 | PgMeta | `v0.98.0` | `103.0 MiB` | `56.1 MiB` | `45.5%` | `108.4 MiB` | `0.36%` | [release](https://github.com/supabase/slim-services/releases/tag/pgmeta-v0.98.0) · [report](services/pgmeta/REPORT.md) |
 | Pooler | `v2.9.10` | `289.4 MiB`* | `39.3 MiB` | `86.4%`* | `163.5 MiB` | `0.15%` | [release](https://github.com/supabase/slim-services/releases/tag/pooler-v2.9.10) · [report](services/pooler/REPORT.md) |
 
@@ -122,11 +122,11 @@ macOS archives require macOS 14+. The manifest records the exact floor as
 | Postgres | `17.6.1.163` | `103.0 MiB` | `662.6 MiB` | `72.1 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/postgres-17.6.1.163) · [report](services/postgres/REPORT.md) |
 | PostgREST | `v16.1` | `12.5 MiB` | `78.0 MiB` | `55.9 MiB` | `0.03%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/postgrest-v16.1) · [report](services/postgrest/REPORT.md) |
 | Auth | `v2.195.0` | `9.5 MiB` | `33.8 MiB` | `29.8 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/auth-v2.195.0) · [report](services/auth/REPORT.md) |
-| Realtime | `v2.129.0` | `15.8 MiB` | `62.2 MiB` | `210.6 MiB` | `0.27%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/realtime-v2.129.0) · [report](services/realtime/REPORT.md) |
-| Storage | `v1.70.0` | `36.1 MiB` | `143.6 MiB` | `264.3 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/storage-v1.70.0) · [report](services/storage/REPORT.md) |
+| Realtime | `v2.129.1` | `15.8 MiB` | `62.2 MiB` | `207.6 MiB` | `0.10%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/realtime-v2.129.1) · [report](services/realtime/REPORT.md) |
+| Storage | `v1.70.1` | `36.1 MiB` | `143.6 MiB` | `287.7 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/storage-v1.70.1) · [report](services/storage/REPORT.md) |
 | Edge Runtime | `v1.74.3` | `39.9 MiB` | `161.4 MiB` | `56.8 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/edge-runtime-v1.74.3) · [report](services/edge-runtime/REPORT.md) |
 | Studio | `2026.08.17-sha-0c1da8f` | `75.3 MiB` | `458.0 MiB` | `309.0 MiB` | `0.37%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/studio-2026.08.17-sha-0c1da8f) · [report](services/studio/REPORT.md) |
-| Analytics | `v1.50.2` | `33.4 MiB` | `140.5 MiB` | `520.5 MiB` | `0.33%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/analytics-v1.50.2) · [report](services/analytics/REPORT.md) |
+| Analytics | `v1.50.3` | `33.4 MiB` | `140.6 MiB` | `522.0 MiB` | `0.87%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/analytics-v1.50.3) · [report](services/analytics/REPORT.md) |
 | PgMeta | `v0.98.0` | `36.6 MiB` | `169.9 MiB` | `150.2 MiB` | `0.17%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/pgmeta-v0.98.0) · [report](services/pgmeta/REPORT.md) |
 | Pooler | `v2.9.10` | `23.5 MiB` | `52.4 MiB` | `207.9 MiB` | `0.10%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/pooler-v2.9.10) · [report](services/pooler/REPORT.md) |
 <!-- generated:host-native:end -->
