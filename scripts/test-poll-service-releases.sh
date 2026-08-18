@@ -79,7 +79,7 @@ class ReleasePollerTest(unittest.TestCase):
     def tearDown(self):
         self.temporary_directory.cleanup()
 
-    def run_poller(self):
+    def run_poller(self, service="realtime"):
         return subprocess.run(
             [str(POLLER)],
             text=True,
@@ -88,7 +88,7 @@ class ReleasePollerTest(unittest.TestCase):
                 **os.environ,
                 "PATH": f"{self.fake_bin}:{os.environ['PATH']}",
                 "GH_TOKEN": "test-token",
-                "POLL_SERVICE": "realtime",
+                "POLL_SERVICE": service,
                 "SERVICE_RELEASE_REF": "main",
                 "SERVICE_RELEASE_CONFIG": str(self.config),
                 "FAKE_GH_TRACE": str(self.trace),
@@ -256,6 +256,39 @@ class ReleasePollerTest(unittest.TestCase):
             [
                 "workflow run service-release.yml --repo supabase/slim-services "
                 "--ref main -f service=realtime -f version=v2.128.1 -f force=false"
+            ],
+        )
+
+    def test_postgres_ignores_numeric_ami_test_suffix(self):
+        production_config = json.loads(
+            (ROOT / ".github" / "service-release-sources.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.config.write_text(
+            json.dumps(
+                {
+                    "services": {
+                        "postgres": production_config["services"]["postgres"]
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        self.upstream_releases.write_text(
+            "17.10.1.001\n17.6.1.15799999\n17.6.1.159\n",
+            encoding="utf-8",
+        )
+        self.published.write_text("postgres-17.6.1.159\n", encoding="utf-8")
+
+        result = self.run_poller(service="postgres")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            self.trace.read_text(encoding="utf-8").splitlines(),
+            [
+                "workflow run service-release.yml --repo supabase/slim-services "
+                "--ref main -f service=postgres -f version=17.10.1.001 -f force=false"
             ],
         )
 
