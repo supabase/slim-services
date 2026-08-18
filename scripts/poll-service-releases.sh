@@ -12,6 +12,8 @@ POLL_RETRY_COOLDOWN_SECONDS="${POLL_RETRY_COOLDOWN_SECONDS:-21600}"
 POLL_SUCCESS_GRACE_SECONDS="${POLL_SUCCESS_GRACE_SECONDS:-600}"
 POLL_MAX_DISPATCHES_PER_SERVICE="${POLL_MAX_DISPATCHES_PER_SERVICE:-3}"
 POLL_MAX_ACTIVE_RELEASES="${POLL_MAX_ACTIVE_RELEASES:-12}"
+DOCKER_HUB_API_BASE="${DOCKER_HUB_API_BASE:-https://hub.docker.com/v2}"
+DOCKER_HUB_API_BASE="${DOCKER_HUB_API_BASE%/}"
 
 for positive_integer in \
   POLL_MAX_DISPATCHES_PER_SERVICE \
@@ -90,6 +92,26 @@ for service, config in services.items():
             raise SystemExit(
                 f"{message} for {service}: {image_repository}"
             )
+    source_ref_tag_pattern = config.get("source_ref_tag_pattern")
+    if source_ref_tag_pattern is not None:
+        if release_source != "dockerhub":
+            raise SystemExit(
+                f"source_ref_tag_pattern requires Docker Hub releases for {service}"
+            )
+        if not isinstance(source_ref_tag_pattern, str):
+            raise SystemExit(
+                f"source_ref_tag_pattern must be a string for {service}"
+            )
+        try:
+            source_ref_pattern = re.compile(source_ref_tag_pattern)
+        except re.error as error:
+            raise SystemExit(
+                f"invalid source_ref_tag_pattern for {service}: {error}"
+            ) from error
+        if source_ref_pattern.groups != 1:
+            raise SystemExit(
+                f"source_ref_tag_pattern must contain exactly one capture group for {service}"
+            )
     descriptor = config.get("external_release_descriptor")
     if descriptor is not None:
         if not isinstance(descriptor, str) or not descriptor:
@@ -164,14 +186,18 @@ while IFS=$'\t' read -r service upstream_repository tag_pattern release_floor re
   service_dispatch_count=0
   versions=""
   if [[ "$release_source" == "dockerhub" ]]; then
-    if ! versions="$(python3 - "$upstream_image_repository" "$tag_pattern" "$release_floor" <<'PY'
+    if ! versions="$(python3 - \
+      "$upstream_image_repository" \
+      "$tag_pattern" \
+      "$release_floor" \
+      "$DOCKER_HUB_API_BASE" <<'PY'
 import json
 import re
 import sys
 import urllib.parse
 import urllib.request
 
-repository, pattern_raw, release_floor = sys.argv[1:]
+repository, pattern_raw, release_floor, docker_hub_api_base = sys.argv[1:]
 pattern = re.compile(pattern_raw)
 
 def version_key(value):
@@ -181,7 +207,7 @@ def version_key(value):
     )
 
 url = (
-    "https://hub.docker.com/v2/repositories/"
+    f"{docker_hub_api_base.rstrip('/')}/repositories/"
     f"{urllib.parse.quote(repository, safe='/')}/tags?page_size=100&ordering=last_updated"
 )
 candidates = []

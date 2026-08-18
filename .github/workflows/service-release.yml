@@ -164,11 +164,12 @@ jobs:
               config.get("image_release", "derived"),
               config.get("image_repository", "-"),
               config.get("external_release_descriptor", "-"),
+              config.get("source_ref_tag_pattern", "-"),
               sep="\t",
           )
           PY
           )"
-          IFS=$'\t' read -r upstream_repository tag_pattern release_source artifact_source image_release upstream_image_repository external_descriptor <<< "$config_line"
+          IFS=$'\t' read -r upstream_repository tag_pattern release_source artifact_source image_release upstream_image_repository external_descriptor source_ref_tag_pattern <<< "$config_line"
 
           if [[ "$external_descriptor" != "-" ]]; then
             snapshot_dir="$RUNNER_TEMP/external-release"
@@ -177,7 +178,9 @@ jobs:
             metadata="$(scripts/plan-external-release.sh "$SERVICE" "$VERSION" "$snapshot")"
             source_ref="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("source_commit", ""))' "$metadata")"
             release_tag="$SERVICE-$VERSION"
-            image_repository="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/cli/$SERVICE"
+            image_repository="ghcr.io/$(
+              printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]'
+            )/cli/$SERVICE"
             publish=true
             if [[ "$FORCE" != "true" ]] && gh release view "$release_tag" >/dev/null 2>&1; then
               publish=false
@@ -244,47 +247,18 @@ jobs:
             )"
           fi
           if [[ "$release_source" == "dockerhub" ]]; then
-            upstream_tag="$(
-              curl -fsSL \
-                "https://hub.docker.com/v2/repositories/$upstream_image_repository/tags/$VERSION" \
-                | jq -r .name
-            )" || {
-              printf '%s is not a published Docker Hub tag of %s\n' \
-                "$VERSION" "$upstream_image_repository" >&2
-              exit 1
-            }
-            [[ "$upstream_tag" == "$VERSION" ]] || {
-              printf 'unexpected Docker Hub tag response for %s: %s\n' \
-                "$VERSION" "$upstream_tag" >&2
-              exit 1
-            }
-            short_ref="${VERSION##*-sha-}"
-            provenance="$(
-              docker buildx imagetools inspect \
-                "$upstream_image_repository:$VERSION" \
-                --format '{{json .Provenance}}'
+            dockerhub_resolver_args=(
+              "$upstream_image_repository"
+              "$VERSION"
+              "$upstream_repository"
+            )
+            if [[ "$source_ref_tag_pattern" != "-" ]]; then
+              dockerhub_resolver_args+=("$source_ref_tag_pattern")
+            fi
+            source_ref="$(
+              scripts/resolve-dockerhub-release.sh \
+                "${dockerhub_resolver_args[@]}"
             )"
-            source_refs="$(
-              jq -r '.. | objects | .sha1? // empty' <<< "$provenance" \
-                | grep -E '^[0-9a-f]{40}$' | sort -u
-            )"
-            [[ "$(wc -l <<< "$source_refs" | tr -d ' ')" == "1" ]] || {
-              printf 'expected one source commit in %s:%s provenance\n' \
-                "$upstream_image_repository" "$VERSION" >&2
-              exit 1
-            }
-            source_ref="$source_refs"
-            [[ "$source_ref" == "$short_ref"* ]] || {
-              printf 'Studio tag commit %s disagrees with provenance %s\n' \
-                "$short_ref" "$source_ref" >&2
-              exit 1
-            }
-            gh api "repos/$upstream_repository/commits/$source_ref" --silent \
-              || {
-                printf 'could not resolve Studio source commit %s in %s\n' \
-                  "$source_ref" "$upstream_repository" >&2
-                exit 1
-              }
           else
             if ! upstream_release="$(
               gh api "repos/$upstream_repository/releases/tags/$upstream_release_tag" \
@@ -329,7 +303,9 @@ jobs:
           fi
 
           release_tag="$SERVICE-$VERSION"
-          image_repository="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/cli/$SERVICE"
+          image_repository="ghcr.io/$(
+            printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]'
+          )/cli/$SERVICE"
           publish=true
           if [[ "$FORCE" != "true" ]] && gh release view "$release_tag" >/dev/null 2>&1; then
             publish=false

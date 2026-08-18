@@ -352,8 +352,10 @@ blocking later missing versions. The cooldown starts from GitHub's final
 workflow update; a successful workflow whose release is not visible gets a
 ten-minute publication grace instead. Failures therefore remain retryable
 without creating gaps or unbounded hourly fan-out. All configured polled
-services are enabled. The PostgreSQL policy accepts only plain `17.x.x.NNN`
-releases with a three-digit AMI suffix; PostgreSQL 15,
+services are enabled. PostgreSQL release eligibility comes from published
+`supabase/postgres` Docker Hub tags, and each native source checkout is pinned
+to the one Git commit recorded by that image's provenance. Its policy accepts
+only plain `17.x.x.NNN` releases with a three-digit AMI suffix; PostgreSQL 15,
 OrioleDB, architecture-specific, and other suffixed release tags are ignored.
 
 Mailpit and Vector are the non-polled upstream-archive services. Imgproxy is a
@@ -420,7 +422,8 @@ scripts/archive-artifact.sh <artifact-rootfs> [archive-prefix]
 
 - [Postgres](services/postgres/REPORT.md): Nix reference-graph prune of the
   published image; every supported extension kept (31 smoke-verified,
-  including PostGIS/pgroonga/wrappers), low-memory conf overlay.
+  including PostGIS/pgroonga/wrappers), low-memory conf overlay, and Docker-tag
+  release polling with provenance-pinned source checkouts.
 - [PostgREST](services/postgrest/REPORT.md): stable ARM64 dynamic bundle in
   `scratch`; static upstream artifact path validated for a future stable
   release.
