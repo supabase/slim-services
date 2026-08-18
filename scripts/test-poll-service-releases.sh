@@ -79,23 +79,36 @@ class ReleasePollerTest(unittest.TestCase):
     def tearDown(self):
         self.temporary_directory.cleanup()
 
-    def run_poller(self):
+    def run_poller(
+        self,
+        service="realtime",
+        max_dispatches_per_service="1",
+        max_active_releases="12",
+    ):
+        environment = {
+            **os.environ,
+            "PATH": f"{self.fake_bin}:{os.environ['PATH']}",
+            "GH_TOKEN": "test-token",
+            "POLL_SERVICE": service,
+            "SERVICE_RELEASE_REF": "main",
+            "SERVICE_RELEASE_CONFIG": str(self.config),
+            "FAKE_GH_TRACE": str(self.trace),
+            "FAKE_PUBLISHED_RELEASES": str(self.published),
+            "FAKE_RUNS_JSON": str(self.runs),
+            "FAKE_UPSTREAM_RELEASES": str(self.upstream_releases),
+        }
+        if max_dispatches_per_service is not None:
+            environment["POLL_MAX_DISPATCHES_PER_SERVICE"] = str(
+                max_dispatches_per_service
+            )
+        if max_active_releases is not None:
+            environment["POLL_MAX_ACTIVE_RELEASES"] = str(max_active_releases)
+
         return subprocess.run(
             [str(POLLER)],
             text=True,
             capture_output=True,
-            env={
-                **os.environ,
-                "PATH": f"{self.fake_bin}:{os.environ['PATH']}",
-                "GH_TOKEN": "test-token",
-                "POLL_SERVICE": "realtime",
-                "SERVICE_RELEASE_REF": "main",
-                "SERVICE_RELEASE_CONFIG": str(self.config),
-                "FAKE_GH_TRACE": str(self.trace),
-                "FAKE_PUBLISHED_RELEASES": str(self.published),
-                "FAKE_RUNS_JSON": str(self.runs),
-                "FAKE_UPSTREAM_RELEASES": str(self.upstream_releases),
-            },
+            env=environment,
             check=False,
         )
 
@@ -256,6 +269,117 @@ class ReleasePollerTest(unittest.TestCase):
             [
                 "workflow run service-release.yml --repo supabase/slim-services "
                 "--ref main -f service=realtime -f version=v2.128.1 -f force=false"
+            ],
+        )
+
+    def test_dispatches_three_missing_releases_per_service_by_default(self):
+        result = self.run_poller(
+            max_dispatches_per_service=None,
+            max_active_releases=None,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            self.trace.read_text(encoding="utf-8").splitlines(),
+            [
+                "workflow run service-release.yml --repo supabase/slim-services "
+                "--ref main -f service=realtime -f version=v2.128.0 -f force=false",
+                "workflow run service-release.yml --repo supabase/slim-services "
+                "--ref main -f service=realtime -f version=v2.128.1 -f force=false",
+                "workflow run service-release.yml --repo supabase/slim-services "
+                "--ref main -f service=realtime -f version=v2.128.2 -f force=false",
+            ],
+        )
+
+    def test_global_capacity_counts_active_and_new_release_workflows(self):
+        self.runs.write_text(
+            json.dumps(
+                [
+                    {
+                        "displayTitle": f"Release auth v1.0.{index}",
+                        "status": "in_progress",
+                        "conclusion": "",
+                        "createdAt": "2999-01-01T00:00:00Z",
+                        "updatedAt": "2999-01-01T00:00:00Z",
+                    }
+                    for index in range(10)
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = self.run_poller(
+            max_dispatches_per_service=None,
+            max_active_releases=None,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            self.trace.read_text(encoding="utf-8").splitlines(),
+            [
+                "workflow run service-release.yml --repo supabase/slim-services "
+                "--ref main -f service=realtime -f version=v2.128.0 -f force=false",
+                "workflow run service-release.yml --repo supabase/slim-services "
+                "--ref main -f service=realtime -f version=v2.128.1 -f force=false",
+            ],
+        )
+
+    def test_global_capacity_stops_dispatch_when_twelve_releases_are_active(self):
+        self.runs.write_text(
+            json.dumps(
+                [
+                    {
+                        "displayTitle": f"Release auth v1.0.{index}",
+                        "status": "in_progress",
+                        "conclusion": "",
+                        "createdAt": "2999-01-01T00:00:00Z",
+                        "updatedAt": "2999-01-01T00:00:00Z",
+                    }
+                    for index in range(12)
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = self.run_poller(
+            max_dispatches_per_service=None,
+            max_active_releases=None,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(self.trace.exists())
+        self.assertIn("global active release limit", result.stdout)
+
+    def test_postgres_ignores_numeric_ami_test_suffix(self):
+        production_config = json.loads(
+            (ROOT / ".github" / "service-release-sources.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.config.write_text(
+            json.dumps(
+                {
+                    "services": {
+                        "postgres": production_config["services"]["postgres"]
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        self.upstream_releases.write_text(
+            "17.10.1.001\n17.6.1.15799999\n17.6.1.159\n",
+            encoding="utf-8",
+        )
+        self.published.write_text("postgres-17.6.1.159\n", encoding="utf-8")
+
+        result = self.run_poller(service="postgres")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            self.trace.read_text(encoding="utf-8").splitlines(),
+            [
+                "workflow run service-release.yml --repo supabase/slim-services "
+                "--ref main -f service=postgres -f version=17.10.1.001 -f force=false"
             ],
         )
 

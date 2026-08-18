@@ -345,13 +345,15 @@ the oldest eligible version tag that does not yet have a corresponding GitHub
 release here. Each polled service declares a `release_floor` at the first
 version published by this repository; the poller reconciles every matching
 stable upstream release from that adoption boundary onward. It dispatches at
-most one version per service per poll. Active versions and versions attempted
-unsuccessfully within the previous six hours are skipped without blocking later
-missing versions. The cooldown starts from GitHub's final workflow update; a
-successful workflow whose release is not visible gets a ten-minute publication
-grace instead. Failures therefore remain retryable without creating gaps or
-hourly retry storms. All configured polled services are enabled.
-The PostgreSQL policy accepts only plain `17.x.x.x` releases; PostgreSQL 15,
+most three versions per service per poll while keeping no more than twelve
+release workflows active across the repository. Active versions and versions
+attempted unsuccessfully within the previous six hours are skipped without
+blocking later missing versions. The cooldown starts from GitHub's final
+workflow update; a successful workflow whose release is not visible gets a
+ten-minute publication grace instead. Failures therefore remain retryable
+without creating gaps or unbounded hourly fan-out. All configured polled
+services are enabled. The PostgreSQL policy accepts only plain `17.x.x.NNN`
+releases with a three-digit AMI suffix; PostgreSQL 15,
 OrioleDB, architecture-specific, and other suffixed release tags are ignored.
 
 Mailpit and Vector are the non-polled upstream-archive services. Imgproxy is a
