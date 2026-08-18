@@ -45,6 +45,7 @@ jobs:
           scripts/test-external-release.sh
           scripts/test-external-workflows.sh
           scripts/test-external-source-build.sh
+          scripts/test-poll-service-releases.sh
           scripts/test-portable-audit.sh
 
       - name: Test artifact contracts

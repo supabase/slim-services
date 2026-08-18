@@ -339,10 +339,18 @@ gh workflow run service-release.yml \
   -f force=false
 ```
 
-`.github/workflows/poll-service-releases.yml` polls stable upstream GitHub
-releases hourly and dispatches independent service-release runs for
-the newest version tag matching each service policy that does not yet have a
-corresponding GitHub release here. All configured polled services are enabled.
+`.github/workflows/poll-service-releases.yml` polls stable upstream releases
+and Docker Hub tags hourly and dispatches independent service-release runs for
+the oldest eligible version tag that does not yet have a corresponding GitHub
+release here. Each polled service declares a `release_floor` at the first
+version published by this repository; the poller reconciles every matching
+stable upstream release from that adoption boundary onward. It dispatches at
+most one version per service per poll. Active versions and versions attempted
+unsuccessfully within the previous six hours are skipped without blocking later
+missing versions. The cooldown starts from GitHub's final workflow update; a
+successful workflow whose release is not visible gets a ten-minute publication
+grace instead. Failures therefore remain retryable without creating gaps or
+hourly retry storms. All configured polled services are enabled.
 The PostgreSQL policy accepts only plain `17.x.x.x` releases; PostgreSQL 15,
 OrioleDB, architecture-specific, and other suffixed release tags are ignored.
 
