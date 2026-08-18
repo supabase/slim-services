@@ -85,6 +85,12 @@ PY
   if ! wait_for_http_code_host "http://127.0.0.1:$port/healthcheck" "200" 180 "$host_service_pid" "$realtime_log"; then
     fail "realtime /healthcheck did not return 200"
   fi
+  if ! env "${rt_env[@]}" "$realtime_bin" eval \
+    'if Code.ensure_loaded?(Lumis), do: true = Lumis.available_languages() != []' \
+    >>"$realtime_log" 2>&1; then
+    cat "$realtime_log" >&2
+    fail "realtime Lumis native smoke failed"
+  fi
   record_host_runtime_metrics "$host_service_pid"
   log "realtime smoke passed"
   exit 0
@@ -136,6 +142,11 @@ log "smoke testing realtime on port $port"
 if ! wait_for_http_code "http://127.0.0.1:$port/healthcheck" "200" 180 "" "$container"; then
   container_logs "$container"
   fail "realtime /healthcheck did not return 200"
+fi
+if ! docker exec "$container" /app/bin/realtime eval \
+  'if Code.ensure_loaded?(Lumis), do: true = Lumis.available_languages() != []'; then
+  container_logs "$container"
+  fail "realtime Lumis native smoke failed"
 fi
 record_runtime_metrics "$container"
 log "realtime smoke passed"
