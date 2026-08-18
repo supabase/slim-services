@@ -10,6 +10,18 @@ POLL_SERVICE="${POLL_SERVICE:-}"
 POLL_DRY_RUN="${POLL_DRY_RUN:-0}"
 POLL_RETRY_COOLDOWN_SECONDS="${POLL_RETRY_COOLDOWN_SECONDS:-21600}"
 POLL_SUCCESS_GRACE_SECONDS="${POLL_SUCCESS_GRACE_SECONDS:-600}"
+POLL_MAX_DISPATCHES_PER_SERVICE="${POLL_MAX_DISPATCHES_PER_SERVICE:-3}"
+POLL_MAX_ACTIVE_RELEASES="${POLL_MAX_ACTIVE_RELEASES:-12}"
+
+for positive_integer in \
+  POLL_MAX_DISPATCHES_PER_SERVICE \
+  POLL_MAX_ACTIVE_RELEASES; do
+  value="${!positive_integer}"
+  if [[ ! "$value" =~ ^[1-9][0-9]*$ ]]; then
+    printf '%s must be a positive integer: %s\n' "$positive_integer" "$value" >&2
+    exit 1
+  fi
+done
 
 command -v gh >/dev/null 2>&1 || {
   printf 'required command not found: gh\n' >&2
@@ -134,8 +146,22 @@ runs_json="$(
     --limit 100 \
     --json displayTitle,status,conclusion,createdAt,updatedAt
 )"
+active_release_count="$(python3 - "$runs_json" <<'PY'
+import json
+import sys
+
+active_statuses = {"in_progress", "pending", "queued", "requested", "waiting"}
+print(
+    sum(
+        run.get("status") in active_statuses
+        for run in json.loads(sys.argv[1])
+    )
+)
+PY
+)"
 
 while IFS=$'\t' read -r service upstream_repository tag_pattern release_floor release_source upstream_image_repository; do
+  service_dispatch_count=0
   versions=""
   if [[ "$release_source" == "dockerhub" ]]; then
     if ! versions="$(python3 - "$upstream_image_repository" "$tag_pattern" "$release_floor" <<'PY'
@@ -303,20 +329,30 @@ PY
       continue
     fi
 
-    if [[ "$POLL_DRY_RUN" == "1" ]]; then
-      printf 'would dispatch %s for %s stable release %s on %s\n' \
-        "$TARGET_WORKFLOW" "$service" "$version" "$TARGET_REF"
+    if (( active_release_count >= POLL_MAX_ACTIVE_RELEASES )); then
+      printf 'global active release limit %s reached; not dispatching more releases\n' \
+        "$POLL_MAX_ACTIVE_RELEASES"
       break
     fi
 
-    printf 'dispatching %s for %s stable release %s on %s\n' \
-      "$TARGET_WORKFLOW" "$service" "$version" "$TARGET_REF"
-    gh workflow run "$TARGET_WORKFLOW" \
-      --repo "$TARGET_REPOSITORY" \
-      --ref "$TARGET_REF" \
-      -f "service=$service" \
-      -f "version=$version" \
-      -f force=false
-    break
+    if [[ "$POLL_DRY_RUN" == "1" ]]; then
+      printf 'would dispatch %s for %s stable release %s on %s\n' \
+        "$TARGET_WORKFLOW" "$service" "$version" "$TARGET_REF"
+    else
+      printf 'dispatching %s for %s stable release %s on %s\n' \
+        "$TARGET_WORKFLOW" "$service" "$version" "$TARGET_REF"
+      gh workflow run "$TARGET_WORKFLOW" \
+        --repo "$TARGET_REPOSITORY" \
+        --ref "$TARGET_REF" \
+        -f "service=$service" \
+        -f "version=$version" \
+        -f force=false
+    fi
+
+    service_dispatch_count=$((service_dispatch_count + 1))
+    active_release_count=$((active_release_count + 1))
+    if (( service_dispatch_count >= POLL_MAX_DISPATCHES_PER_SERVICE )); then
+      break
+    fi
   done <<< "$versions"
 done <<< "$poll_configs"
