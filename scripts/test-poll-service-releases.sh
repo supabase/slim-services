@@ -5,12 +5,14 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 python3 - "$ROOT_DIR" <<'PY'
 import datetime
+import http.server
 import json
 import os
 import pathlib
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 
 
@@ -84,6 +86,7 @@ class ReleasePollerTest(unittest.TestCase):
         service="realtime",
         max_dispatches_per_service="1",
         max_active_releases="12",
+        docker_hub_api_base=None,
     ):
         environment = {
             **os.environ,
@@ -103,6 +106,8 @@ class ReleasePollerTest(unittest.TestCase):
             )
         if max_active_releases is not None:
             environment["POLL_MAX_ACTIVE_RELEASES"] = str(max_active_releases)
+        if docker_hub_api_base is not None:
+            environment["DOCKER_HUB_API_BASE"] = docker_hub_api_base
 
         return subprocess.run(
             [str(POLLER)],
@@ -350,7 +355,29 @@ class ReleasePollerTest(unittest.TestCase):
         self.assertFalse(self.trace.exists())
         self.assertIn("global active release limit", result.stdout)
 
-    def test_postgres_ignores_numeric_ami_test_suffix(self):
+    def test_validation_rejects_dockerhub_source_ref_patterns_without_one_capture_group(self):
+        config = json.loads(self.config.read_text(encoding="utf-8"))
+        config["services"]["realtime"].update(
+            {
+                "release_source": "dockerhub",
+                "image_repository": "supabase/realtime",
+                "source_ref_tag_pattern": r"-sha-[0-9a-f]{7}$",
+            }
+        )
+        self.config.write_text(json.dumps(config), encoding="utf-8")
+
+        result = subprocess.run(
+            [str(POLLER), "--validate-config"],
+            text=True,
+            capture_output=True,
+            env={**os.environ, "SERVICE_RELEASE_CONFIG": str(self.config)},
+            check=False,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("source_ref_tag_pattern", result.stderr)
+
+    def test_postgres_discovers_only_published_docker_tags(self):
         production_config = json.loads(
             (ROOT / ".github" / "service-release-sources.json").read_text(
                 encoding="utf-8"
@@ -372,14 +399,47 @@ class ReleasePollerTest(unittest.TestCase):
         )
         self.published.write_text("postgres-17.6.1.159\n", encoding="utf-8")
 
-        result = self.run_poller(service="postgres")
+        class DockerHubHandler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                body = json.dumps(
+                    {
+                        "count": 2,
+                        "next": None,
+                        "previous": None,
+                        "results": [
+                            {"name": "17.6.1.159"},
+                            {"name": "17.6.1.777"},
+                        ],
+                    }
+                ).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *_args):
+                pass
+
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), DockerHubHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            result = self.run_poller(
+                service="postgres",
+                docker_hub_api_base=f"http://127.0.0.1:{server.server_port}/v2",
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join()
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(
             self.trace.read_text(encoding="utf-8").splitlines(),
             [
                 "workflow run service-release.yml --repo supabase/slim-services "
-                "--ref main -f service=postgres -f version=17.10.1.001 -f force=false"
+                "--ref main -f service=postgres -f version=17.6.1.777 -f force=false"
             ],
         )
 
