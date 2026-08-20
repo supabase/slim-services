@@ -640,7 +640,7 @@ jobs:
             docker tag "$local_image" "$platform_tag"
             docker push "$platform_tag"
 
-            digest="$(docker buildx imagetools inspect "$platform_tag" | awk '$1 == "Digest:" { print $2; exit }')"
+            digest="$(docker buildx imagetools inspect "$platform_tag" | awk '$1 == "Digest:" { print $2 }')"
             [[ "$digest" == sha256:* ]] || {
               printf 'could not resolve digest for %s\n' "$platform_tag" >&2
               exit 1
@@ -656,7 +656,7 @@ jobs:
           image_tag="$IMAGE_REPOSITORY:$VERSION"
           docker buildx imagetools create -t "$image_tag" "${refs[@]}"
           docker buildx imagetools inspect "$image_tag"
-          digest="$(docker buildx imagetools inspect "$image_tag" | awk '$1 == "Digest:" { print $2; exit }')"
+          digest="$(docker buildx imagetools inspect "$image_tag" | awk '$1 == "Digest:" { print $2 }')"
           [[ "$digest" == sha256:* ]] || {
             printf 'could not resolve digest for %s\n' "$image_tag" >&2
             exit 1
