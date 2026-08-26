@@ -27,3 +27,25 @@ cat >>"$PGDATA/postgresql.conf" <<EOF
 supautils.extension_custom_scripts_path = '$BUNDLE_DIR/share/supabase-cli/extension-custom-scripts'
 EOF
 unset _shared_cfg
+
+# The shared recipe pins lc_* = en_US.UTF-8 (docker.io parity). The portable
+# binaries run against the SYSTEM libc — the docker.io image's nix glibc
+# resolves this via its patched LOCALE_ARCHIVE, which system glibc ignores —
+# so the slim Docker image ships a system locale archive and native hosts
+# use their own locales. Probe with the real server binary and fall back to
+# 'C' where the locale cannot resolve; database collation parity is
+# unaffected (the databases are ICU-provider either way).
+if ! "$BUNDLE_DIR/bin/postgres" -D "$PGDATA" -C lc_messages >/dev/null 2>&1; then
+	cat >>"$PGDATA/postgresql.conf" <<EOF
+
+# en_US.UTF-8 is not resolvable through this system's libc; fall back to C
+# (appended by stage-shared-config.sh — the docker.io-parity values above
+# stay in place for systems that can resolve them).
+lc_messages = 'C'
+lc_monetary = 'C'
+lc_numeric = 'C'
+lc_time = 'C'
+EOF
+	# Re-probe so a config error OTHER than the locale still fails the boot.
+	"$BUNDLE_DIR/bin/postgres" -D "$PGDATA" -C lc_messages >/dev/null
+fi

@@ -197,22 +197,24 @@ let
       chmod +x $cfg/pgsodium_getkey.sh
       chmod +x $out/share/supabase-cli/bin/supabase-postgres-init.sh
 
-      # Patch the init script (three anchored edits; each asserted below):
+      # Patch the init script (two anchored edits; each asserted below):
       #  1. source stage-shared-config.sh after the config templates are
       #     copied into PGDATA;
       #  2. initdb with the docker.io image's locale flags
       #     (POSTGRES_INITDB_ARGS there: --allow-group-access
-      #     --locale-provider=icu --encoding=UTF-8 --icu-locale=en_US.UTF-8);
-      #  3. export LOCALE_ARCHIVE from the bundled minimal glibc locale
-      #     archive (Linux) so lc_* = en_US.UTF-8 resolves.
+      #     --locale-provider=icu --encoding=UTF-8 --icu-locale=en_US.UTF-8).
+      #     The libc lc_* side resolves through the SYSTEM glibc (the
+      #     portable binaries never run under nix glibc, so LOCALE_ARCHIVE
+      #     does not apply): the slim image ships a system locale archive,
+      #     and stage-shared-config.sh probes and falls back to 'C' on
+      #     hosts without the locale.
       init=$out/share/supabase-cli/bin/supabase-postgres-init.sh
       sed -i \
         -e '/pg_ident.conf.template/a\	. "$BUNDLE_DIR/share/supabase-cli/bin/stage-shared-config.sh"' \
         -e 's|--encoding=UTF8 \\|--encoding=UTF-8 \\|' \
         -e 's|--locale=C \\|--locale-provider=icu --icu-locale=en_US.UTF-8 --allow-group-access \\|' \
-        -e '/^PGBIN=/a\if [ -f "$BUNDLE_DIR/lib/locale/locale-archive" ]; then export LOCALE_ARCHIVE="''${LOCALE_ARCHIVE:-$BUNDLE_DIR/lib/locale/locale-archive}"; fi' \
         $init
-      for want in "stage-shared-config.sh" "icu-locale=en_US.UTF-8" "LOCALE_ARCHIVE"; do
+      for want in "stage-shared-config.sh" "icu-locale=en_US.UTF-8"; do
         grep -q "$want" $init || {
           echo "init-script patch anchor missing: $want" >&2
           exit 1

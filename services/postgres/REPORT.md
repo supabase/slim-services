@@ -222,9 +222,14 @@ PGDATA-relative names staged at first boot by `stage-shared-config.sh`
 asserted seds), and the file-location GUCs are commented out to follow
 `postgres -D $PGDATA`. initdb runs with the docker.io image's exact flags
 (`--allow-group-access --locale-provider=icu --encoding=UTF-8
---icu-locale=en_US.UTF-8`), backed by the already-bundled minimal glibc
-locale archive (`LOCALE_ARCHIVE`, exported by the init script and set as
-image ENV for the exec'd server).
+--icu-locale=en_US.UTF-8`). The libc `lc_*` side cannot use nix glibc's
+`LOCALE_ARCHIVE` mechanism — the portable binaries are relinked to the
+SYSTEM glibc, which ignores it (first CI run failed exactly there) — so the
+slim image generates a system locale archive with the base image's own
+Debian `localedef` and sets `LANG`/`LC_ALL` like Dockerfile-supabase, while
+`stage-shared-config.sh` probes with the real `postgres -C` binary and
+appends an `lc_* = 'C'` fallback on hosts that cannot resolve the locale
+(database collation stays ICU-provider either way).
 
 `nix/packages/local-dev.conf` is the single, complete list of deliberate
 divergences (loopback/54322 native contract, `/tmp` socket, low-footprint
