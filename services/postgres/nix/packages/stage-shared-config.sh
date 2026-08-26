@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Sourced by supabase-postgres-init.sh (the source line is inserted at build
 # by the slim-services overlay in postgres-portable.nix) right after the main
 # config templates are copied into PGDATA.
