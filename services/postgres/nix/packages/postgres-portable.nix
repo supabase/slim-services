@@ -651,6 +651,16 @@ stdenv.mkDerivation {
       # full copy — postgis ships ~130 identical 8-MiB upgrade scripts, and
       # every extension exists as both name.so and name-<version>.so. Replace
       # identical siblings with relative symlinks (same directory only).
+      # The name.so/name-<version>.so pair MUST collapse to one inode, not
+      # just for disk: shared_preload_libraries loads the unversioned name
+      # while the extension's module_pathname loads the versioned one, and
+      # postgres keys loaded libraries by path string — with one inode,
+      # dlopen returns the same handle and the second _PG_init self-guards
+      # (the docker.io layout); with two real files the library initializes
+      # twice and dies with "attempt to redefine parameter" the moment an
+      # extension is both preloaded and created (seen live with
+      # plpgsql_check under the shared-recipe preload set). So dedup every
+      # identical file, not only the >1M ones.
       # Runs LAST so it can never hand a symlink to the patchelf or
       # install_name_tool loops above (mutating a canonical file once per
       # alias name corrupts it). lib/ is deduped on Linux only: ELF sonames
@@ -675,7 +685,7 @@ stdenv.mkDerivation {
             else
               seen_hash[$h]="$f"
             fi
-          done < <(find . -maxdepth 1 -type f -size +1M | LC_ALL=C sort)
+          done < <(find . -maxdepth 1 -type f | LC_ALL=C sort)
         )
       done
     '';
