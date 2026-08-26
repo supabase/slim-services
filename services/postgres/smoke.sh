@@ -200,10 +200,13 @@ psql_postgres "CREATE EXTENSION pg_cron" >/dev/null \
   || { container_logs "$container"; fail "CREATE EXTENSION pg_cron as postgres failed"; }
 [[ "$(psql_admin "SELECT has_schema_privilege('postgres', 'cron', 'USAGE')")" == "t" ]] \
   || fail "pg_cron after-create script did not grant cron schema usage to postgres"
-psql_postgres "CREATE EXTENSION supabase_vault CASCADE" >/dev/null \
-  || { container_logs "$container"; fail "CREATE EXTENSION supabase_vault as postgres failed"; }
-[[ "$(psql_admin "SELECT has_table_privilege('service_role', 'vault.secrets', 'SELECT')")" == "t" ]] \
-  || fail "vault after-create script did not grant vault.secrets to service_role"
+# supabase_vault (with pgsodium) is created BY the bundled migrations — as
+# superuser, identically on the docker.io image, so its post-create state is
+# parity-by-construction and the escalation path cannot be exercised with
+# it; assert the migrated state instead (pg_cron above is the
+# custom-script proof).
+[[ "$(psql_admin "SELECT count(*) FROM pg_extension WHERE extname = 'supabase_vault'")" == "1" ]] \
+  || fail "supabase_vault missing after bundled migrations"
 
 # Preload parity: pgaudit/pg_tle need shared_preload_libraries, which the
 # shared recipe now provides (they were uncreatable on the old minimal set).
