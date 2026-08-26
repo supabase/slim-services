@@ -413,11 +413,11 @@ stdenv.mkDerivation {
       cp -rL ${psql_17_cli.bin}/share/* $out/share/ 2>/dev/null || true
     fi
 
-    # Add config templates and initialization script
-    mkdir -p $out/share/supabase-cli/config
-    mkdir -p $out/share/supabase-cli/bin
-    cp ${configBundle}/share/supabase-cli/config/* $out/share/supabase-cli/config/
-    cp ${configBundle}/share/supabase-cli/bin/* $out/share/supabase-cli/bin/
+    # Add the CLI config bundle wholesale (config/ including conf.d, bin/,
+    # extension-custom-scripts/) — a flat `cp dir/*` omits the directories
+    # the shared recipe added.
+    mkdir -p $out/share/supabase-cli
+    cp -R ${configBundle}/share/supabase-cli/. $out/share/supabase-cli/
 
     # Add migration files
     cp -r ${migrationBundle}/share/supabase-cli/migrations $out/share/supabase-cli/
