@@ -72,19 +72,33 @@ PY
     sleep 1
   done
 
-  # The bundled CLI config template must carry the supautils allowlist the
-  # docker.io image ships (appended at build from the source checkout's
-  # ansible supautils.conf.j2); without it, supautils.privileged_extensions
-  # is empty and the non-superuser postgres role cannot CREATE EXTENSION
-  # pg_net on fresh databases (the CLI's shadow databases included). The
-  # image smoke exercises this live; here the server runs without the
-  # template, so assert the shipped file.
-  log "checking the CLI config template carries the supautils allowlist"
-  template="$artifact_rootfs/share/supabase-cli/config/postgresql.conf.template"
-  grep -q "^supautils\.privileged_extensions = '[^']*pg_net" "$template" \
-    || fail "postgresql.conf.template is missing pg_net in supautils.privileged_extensions"
-  grep -q "^supautils\.privileged_extensions_superuser = 'supabase_admin'" "$template" \
-    || fail "postgresql.conf.template is missing supautils.privileged_extensions_superuser"
+  # The bundle's config is the docker.io recipe (ansible/files) assembled at
+  # build with Dockerfile-supabase's own edits; the image smoke exercises it
+  # live, and here the server runs without the templates, so assert the
+  # shipped files: the supautils allowlist, the docker.io preload set, the
+  # extension custom scripts, and the patched init script.
+  log "checking the bundled config is the shared docker.io recipe"
+  cfg_dir="$artifact_rootfs/share/supabase-cli/config"
+  template="$cfg_dir/postgresql.conf.template"
+  grep -q "^supautils\.privileged_extensions = '[^']*pg_net" "$cfg_dir/supautils.conf" \
+    || fail "supautils.conf is missing pg_net in supautils.privileged_extensions"
+  grep -q "^supautils\.privileged_extensions_superuser = 'supabase_admin'" "$cfg_dir/supautils.conf" \
+    || fail "supautils.conf is missing supautils.privileged_extensions_superuser"
+  grep -q "^session_preload_libraries = 'supautils'" "$template" \
+    || fail "postgresql.conf.template is missing the docker.io session_preload_libraries"
+  grep "^shared_preload_libraries" "$template" | grep -q pgaudit \
+    || fail "postgresql.conf.template is missing the docker.io shared_preload_libraries set"
+  grep -q "^include = 'supautils.conf'" "$template" \
+    || fail "postgresql.conf.template is missing the relocated supautils include"
+  grep -q "^port = 54322" "$template" \
+    || fail "postgresql.conf.template is missing the local-dev divergence block"
+  [[ -f "$artifact_rootfs/share/supabase-cli/extension-custom-scripts/before-create.sql" ]] \
+    || fail "bundle is missing the extension custom scripts"
+  init_script="$artifact_rootfs/share/supabase-cli/bin/supabase-postgres-init.sh"
+  grep -q "stage-shared-config.sh" "$init_script" \
+    || fail "init script is missing the shared-config staging hook"
+  grep -q -- "--icu-locale=en_US.UTF-8" "$init_script" \
+    || fail "init script is missing the docker.io initdb locale flags"
 
   # The artifact ships the full PG17 extension set; create the preload-free
   # subset here. pgsodium/supabase_vault additionally need the pgsodium
@@ -161,15 +175,52 @@ log "creating pg_net as the non-superuser postgres role (CLI shadow-db path)"
 psql_postgres "CREATE EXTENSION pg_net" >/dev/null \
   || { container_logs "$container"; fail "CREATE EXTENSION pg_net as postgres failed"; }
 
+# The shared docker.io recipe, live: session-preloaded supautils, the conf.d
+# settings, replication capacity, ICU/en_US initdb, and loopback trust.
+log "checking the shared docker.io recipe is active"
+[[ "$(psql_admin "SHOW session_preload_libraries")" == "supautils" ]] \
+  || fail "expected session_preload_libraries=supautils"
+[[ "$(psql_admin "SHOW pg_net.username")" == "postgres" ]] \
+  || fail "expected pg_net.username=postgres (conf.d)"
+[[ "$(psql_admin "SHOW max_wal_senders")" == "10" ]] || fail "expected max_wal_senders=10"
+[[ "$(psql_admin "SHOW lc_messages")" == "en_US.UTF-8" ]] || fail "expected lc_messages=en_US.UTF-8"
+[[ "$(psql_admin "SELECT datlocprovider FROM pg_database WHERE datname = 'postgres'")" == "i" ]] \
+  || fail "expected an ICU-provider database (docker.io initdb parity)"
+psql_admin "SELECT pg_create_physical_replication_slot('smoke_slot')" >/dev/null \
+  || fail "could not create a replication slot"
+psql_admin "SELECT pg_drop_replication_slot('smoke_slot')" >/dev/null
+docker exec "$container" psql -h 127.0.0.1 -U postgres -d postgres -qAt -c "SELECT 1" >/dev/null \
+  || fail "expected passwordless loopback (docker.io pg_hba parity)"
+
+# The extension custom scripts only run through supautils' non-superuser
+# escalation, so create these as postgres (exactly how the CLI does) and
+# assert the after-create grants the docker.io image applies.
+log "checking extension custom scripts run on CREATE EXTENSION (as postgres)"
+psql_postgres "CREATE EXTENSION pg_cron" >/dev/null \
+  || { container_logs "$container"; fail "CREATE EXTENSION pg_cron as postgres failed"; }
+[[ "$(psql_admin "SELECT has_schema_privilege('postgres', 'cron', 'USAGE')")" == "t" ]] \
+  || fail "pg_cron after-create script did not grant cron schema usage to postgres"
+psql_postgres "CREATE EXTENSION supabase_vault CASCADE" >/dev/null \
+  || { container_logs "$container"; fail "CREATE EXTENSION supabase_vault as postgres failed"; }
+[[ "$(psql_admin "SELECT has_table_privilege('service_role', 'vault.secrets', 'SELECT')")" == "t" ]] \
+  || fail "vault after-create script did not grant vault.secrets to service_role"
+
+# Preload parity: pgaudit/pg_tle need shared_preload_libraries, which the
+# shared recipe now provides (they were uncreatable on the old minimal set).
+log "creating the preload-dependent extension pair (as postgres)"
+for ext in pgaudit pg_tle; do
+  psql_postgres "CREATE EXTENSION IF NOT EXISTS $ext CASCADE" >/dev/null \
+    || { container_logs "$container"; fail "CREATE EXTENSION $ext failed"; }
+done
+
 # The derived image ships the full PG17 extension set (everything the
-# upstream image supports; timescaledb/plv8 do not support PG17), installed
-# but NOT enabled — only the minimal shared_preload_libraries set is on by
-# default, keeping the low-footprint profile. This list creates everything
-# that works without extra preloads; pgaudit/pg_stat_monitor/pg_tle require
-# a shared_preload_libraries opt-in (config change + restart) and
-# supautils/safeupdate/plan_filter/wal2json are preload-only or plugin
-# libraries with no extension to create. pgsodium/supabase_vault exercise
-# the getkey wiring set up by the bundle's init script.
+# upstream image supports; timescaledb/plv8 do not support PG17) with the
+# docker.io shared_preload_libraries set active (shared recipe), so
+# pgaudit/pg_tle are creatable too (exercised above, as postgres);
+# pg_stat_monitor still needs a preload opt-in — docker.io does not preload
+# it either. supautils/safeupdate/plan_filter/wal2json are preload-only or
+# plugin libraries with no extension to create. pgsodium/supabase_vault
+# exercise the getkey wiring set up by the bundle's init script.
 log "creating the supported extension set (including the heavy families)"
 extensions=(
   pgcrypto

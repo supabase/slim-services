@@ -139,7 +139,8 @@ target — an accepted divergence from upstream supabase/postgres bundling:
   pgsodium, supabase_vault, supautils) is on by default, so the measured
   footprint is unchanged; pgaudit/pg_stat_monitor/pg_tle need a preload
   opt-in to CREATE. Disk grows accordingly (~30 -> ~250-300 MiB archive
-  expected).
+  expected). (Preload set superseded by the shared-recipe section below:
+  the bundle now ships the docker.io set.)
 - `Dockerfile.artifact` is a nixos/nix flake builder producing the same
   portable rootfs as darwin (`--accept-flake-config` uses upstream's binary
   cache); the old docker-image prune (`prune.sh`, `slim-entrypoint.sh`) is
@@ -195,3 +196,46 @@ first boot (`supabase_privileged_role` is created by the bundled
 migrations); the missing `/etc/postgresql-custom/extension-custom-scripts`
 path is tolerated by supautils. Drop the append once the upstream template
 carries the block itself.
+
+### Shared config recipe with the docker.io image (2026-08)
+
+The supautils-allowlist fix above closed one drift gap; a follow-up parity
+audit against the docker.io image (now built from `Dockerfile-supabase`, not
+the legacy `Dockerfile-17`) found the rest: missing extension custom scripts
+(no after-create grants for pg_cron/vault/pgmq…), no `conf.d`
+(`pg_net.username`), a stricter pg_hba, `max_wal_senders = 0`, a fraction of
+the `shared_preload_libraries` set (pgaudit/pg_tle uncreatable), and libc-C
+initdb instead of ICU en_US.UTF-8. The root cause was architectural: the
+bundle's config was hand-written in `nix/packages/cli-config/` while the
+docker.io image copies `ansible/files/` verbatim.
+
+The overlay's `configBundle` now consumes the SAME files the docker.io image
+is built from: `postgresql.conf.j2`, `pg_hba.conf.j2`, `pg_ident.conf.j2`,
+`supautils.conf.j2`, `conf.d/`, `postgresql-stdout-log.conf`,
+`custom_walg.conf`, `custom_read_replica.conf`, and
+`postgresql_extension_custom_scripts/`, with (a) the exact edits
+`Dockerfile-supabase` applies (enable supautils/wal-g includes,
+session-preload supautils, PG17 timescaledb/plv8/db_user_namespace strips)
+and (b) mechanical relocation only — absolute `/etc` include targets become
+PGDATA-relative names staged at first boot by `stage-shared-config.sh`
+(sourced from the init script, patched at build with anchored,
+asserted seds), and the file-location GUCs are commented out to follow
+`postgres -D $PGDATA`. initdb runs with the docker.io image's exact flags
+(`--allow-group-access --locale-provider=icu --encoding=UTF-8
+--icu-locale=en_US.UTF-8`), backed by the already-bundled minimal glibc
+locale archive (`LOCALE_ARCHIVE`, exported by the init script and set as
+image ENV for the exec'd server).
+
+`nix/packages/local-dev.conf` is the single, complete list of deliberate
+divergences (loopback/54322 native contract, `/tmp` socket, low-footprint
+profile); `entry.sh` shrinks to the two docker overrides (listen/port).
+pg_hba carries one adaptation: `peer map=supabase_map` becomes `trust` —
+the map assumes the docker.io image's OS users, and it resolves them to
+full role access anyway, so single-OS-user environments get the same
+effective posture. Trade-offs accepted for parity: the full docker.io
+preload set replaces the minimal one (a few MB RSS), and fresh databases are
+ICU en_US.UTF-8 like production instead of libc C. The image smoke verifies
+the recipe live (conf.d, replication slots, loopback trust, ICU provider,
+custom-script grants via non-superuser creates of pg_cron/vault, pgaudit +
+pg_tle creates); the host smoke asserts the shipped files. Drop the overlay
+once upstream's `cli-config` assembles from `ansible/files/` itself.

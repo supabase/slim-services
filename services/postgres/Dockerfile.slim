@@ -11,7 +11,7 @@ ARG BASE_IMAGE=gcr.io/distroless/base-debian13:nonroot
 
 FROM debian:trixie-slim AS tools
 RUN apt-get update -y && apt-get install -y --no-install-recommends busybox bash ca-certificates \
-  && mkdir -p /out/usr/bin /out/usr/lib /out/etc/ssl/certs /out/usr/local/share/postgres /pgdata-skel/data \
+  && mkdir -p /out/usr/bin /out/usr/lib /out/etc/ssl/certs /pgdata-skel/data \
   && cp /usr/bin/busybox /out/usr/bin/busybox \
   && for applet in sh basename cat chmod cp cut date dirname env grep gunzip head id mkdir od readlink rm sed sleep tr uname wc; do \
        ln -sf busybox "/out/usr/bin/${applet}"; \
@@ -28,11 +28,14 @@ ARG ARTIFACT_ROOT
 COPY --from=tools /out/ /
 COPY --from=tools --chown=65532:65532 /pgdata-skel/ /var/lib/postgresql/
 COPY --chown=65532:65532 ${ARTIFACT_ROOT}/ /opt/postgres/
-COPY services/postgres/overlay/99-local-dev.conf /usr/local/share/postgres/99-local-dev.conf
 COPY services/postgres/overlay/entry.sh /usr/local/bin/entry.sh
+# LOCALE_ARCHIVE: lc_* = en_US.UTF-8 (docker.io parity, from the shared
+# recipe) resolves through the bundle's minimal glibc locale archive — the
+# init script exports it for first boot; this covers the final exec'd server.
 ENV PGDATA=/var/lib/postgresql/data \
     POSTGRES_USER=supabase_admin \
     POSTGRES_DB=postgres \
+    LOCALE_ARCHIVE=/opt/postgres/lib/locale/locale-archive \
     PATH=/opt/postgres/bin:/usr/local/bin:/usr/bin:/bin
 EXPOSE 5432
 ENTRYPOINT ["/usr/bin/sh", "/usr/local/bin/entry.sh"]
