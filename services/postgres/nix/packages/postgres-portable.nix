@@ -8,6 +8,15 @@
 let
   configDir = ./cli-config;
 
+  # slim-services overlay: upstream's CLI config template preloads supautils
+  # but never configures it, so supautils.privileged_extensions is empty and
+  # `CREATE EXTENSION pg_net` fails for the non-superuser postgres role on
+  # every fresh database — including the shadow databases the CLI's
+  # `db diff`/`db pull` spin up. Append the supautils settings the docker.io
+  # image ships, read from the same source checkout being built so the two
+  # cannot drift. Drop this once the upstream template carries the block.
+  supautilsConf = ../../ansible/files/postgresql_config/supautils.conf.j2;
+
   receipt = writeTextFile {
     name = "cli-receipt";
     destination = "/receipt.json";
@@ -79,6 +88,22 @@ let
       mkdir -p $out/share/supabase-cli/config
       mkdir -p $out/share/supabase-cli/bin
       cp postgresql.conf.template $out/share/supabase-cli/config/
+      # slim-services overlay: the .j2 file is plain postgresql.conf syntax
+      # today; refuse to bake actual Jinja templating into a live config.
+      if grep -q '{{\|{%' ${supautilsConf}; then
+        echo "supautils.conf.j2 contains Jinja templating; cannot append verbatim" >&2
+        exit 1
+      fi
+      {
+        echo ""
+        echo "# Supautils settings shared with the docker.io image (appended at"
+        echo "# build from ansible/files/postgresql_config/supautils.conf.j2)."
+        echo "# Later values win: these override the minimal reserved_roles/"
+        echo "# reserved_memberships defaults above."
+        # Upstream's Dockerfile-17 strips the PG17-incompatible extensions
+        # from the effective config the same way.
+        sed 's/ timescaledb,//g; s/ plv8,//g' ${supautilsConf}
+      } >> $out/share/supabase-cli/config/postgresql.conf.template
       cp pg_hba.conf.template $out/share/supabase-cli/config/
       cp pg_ident.conf.template $out/share/supabase-cli/config/
       cp pgsodium_getkey.sh $out/share/supabase-cli/config/

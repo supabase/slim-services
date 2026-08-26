@@ -173,3 +173,25 @@ default upstream build ships EVERY historical version of every extension
 rootfs to ~5.3 GiB. The overlay now passes upstream's `latestOnly = true`,
 which ships only the latest of each extension and additionally bundles
 glibcLocalesMinimal on Linux.
+
+### Supautils allowlist parity with the docker.io image (2026-08)
+
+Upstream's CLI config template (`nix/packages/cli-config/postgresql.conf.template`)
+preloads supautils but never sets `supautils.privileged_extensions`, so the
+non-superuser `postgres` role could not `CREATE EXTENSION pg_net` on a fresh
+database — breaking the CLI's shadow-database flows (`db diff`, `db pull`,
+declarative sync) whenever webhooks are enabled. The docker.io image gets
+these settings from `ansible/files/postgresql_config/supautils.conf.j2`; the
+overlay's `configBundle` now appends that same file (from the exact source
+checkout being built, so the lists cannot drift) to the bundled template,
+fixing both the derived image and native host use of the artifact. The
+PG17-incompatible timescaledb/plv8 entries are stripped the same way
+upstream's Dockerfile-17 strips them, and the build refuses the append if
+the `.j2` ever grows real Jinja templating. Smokes:
+the host smoke asserts the shipped template carries the allowlist; the image
+smoke creates `pg_net` live as the demoted `postgres` role (the CLI
+shadow-db path). Everything the appended block references exists on slim
+first boot (`supabase_privileged_role` is created by the bundled
+migrations); the missing `/etc/postgresql-custom/extension-custom-scripts`
+path is tolerated by supautils. Drop the append once the upstream template
+carries the block itself.

@@ -72,6 +72,20 @@ PY
     sleep 1
   done
 
+  # The bundled CLI config template must carry the supautils allowlist the
+  # docker.io image ships (appended at build from the source checkout's
+  # ansible supautils.conf.j2); without it, supautils.privileged_extensions
+  # is empty and the non-superuser postgres role cannot CREATE EXTENSION
+  # pg_net on fresh databases (the CLI's shadow databases included). The
+  # image smoke exercises this live; here the server runs without the
+  # template, so assert the shipped file.
+  log "checking the CLI config template carries the supautils allowlist"
+  template="$artifact_rootfs/share/supabase-cli/config/postgresql.conf.template"
+  grep -q "^supautils\.privileged_extensions = '[^']*pg_net" "$template" \
+    || fail "postgresql.conf.template is missing pg_net in supautils.privileged_extensions"
+  grep -q "^supautils\.privileged_extensions_superuser = 'supabase_admin'" "$template" \
+    || fail "postgresql.conf.template is missing supautils.privileged_extensions_superuser"
+
   # The artifact ships the full PG17 extension set; create the preload-free
   # subset here. pgsodium/supabase_vault additionally need the pgsodium
   # getkey script from the CLI config bundle (exercised by the image smoke,
@@ -126,6 +140,26 @@ log "checking local-dev config profile is active"
 [[ "$(psql_admin "SHOW shared_buffers")" == "32MB" ]] || fail "expected shared_buffers=32MB"
 [[ "$(psql_admin "SHOW jit")" == "off" ]] || fail "expected jit=off"
 [[ "$(psql_admin "SHOW wal_level")" == "logical" ]] || fail "expected wal_level=logical"
+
+# The migrations create postgres as a non-superuser (demoted in
+# post-setup); with supautils preloaded, its CREATE EXTENSION only succeeds
+# for extensions on supautils.privileged_extensions (run escalated as
+# supautils.privileged_extensions_superuser). This is exactly what the CLI
+# does on every fresh/shadow database when webhooks are on, so exercise it
+# before the supabase_admin extension sweep below claims pg_net.
+psql_postgres() {
+  docker exec -e PGPASSWORD=postgres "$container" psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 -qAt -c "$1"
+}
+
+log "checking the supautils allowlist matches the docker.io image"
+[[ "$(psql_admin "SHOW supautils.privileged_extensions")" == *pg_net* ]] \
+  || fail "supautils.privileged_extensions does not include pg_net"
+[[ "$(psql_admin "SELECT rolsuper FROM pg_roles WHERE rolname = 'postgres'")" == "f" ]] \
+  || fail "expected the postgres role to be a demoted non-superuser"
+
+log "creating pg_net as the non-superuser postgres role (CLI shadow-db path)"
+psql_postgres "CREATE EXTENSION pg_net" >/dev/null \
+  || { container_logs "$container"; fail "CREATE EXTENSION pg_net as postgres failed"; }
 
 # The derived image ships the full PG17 extension set (everything the
 # upstream image supports; timescaledb/plv8 do not support PG17), installed
