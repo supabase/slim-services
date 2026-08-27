@@ -37,6 +37,10 @@ require_cmd python3
 
 service="$1"
 version="${2:-${VERSION:-dev}}"
+# The smokes derive their upstream parity image from the released version
+# (services/postgres/smoke.sh); scripts/smoke.sh runs them as child
+# processes, so the plain shell var does not reach them.
+export VERSION="$version"
 TARGET_OS="$(target_os)"
 ARCH="$(target_arch)"
 export TARGET_OS ARCH
