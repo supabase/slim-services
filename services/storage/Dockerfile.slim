@@ -3,10 +3,21 @@
 # bundled Node runtime (bin/storage host wrapper is unused in Docker — the
 # entrypoint execs the bundled node directly).
 ARG BASE_IMAGE=gcr.io/distroless/base-debian13:nonroot
+
+# The distroless base ships /home/nonroot as 0700. Local stacks mount the
+# file-backend named volume there (the only writable home for uid 65532), and
+# docker seeds a fresh volume's root from the image path, so sidecars running
+# as another uid (imgproxy runs as 999) cannot traverse into the volume.
+# Re-bake the home as 0711: contents stay private by default, but other uids
+# can traverse to the world-readable objects the API writes below it.
+FROM debian:trixie-slim AS tools
+RUN mkdir -p /home-skel/nonroot && chmod 0711 /home-skel/nonroot
+
 FROM ${BASE_IMAGE}
 ARG ARTIFACT_ROOT
 WORKDIR /app
 ENV NODE_ENV=production
+COPY --from=tools --chown=65532:65532 /home-skel/nonroot /home/nonroot
 COPY ${ARTIFACT_ROOT}/app/ /app/
 COPY ${ARTIFACT_ROOT}/node/ /node/
 EXPOSE 5000

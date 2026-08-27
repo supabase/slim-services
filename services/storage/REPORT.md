@@ -2,7 +2,7 @@
 
 Self-contained report for the Storage API Linux ARM64 slim-image work.
 
-Last updated: 2026-04-28
+Last updated: 2026-08-27
 
 ## Summary
 
@@ -152,3 +152,15 @@ runs on), and `Dockerfile.slim` derives the image from the artifact's `app/`
 and `node/` trees on the generic distroless base (the `bin/storage` wrapper is
 host-only). First Linux verification happens in CI
 (`service-artifacts.yml`), by design.
+
+## Volume-Root Traversal Fix (2026-08)
+
+- Local stacks mount the file-backend named volume at `/home/nonroot` (the
+  only writable home for uid 65532), and docker seeds a fresh volume's root
+  from the image path. The distroless base ships `/home/nonroot` as `0700
+  nonroot`, so imgproxy (uid 999) could not traverse into the volume and every
+  `/render/image` request on a fresh project failed with a permission error.
+- `Dockerfile.slim` now re-bakes `/home/nonroot` as `0711` (still owned by
+  `nonroot`): contents stay private by default while other uids can traverse
+  to the world-readable objects the API writes below it. The image smoke
+  asserts the baked mode so a base-image change cannot silently regress it.

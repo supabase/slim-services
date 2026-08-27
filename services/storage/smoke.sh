@@ -123,6 +123,15 @@ fi
 
 ensure_image "$image"
 
+# Local stacks mount the file-backend volume at /home/nonroot and docker seeds
+# the volume root from the image, so imgproxy (uid 999) needs the baked 0711 to
+# traverse it. Guard it so a base-image change cannot silently regress renders.
+log "checking /home/nonroot volume-root permissions"
+home_stat="$(docker run --rm --entrypoint /node/bin/node "$image" \
+  -e 'const s = require("node:fs").statSync("/home/nonroot"); console.log((s.mode & 0o7777).toString(8), s.uid)')"
+[[ "$home_stat" == "711 65532" ]] \
+  || fail "expected /home/nonroot mode 711 uid 65532, got: $home_stat"
+
 container="storage-smoke-$RUN_ID"
 run_container \
   "$container" \
