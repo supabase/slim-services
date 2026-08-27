@@ -164,3 +164,23 @@ host-only). First Linux verification happens in CI
   `nonroot`): contents stay private by default while other uids can traverse
   to the world-readable objects the API writes below it. The image smoke
   asserts the baked mode so a base-image change cannot silently regress it.
+
+## CLI Image-Gap Closure (2026-08)
+
+Dogfooding the slim stack in supabase/cli surfaced gaps vs the docker.io
+image (supabase/slim-services#280):
+
+- `/mnt` is baked owned by `65532` mode `0755`: docker.io stacks mount the
+  file-backend named volume there, and without the mountpoint Docker created
+  it root-owned, forcing the CLI to diverge to `/home/nonroot`. The image
+  smoke asserts the baked stat and now runs its object round-trip on a fresh
+  named volume mounted at `/mnt` (the exact docker.io layout). Ownership of
+  a volume already initialized by another image family stays a CLI concern.
+- `IMAGE_TRANSFORMATION_ENABLED=false` is no longer baked in `runtime.env`:
+  storage-api prefers that key over the legacy `ENABLE_IMAGE_TRANSFORMATION`
+  the CLI sets, so the image-level `false` silently disabled imgproxy even
+  when the stack enabled it. docker.io bakes no default either.
+- Exec-form `HEALTHCHECK` (bundled node `fetch` of `/status`): Docker uses
+  it when the stack omits `--health-cmd`, giving the CLI real readiness on a
+  distroless image. The smoke waits for `docker inspect` to report
+  `healthy`, not just a 200.

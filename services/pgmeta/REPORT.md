@@ -29,3 +29,11 @@ justify a permanent alternate packaging path.
 
 Current published measurements are generated from release manifests in the
 README results tables.
+
+## Image HEALTHCHECK (2026-08)
+
+The distroless image cannot run CMD-SHELL healthchecks, so slim `supabase
+start` reported pg-meta ready on `Running` (supabase/slim-services#280). The
+image now bakes an exec-form `HEALTHCHECK` — the bundled node fetches
+`/health` on `PG_META_PORT` — and the image smoke waits for `docker
+inspect` to report `healthy`.

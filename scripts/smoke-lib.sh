@@ -223,6 +223,29 @@ wait_for_http_code() {
   done
 }
 
+# Wait for Docker itself to report the container healthy via the image's
+# baked HEALTHCHECK — the readiness contract stacks rely on when they omit
+# --health-cmd. Fails immediately if the image bakes no HEALTHCHECK at all.
+wait_for_container_healthy() {
+  local container="$1"
+  local timeout="${2:-120}"
+  local start status
+  start="$(date +%s)"
+  while true; do
+    status="$(docker inspect \
+      -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' \
+      "$container" 2>/dev/null || printf missing)"
+    case "$status" in
+      healthy) return 0 ;;
+      none | missing) return 1 ;;
+    esac
+    if (( "$(date +%s)" - start >= timeout )); then
+      return 1
+    fi
+    sleep 2
+  done
+}
+
 # Sample steady-state RSS and CPU of a running smoke container via docker stats.
 # Best effort: logs the values, and writes JSON to $SLIM_RUNTIME_METRICS_FILE when
 # set (used by ci-build-service.sh to merge runtime metrics into manifest.json).

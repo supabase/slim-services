@@ -12,10 +12,31 @@ RUN apk add --no-cache ca-certificates \
   && printf 'root:x:0:\nsupabase:x:1000:\n' > /out/etc/group \
   && ln -s auth /out/usr/local/bin/gotrue
 
+# Static probe for the exec-form HEALTHCHECK below: a scratch image has no
+# shell and no busybox, and gotrue has no health subcommand, so the probe is
+# its own tiny stdlib-only Go binary (cross-compiled from the build platform;
+# no emulation).
+FROM --platform=$BUILDPLATFORM golang:1.24-alpine AS probe
+ARG TARGETOS TARGETARCH
+COPY services/auth/healthcheck/ /src/
+RUN cd /src && CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH GOFLAGS=-mod=readonly \
+  go build -trimpath -buildvcs=false -ldflags '-s -w' -o /out/auth-healthcheck .
+
 FROM ${BASE_IMAGE}
 ARG ARTIFACT_ROOT
 COPY --from=meta /out/ /
+COPY --from=probe /out/auth-healthcheck /usr/local/bin/auth-healthcheck
 COPY ${ARTIFACT_ROOT}/bin/auth /usr/local/bin/auth
 USER 1000:1000
+# gotrue's built-in default port is 8081; the image contract — EXPOSE, the
+# CLI, the baked probe — is 9999, so bake the env that makes gotrue listen
+# there. GOTRUE_API_PORT and a runtime -e PORT still override, and the probe
+# resolves the port with the same GOTRUE_API_PORT → PORT precedence gotrue's
+# envconfig uses, so server and probe agree under every override.
+ENV PORT=9999
 EXPOSE 9999
+# Docker uses the baked probe whenever the stack omits --health-cmd, which is
+# how the CLI gets real readiness on a shell-less image.
+HEALTHCHECK --interval=5s --timeout=5s --retries=10 --start-period=10s \
+  CMD ["/usr/local/bin/auth-healthcheck"]
 ENTRYPOINT ["/usr/local/bin/auth"]

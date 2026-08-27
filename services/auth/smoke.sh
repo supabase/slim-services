@@ -37,6 +37,9 @@ if [[ -n "$image" ]]; then
   docker run --rm --entrypoint /usr/local/bin/auth "$image" version >/dev/null
 
   container="auth-smoke-$RUN_ID"
+  # No -e PORT: the image bakes ENV PORT=9999 (gotrue's built-in default is
+  # 8081) and the smoke must prove the baked port contract the HEALTHCHECK
+  # relies on, not mask it with an injected override.
   run_container \
     "$container" \
     --network "$NETWORK" \
@@ -44,7 +47,6 @@ if [[ -n "$image" ]]; then
     -e GOTRUE_SITE_URL=http://localhost:9999 \
     -e API_EXTERNAL_URL=http://localhost:9999 \
     -e GOTRUE_API_HOST=0.0.0.0 \
-    -e PORT=9999 \
     -e GOTRUE_DB_DRIVER=postgres \
     -e GOTRUE_DB_DATABASE_URL="postgres://postgres:postgres@$POSTGRES_CONTAINER:5432/auth_smoke?sslmode=disable" \
     -e GOTRUE_JWT_SECRET="$jwt_secret" \
@@ -57,6 +59,11 @@ if [[ -n "$image" ]]; then
   if ! wait_for_http_code "http://127.0.0.1:$port/health" "200" 120 "" "$container"; then
     container_logs "$container"
     fail "auth /health did not return 200"
+  fi
+  log "waiting for the baked HEALTHCHECK to report healthy"
+  if ! wait_for_container_healthy "$container" 60; then
+    container_logs "$container"
+    fail "auth container did not become healthy via the image HEALTHCHECK"
   fi
   record_runtime_metrics "$container"
 else

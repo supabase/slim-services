@@ -27,7 +27,7 @@ development rarely needs. This service prunes the published upstream image
   (loaded through the stock `include_dir`), all values overridable via
   `postgres -c`:
   `shared_buffers=32MB`, `effective_cache_size=128MB`,
-  `maintenance_work_mem=32MB`, `max_connections=50`, `max_wal_size=128MB`,
+  `maintenance_work_mem=32MB`, `max_connections=100`, `max_wal_size=128MB`,
   `jit=off`, `autovacuum_naptime=60s`, `bgwriter_delay=2000ms`,
   `wal_writer_delay=2000ms`. `wal_level=logical` is left untouched (realtime
   requires it).
@@ -142,9 +142,11 @@ target — an accepted divergence from upstream supabase/postgres bundling:
   expected). (Preload set superseded by the shared-recipe section below:
   the bundle now ships the docker.io set.)
 - `Dockerfile.artifact` is a nixos/nix flake builder producing the same
-  portable rootfs as darwin (`--accept-flake-config` uses upstream's binary
-  cache); the old docker-image prune (`prune.sh`, `slim-entrypoint.sh`) is
-  gone.
+  portable rootfs as darwin (upstream's binary cache is enabled by explicit
+  `--extra-substituters`/`--extra-trusted-public-keys` flags, mirroring
+  `recipe.env` — the pinned flake has no `nixConfig`, so
+  `--accept-flake-config` alone never enabled it); the old docker-image
+  prune (`prune.sh`, `slim-entrypoint.sh`) is gone.
 - `Dockerfile.slim` derives the image: distroless `base-debian13:nonroot` +
   busybox/bash tools stage + the bundle at `/opt/postgres` + repo-owned
   `entry.sh`. First boot delegates to the bundle's own
@@ -244,3 +246,19 @@ the recipe live (conf.d, replication slots, loopback trust, ICU provider,
 custom-script grants via non-superuser creates of pg_cron/vault, pgaudit +
 pg_tle creates); the host smoke asserts the shipped files. Drop the overlay
 once upstream's `cli-config` assembles from `ansible/files/` itself.
+
+## CLI Image-Gap Closure (2026-08)
+
+Dogfooding the slim stack in supabase/cli surfaced gaps vs the docker.io
+image (supabase/slim-services#280):
+
+- `pg_dumpall` joins the portable artifact's binary set and `uniq` the
+  image's busybox applets: `db dump --role-only` pipes
+  `pg_dumpall | ... | uniq` inside the container and was broken on slim.
+  Both smokes now exercise the role-only path (the image smoke runs the
+  pipeline in-container).
+- Local-dev `max_connections` raised 50 → 100 (docker.io parity):
+  supavisor's default meta pool alone is 25, and the halved budget forced
+  the CLI to carry a slim-only `DB_POOL_SIZE=5`. Unused slots cost a few KB
+  of shared memory each; the low-footprint profile keeps every other value.
+  The image smoke asserts the new value.

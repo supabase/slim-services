@@ -10,5 +10,9 @@ ENV PG_META_PORT=8080
 COPY ${ARTIFACT_ROOT}/app/ /usr/src/app/
 COPY ${ARTIFACT_ROOT}/node/ /node/
 EXPOSE 8080
+# Exec-form probe — Docker uses it when the stack omits --health-cmd; node -e
+# reads process.env, so runtime port overrides stay honest.
+HEALTHCHECK --interval=5s --timeout=5s --retries=10 --start-period=10s \
+  CMD ["/node/bin/node", "-e", "fetch('http://127.0.0.1:'+(process.env.PG_META_PORT||8080)+'/health').then((r)=>process.exit(r.ok?0:1),()=>process.exit(1))"]
 ENTRYPOINT ["/node/bin/node"]
 CMD ["dist/server/server.js"]
