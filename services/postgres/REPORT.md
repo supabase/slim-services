@@ -244,3 +244,25 @@ the recipe live (conf.d, replication slots, loopback trust, ICU provider,
 custom-script grants via non-superuser creates of pg_cron/vault, pgaudit +
 pg_tle creates); the host smoke asserts the shipped files. Drop the overlay
 once upstream's `cli-config` assembles from `ansible/files/` itself.
+
+## Follow-Up
+
+The Linux image path is the release gate and is smoked live. These are the
+native-boot holes and docs leftovers from the shared-recipe change (#264).
+
+- Keep `--locale=C` on the patched initdb line next to the ICU flags. The
+  `lc_*` fallback in `stage-shared-config.sh` runs after initdb, so a host
+  whose `LANG` locale is missing still dies at initdb.
+- Host-smoke the bundled init script (same `-C max_connections` trick as
+  `entry.sh`), not raw `initdb` plus a hardcoded minimal preload. Darwin CI
+  never boots the shared recipe today.
+- Darwin `lib/` is not inode-collapsed (Mach-O `LC_ID_DYLIB`). The shared
+  recipe now preloads `plpgsql_check`; `CREATE EXTENSION` after native first
+  boot can double-init. Prove it with the init-script host smoke; hash-dedup
+  still-identical Darwin `.so` pairs only if that fails.
+- Rewrite stale "minimal preload" / append-to-template / vault-as-postgres /
+  `entry.sh` overlay text in `Dockerfile.slim`, this report, and
+  `recipe.env`. `local-dev.conf` is GUC value deltas only — pg_hba, include
+  relocation, and the locale fallback live elsewhere. The `supabase_map`
+  maps specific OS users to specific roles, not full role access; local
+  `supabase_admin` trust is what keeps the posture equivalent.
