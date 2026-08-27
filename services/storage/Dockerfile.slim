@@ -8,7 +8,7 @@ ARG BASE_IMAGE=gcr.io/distroless/base-debian13:nonroot
 # never shipped in the image.
 FROM debian:trixie-slim AS tools
 RUN apt-get update -y && apt-get install -y --no-install-recommends busybox-static \
-  && mkdir -p /out && cp /bin/busybox /out/busybox
+  && mkdir -p /out /mnt-skel && cp /bin/busybox /out/busybox
 
 FROM ${BASE_IMAGE}
 ARG ARTIFACT_ROOT
@@ -26,6 +26,14 @@ ENV NODE_ENV=production
 # /home/nonroot still 0700 both ways). The stage runs as nonroot, which owns
 # the directory, so no root round-trip is needed.
 RUN --mount=from=tools,source=/out,target=/tools ["/tools/busybox", "chmod", "0711", "/home/nonroot"]
+# docker.io stacks mount the file-backend volume at /mnt; the distroless base
+# ships no /mnt, so docker would auto-create the mountpoint root-owned and
+# uid 65532 could not write a fresh volume. Seed it nonroot-owned and 0755 so
+# sidecars under another uid (imgproxy, 999) can traverse into it. The base
+# has no /mnt, so this COPY creates the directory with our ownership; if a
+# base bump ever ships one, COPY would silently keep the base's metadata —
+# the image smoke asserts uid/mode to catch that.
+COPY --from=tools --chown=65532:65532 /mnt-skel/ /mnt/
 COPY ${ARTIFACT_ROOT}/app/ /app/
 COPY ${ARTIFACT_ROOT}/node/ /node/
 EXPOSE 5000

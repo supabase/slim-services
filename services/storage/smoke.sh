@@ -132,16 +132,35 @@ home_stat="$(docker run --rm --entrypoint /node/bin/node "$image" \
 [[ "$home_stat" == "711 65532" ]] \
   || fail "expected /home/nonroot mode 711 uid 65532, got: $home_stat"
 
+# docker.io stacks mount the file-backend volume at /mnt. The image bakes the
+# mountpoint nonroot-owned (0755 so sidecars under another uid can traverse),
+# and a COPY onto a directory the base suddenly ships would silently keep the
+# base's metadata — assert the baked stat, then prove a fresh named volume
+# seeded from it is writable by running the object round-trip against it.
+log "checking /mnt volume-mountpoint permissions"
+mnt_stat="$(docker run --rm --entrypoint /node/bin/node "$image" \
+  -e 'const s = require("node:fs").statSync("/mnt"); console.log((s.mode & 0o7777).toString(8), s.uid)')"
+[[ "$mnt_stat" == "755 65532" ]] \
+  || fail "expected /mnt mode 755 uid 65532, got: $mnt_stat"
+
+mnt_volume="storage-smoke-mnt-$RUN_ID"
+cleanup_storage_image_smoke() {
+  cleanup_smoke
+  docker volume rm "$mnt_volume" >/dev/null 2>&1 || true
+}
+trap cleanup_storage_image_smoke EXIT
+
 container="storage-smoke-$RUN_ID"
 run_container \
   "$container" \
   --network "$NETWORK" \
   -p 127.0.0.1::5000 \
+  -v "$mnt_volume:/mnt" \
   -e DATABASE_URL="postgresql://postgres:postgres@$POSTGRES_CONTAINER:5432/storage_smoke" \
   -e AUTH_JWT_SECRET="$jwt_secret" \
   -e PGRST_JWT_SECRET="$jwt_secret" \
   -e STORAGE_BACKEND=file \
-  -e FILE_STORAGE_BACKEND_PATH=/tmp/storage \
+  -e FILE_STORAGE_BACKEND_PATH=/mnt \
   "$image"
 port="$(host_port "$container" 5000)"
 

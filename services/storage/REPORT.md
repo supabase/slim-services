@@ -106,10 +106,9 @@ accepted path avoids dependency shims or upstream source edits.
   the prerequisite coverage for any future module-level pruning of the AWS/
   Smithy/Iceberg dependency surfaces (still a follow-up).
 - Added `runtime.env` baked as image ENV (overridable):
-  `NODE_OPTIONS=--max-old-space-size=128 --max-semi-space-size=2`,
+  `NODE_OPTIONS=--max-old-space-size=128 --max-semi-space-size=2` and
   `DATABASE_MAX_CONNECTIONS=2` (upstream default 20 — each held connection is
-  a server-side postgres backend), `IMAGE_TRANSFORMATION_ENABLED=false`
-  (imgproxy is not part of the slim local profile).
+  a server-side postgres backend).
 
 | Metric | Value |
 |---|---:|
@@ -164,3 +163,18 @@ host-only). First Linux verification happens in CI
   `nonroot`): contents stay private by default while other uids can traverse
   to the world-readable objects the API writes below it. The image smoke
   asserts the baked mode so a base-image change cannot silently regress it.
+
+## CLI Image-Gap Closure (2026-08)
+
+- Dropped `IMAGE_TRANSFORMATION_ENABLED=false` from `runtime.env`.
+  storage-api prefers that key over the legacy `ENABLE_IMAGE_TRANSFORMATION`
+  the CLI sets, so the baked `false` silently kept transforms off even when
+  the user enabled imgproxy. docker.io bakes no such default; with no env set,
+  upstream's own default applies.
+- Baked `/mnt` (uid 65532, mode 0755) into the image. docker.io stacks mount
+  the file-backend volume at `/mnt`; without the directory, docker auto-created
+  the mountpoint root-owned and uid 65532 could not write a fresh volume,
+  forcing the CLI to divert slim mounts to `/home/nonroot`. The image smoke
+  runs the object round-trip against a fresh named volume mounted at `/mnt`.
+  Fixing a volume already initialized root-owned by an older run stays a CLI
+  migration concern; the image only guarantees a fresh volume seeds correctly.

@@ -30,7 +30,7 @@ if [[ -n "$artifact_rootfs" ]]; then
   }
   trap cleanup_postgres_smoke EXIT
 
-  for bin in postgres initdb pg_ctl psql; do
+  for bin in postgres initdb pg_ctl psql pg_dump pg_dumpall pg_restore; do
     [[ -x "$artifact_rootfs/bin/$bin" ]] || fail "postgres artifact binary missing: bin/$bin"
   done
 
@@ -117,6 +117,15 @@ PY
   nearest="$(psql_host "SELECT id FROM smoke_vec ORDER BY v <-> '[1,2,2]' LIMIT 1")"
   [[ "$nearest" == "1" ]] || fail "pgvector nearest-neighbour query returned $nearest, expected 1"
 
+  # The CLI's `db dump --role-only` pipes pg_dumpall through sed/grep/uniq.
+  # Capture before grepping: `grep -q` exits at first match and its SIGPIPE
+  # would flake the pipeline under pipefail.
+  log "pg_dumpall role-only dump (CLI db dump --role-only contract)"
+  roles_dump="$("$artifact_rootfs/bin/pg_dumpall" -h 127.0.0.1 -p "$port" -U supabase_admin --roles-only | uniq)" \
+    || fail "pg_dumpall --roles-only failed"
+  grep -q "CREATE ROLE" <<<"$roles_dump" \
+    || fail "pg_dumpall --roles-only produced no CREATE ROLE statements"
+
   # Postgres needs a longer settle than the 10s default (autovacuum /
   # checkpointer churn right after initdb + extension creation).
   SLIM_RUNTIME_SETTLE="${SLIM_RUNTIME_SETTLE:-60}" record_host_runtime_metrics "$postgres_pid"
@@ -154,6 +163,9 @@ log "checking local-dev config profile is active"
 [[ "$(psql_admin "SHOW shared_buffers")" == "32MB" ]] || fail "expected shared_buffers=32MB"
 [[ "$(psql_admin "SHOW jit")" == "off" ]] || fail "expected jit=off"
 [[ "$(psql_admin "SHOW wal_level")" == "logical" ]] || fail "expected wal_level=logical"
+# docker.io parity: supavisor's default pools need the full 100; the CLI
+# drops its slim-only DB_POOL_SIZE cap on the strength of this value.
+[[ "$(psql_admin "SHOW max_connections")" == "100" ]] || fail "expected max_connections=100"
 
 # The migrations create postgres as a non-superuser (demoted in
 # post-setup); with supautils preloaded, its CREATE EXTENSION only succeeds
@@ -261,6 +273,15 @@ for ext in "${extensions[@]}"; do
     || { container_logs "$container"; fail "CREATE EXTENSION $ext failed"; }
 done
 log "all ${#extensions[@]} extensions created"
+
+# The CLI's `db dump --role-only` runs pg_dumpall piped through sed/uniq
+# inside the container; exercise the whole pipeline so an image prune cannot
+# silently drop either tool.
+log "checking the role-only dump pipeline (pg_dumpall | sed | uniq)"
+docker exec -e PGPASSWORD=postgres "$container" sh -c \
+  'pg_dumpall -h 127.0.0.1 -U supabase_admin --roles-only \
+     | sed -n "s/^CREATE ROLE \([^ ;]*\).*/\1/p" | uniq | grep -qx supabase_admin' \
+  || fail "pg_dumpall role-only pipeline failed in the image"
 
 log "basic SQL round-trip"
 psql_admin "CREATE TABLE IF NOT EXISTS smoke_check(id serial primary key, v text)" >/dev/null

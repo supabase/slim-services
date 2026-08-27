@@ -27,10 +27,12 @@ development rarely needs. This service prunes the published upstream image
   (loaded through the stock `include_dir`), all values overridable via
   `postgres -c`:
   `shared_buffers=32MB`, `effective_cache_size=128MB`,
-  `maintenance_work_mem=32MB`, `max_connections=50`, `max_wal_size=128MB`,
+  `maintenance_work_mem=32MB`, `max_wal_size=128MB`,
   `jit=off`, `autovacuum_naptime=60s`, `bgwriter_delay=2000ms`,
   `wal_writer_delay=2000ms`. `wal_level=logical` is left untouched (realtime
-  requires it).
+  requires it), and `max_connections` stays at the docker.io image's 100
+  (supavisor's default meta pool alone needs 25; unused slots cost only a few
+  KB of shared memory each).
 - Gosu, busybox userland, `/etc`, and the init/migration scripts are preserved
   unchanged. The image entrypoint is a thin wrapper (`slim-entrypoint.sh`) that
   restores postgres ownership of `/etc/postgresql*` (lost when Docker COPY
