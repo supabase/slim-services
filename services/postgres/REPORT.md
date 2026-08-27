@@ -262,3 +262,33 @@ image (supabase/slim-services#280):
   the CLI to carry a slim-only `DB_POOL_SIZE=5`. Unused slots cost a few KB
   of shared memory each; the low-footprint profile keeps every other value.
   The image smoke asserts the new value.
+
+## Differential docker.io parity smoke (2026-08)
+
+The image smoke previously pinned individual recipe expectations
+(`pg_net.username`, `max_wal_senders`, locale, …). Those pins encode the
+recipe of ONE upstream version and break on force-rebuilds of older tags:
+17.6.1.106 has no `conf.d/pg_net.conf` upstream, so its docker.io image
+does not set `pg_net.username` either and the hardcoded check could never
+pass there — despite the slim image being in perfect parity with its own
+upstream version.
+
+The smoke now boots `public.ecr.aws/supabase/postgres:$VERSION` (the mirror
+dodges Docker Hub pull limits) next to the slim container and requires the
+two servers to be identical: full `pg_settings`, `pg_dumpall --globals-only`
+(roles and attributes), the schema of `postgres` and `template1`,
+`pg_available_extensions`, database encodings/locales, and the host
+`pg_hba_file_rules`. Both sides are captured with the slim image's own
+client binaries so client-version skew cannot leak into the diff, and the
+phase runs before any mutating check.
+
+Intentional divergences are one explicit allowlist in the smoke: the
+local-dev profile GUCs (`local-dev.conf`), bundle/layout paths, and buffers
+postgres derives from `shared_buffers`. Socket-local pg_hba rules are also
+excluded (distroless has no OS user database for peer auth; host rules must
+match). Everything else must equal the upstream image of the same version,
+so version-specific recipe content (conf.d, supautils allowlist, hba, ICU
+initdb, migrations) is compared against the right baseline automatically.
+The subsumed hardcoded checks are gone; behavioral contracts (role-only
+dump pipeline, non-superuser CREATE EXTENSION, replication slot,
+passwordless loopback) stay.

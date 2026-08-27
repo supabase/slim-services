@@ -137,8 +137,10 @@ require_cmd docker
 ensure_image "$image"
 
 container="postgres-smoke-$RUN_ID"
+ensure_network
 run_container \
   "$container" \
+  --network "$NETWORK" \
   -e POSTGRES_PASSWORD=postgres \
   "$image"
 
@@ -159,12 +161,123 @@ psql_admin() {
   docker exec -e PGPASSWORD=postgres "$container" psql -h 127.0.0.1 -U supabase_admin -d postgres -v ON_ERROR_STOP=1 -qAt -c "$1"
 }
 
+# ---------------------------------------------------------------------------
+# Differential docker.io parity: boot the upstream supabase/postgres image of
+# the SAME version alongside the slim container and require the two servers
+# to be identical, instead of pinning per-setting expectations that drift
+# across versions (e.g. conf.d/pg_net.conf does not exist upstream before
+# 17.6.1.159). Both sides are dumped and queried with the slim image's own
+# client binaries, so the client version can never skew the comparison, and
+# this runs before any mutating check so it sees the pristine post-migration
+# databases.
+#
+# The allowlist below is the complete set of intentional divergences:
+#   - the local-dev profile GUCs (services/postgres/nix/packages/local-dev.conf)
+#   - bundle/layout paths (the slim bundle lives under /opt/postgres and
+#     PGDATA, docker.io under /etc/postgresql*)
+#   - buffers postgres derives from shared_buffers at boot
+# Everything else — every other setting, all roles and their attributes, the
+# full schema of postgres and template1, the extension inventory, database
+# encodings/locales, and the host pg_hba rules — must match the upstream
+# image exactly.
+# ---------------------------------------------------------------------------
+parity_image="${PARITY_UPSTREAM_IMAGE:-}"
+if [[ -z "$parity_image" && -n "${VERSION:-}" && "$VERSION" != "dev" ]]; then
+  # Docker Hub defines release eligibility (recipe.env), so the same tag
+  # always exists upstream; the public ECR mirror dodges Hub pull limits.
+  parity_image="public.ecr.aws/supabase/postgres:$VERSION"
+fi
+
+if [[ -z "$parity_image" ]]; then
+  log "SKIPPING docker.io differential parity: no released VERSION (set PARITY_UPSTREAM_IMAGE to compare against a specific upstream image)"
+else
+  log "docker.io differential parity against $parity_image"
+  if ! docker image inspect "$parity_image" >/dev/null 2>&1; then
+    if [[ -n "${PLATFORM:-}" ]]; then
+      docker pull --platform "$PLATFORM" -q "$parity_image" >/dev/null \
+        || fail "could not pull the upstream parity image: $parity_image"
+    else
+      docker pull -q "$parity_image" >/dev/null \
+        || fail "could not pull the upstream parity image: $parity_image"
+    fi
+  fi
+
+  parity_container="postgres-parity-$RUN_ID"
+  run_container \
+    "$parity_container" \
+    --network "$NETWORK" \
+    -e POSTGRES_PASSWORD=postgres \
+    "$parity_image"
+  log "waiting for the upstream parity postgres (init + migrations)"
+  wait_for_postgres 240 "$parity_container" supabase_admin \
+    || fail "upstream parity postgres did not become ready in time"
+  sleep 5
+  wait_for_postgres 60 "$parity_container" supabase_admin \
+    || fail "upstream parity postgres not ready after migrations"
+
+  parity_dir="$(mktemp -d "${TMPDIR:-/tmp}/postgres-parity.XXXXXX")"
+  parity_allow_re='^(autovacuum_naptime|bgwriter_delay|checkpoint_completion_target|effective_cache_size|jit|maintenance_work_mem|max_wal_size|shared_buffers|unix_socket_directories|wal_writer_delay|config_file|data_directory|hba_file|ident_file|pgsodium\.getkey_script|vault\.getkey_script|supautils\.extension_custom_scripts_path|supautils\.privileged_extensions_custom_scripts_path|commit_timestamp_buffers|multixact_member_buffers|multixact_offset_buffers|notify_buffers|serializable_buffers|subtransaction_buffers|transaction_buffers|wal_buffers|shared_memory_size|shared_memory_size_in_huge_pages)='
+
+  parity_psql() {
+    docker exec -e PGPASSWORD=postgres "$container" \
+      psql -h "$1" -U supabase_admin -d postgres -v ON_ERROR_STOP=1 -qAt -c "$2"
+  }
+
+  parity_capture() {
+    local side="$1" host="$2" db
+    # \restrict/\unrestrict carry a random per-dump nonce; SCRAM hashes carry
+    # a random per-initdb salt. Neither encodes real state — mask them.
+    docker exec -e PGPASSWORD=postgres "$container" \
+      pg_dumpall --globals-only -h "$host" -U supabase_admin \
+      | sed -e '/^\\restrict /d' -e '/^\\unrestrict /d' \
+        -e "s/PASSWORD 'SCRAM-SHA-256[^']*'/PASSWORD '<scram>'/" \
+      >"$parity_dir/$side.globals.sql" \
+      || fail "parity capture failed: $side globals"
+    for db in postgres template1; do
+      docker exec -e PGPASSWORD=postgres "$container" \
+        pg_dump --schema-only -d "$db" -h "$host" -U supabase_admin \
+        | sed -e '/^\\restrict /d' -e '/^\\unrestrict /d' \
+        >"$parity_dir/$side.schema-$db.sql" \
+        || fail "parity capture failed: $side schema of $db"
+    done
+    parity_psql "$host" "SELECT name || '=' || setting FROM pg_settings ORDER BY name" \
+      | grep -Ev "$parity_allow_re" >"$parity_dir/$side.settings.txt" \
+      || fail "parity capture failed: $side settings"
+    parity_psql "$host" "SELECT name || '=' || default_version FROM pg_available_extensions ORDER BY name" \
+      >"$parity_dir/$side.extensions.txt" \
+      || fail "parity capture failed: $side extensions"
+    parity_psql "$host" "SELECT datname || '|' || datlocprovider::text || '|' || pg_encoding_to_char(encoding) || '|' || datcollate || '|' || datctype FROM pg_database ORDER BY datname" \
+      >"$parity_dir/$side.databases.txt" \
+      || fail "parity capture failed: $side databases"
+    # Socket-local rules are excluded: distroless ships no OS user database,
+    # so the slim image trusts the in-container socket where docker.io uses
+    # peer. Host rules are what the CLI and other stack services depend on.
+    parity_psql "$host" "SELECT type || '|' || coalesce(array_to_string(database, ','), '') || '|' || coalesce(array_to_string(user_name, ','), '') || '|' || coalesce(address, '') || '|' || coalesce(netmask, '') || '|' || coalesce(auth_method, '') FROM pg_hba_file_rules WHERE type <> 'local' ORDER BY rule_number" \
+      >"$parity_dir/$side.hba.txt" \
+      || fail "parity capture failed: $side pg_hba rules"
+  }
+
+  parity_capture slim 127.0.0.1
+  parity_capture upstream "$parity_container"
+
+  parity_failed=0
+  for f in globals.sql schema-postgres.sql schema-template1.sql settings.txt extensions.txt databases.txt hba.txt; do
+    if ! diff -u "$parity_dir/upstream.$f" "$parity_dir/slim.$f" >&2; then
+      printf '[slim-smoke] parity divergence in %s (upstream is -, slim is +)\n' "$f" >&2
+      parity_failed=1
+    fi
+  done
+  [[ "$parity_failed" == "0" ]] || fail "slim image diverges from $parity_image"
+
+  docker rm -f "$parity_container" >/dev/null
+  rm -rf "$parity_dir"
+  log "docker.io differential parity passed"
+fi
+
 log "checking local-dev config profile is active"
 [[ "$(psql_admin "SHOW shared_buffers")" == "32MB" ]] || fail "expected shared_buffers=32MB"
 [[ "$(psql_admin "SHOW jit")" == "off" ]] || fail "expected jit=off"
 [[ "$(psql_admin "SHOW wal_level")" == "logical" ]] || fail "expected wal_level=logical"
-[[ "$(psql_admin "SHOW max_connections")" == "100" ]] \
-  || fail "expected max_connections=100 (docker.io parity)"
 
 # CLI contract: `db dump --role-only` pipes pg_dumpall through the image's
 # own toolbox (busybox uniq) — exercise the exact pipeline in-container.
@@ -183,27 +296,13 @@ psql_postgres() {
   docker exec -e PGPASSWORD=postgres "$container" psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 -qAt -c "$1"
 }
 
-log "checking the supautils allowlist matches the docker.io image"
-[[ "$(psql_admin "SHOW supautils.privileged_extensions")" == *pg_net* ]] \
-  || fail "supautils.privileged_extensions does not include pg_net"
-[[ "$(psql_admin "SELECT rolsuper FROM pg_roles WHERE rolname = 'postgres'")" == "f" ]] \
-  || fail "expected the postgres role to be a demoted non-superuser"
-
 log "creating pg_net as the non-superuser postgres role (CLI shadow-db path)"
 psql_postgres "CREATE EXTENSION pg_net" >/dev/null \
   || { container_logs "$container"; fail "CREATE EXTENSION pg_net as postgres failed"; }
 
-# The shared docker.io recipe, live: session-preloaded supautils, the conf.d
-# settings, replication capacity, ICU/en_US initdb, and loopback trust.
-log "checking the shared docker.io recipe is active"
-[[ "$(psql_admin "SHOW session_preload_libraries")" == "supautils" ]] \
-  || fail "expected session_preload_libraries=supautils"
-[[ "$(psql_admin "SHOW pg_net.username")" == "postgres" ]] \
-  || fail "expected pg_net.username=postgres (conf.d)"
-[[ "$(psql_admin "SHOW max_wal_senders")" == "10" ]] || fail "expected max_wal_senders=10"
-[[ "$(psql_admin "SHOW lc_messages")" == "en_US.UTF-8" ]] || fail "expected lc_messages=en_US.UTF-8"
-[[ "$(psql_admin "SELECT datlocprovider FROM pg_database WHERE datname = 'postgres'")" == "i" ]] \
-  || fail "expected an ICU-provider database (docker.io initdb parity)"
+# Replication capacity and passwordless loopback are behavioral docker.io
+# contracts the parity diffs above cannot exercise end-to-end.
+log "replication slot and passwordless loopback round-trip"
 psql_admin "SELECT pg_create_physical_replication_slot('smoke_slot')" >/dev/null \
   || fail "could not create a replication slot"
 psql_admin "SELECT pg_drop_replication_slot('smoke_slot')" >/dev/null
