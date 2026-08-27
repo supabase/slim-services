@@ -250,7 +250,7 @@ once upstream's `cli-config` assembles from `ansible/files/` itself.
 ## CLI Image-Gap Closure (2026-08)
 
 Dogfooding the slim stack in supabase/cli surfaced gaps vs the docker.io
-image (CLI_IMAGE_GAPS_PLAN.md):
+image (supabase/slim-services#280):
 
 - `pg_dumpall` joins the portable artifact's binary set and `uniq` the
   image's busybox applets: `db dump --role-only` pipes

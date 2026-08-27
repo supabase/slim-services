@@ -71,7 +71,7 @@ smoke with host Node hidden, and archive/checksum generation.
 ## Image HEALTHCHECK (2026-08)
 
 The distroless image cannot run CMD-SHELL healthchecks, so slim `supabase
-start` reported studio ready on `Running` (CLI_IMAGE_GAPS_PLAN.md). The
+start` reported studio ready on `Running` (supabase/slim-services#280). The
 image now bakes an exec-form `HEALTHCHECK` — the bundled node fetches
 `/api/platform/profile` on `PORT`, with a 60s start period for studio's
 slow boot — and the image smoke waits for `docker inspect` to report

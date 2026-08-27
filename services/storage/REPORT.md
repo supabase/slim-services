@@ -168,7 +168,7 @@ host-only). First Linux verification happens in CI
 ## CLI Image-Gap Closure (2026-08)
 
 Dogfooding the slim stack in supabase/cli surfaced gaps vs the docker.io
-image (CLI_IMAGE_GAPS_PLAN.md):
+image (supabase/slim-services#280):
 
 - `/mnt` is baked owned by `65532` mode `0755`: docker.io stacks mount the
   file-backend named volume there, and without the mountpoint Docker created

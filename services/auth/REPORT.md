@@ -127,7 +127,7 @@ gzip ≈ before); linux-amd64 artifact builds a static x86-64 ELF.
 ## Image HEALTHCHECK (2026-08)
 
 The scratch image cannot run CMD-SHELL healthchecks, so slim `supabase
-start` reported auth ready on `Running` (CLI_IMAGE_GAPS_PLAN.md). The image
+start` reported auth ready on `Running` (supabase/slim-services#280). The image
 now bakes an exec-form `HEALTHCHECK` backed by `bin/auth-healthcheck`, a
 static stdlib-only Go probe (`services/auth/healthcheck/`, cross-compiled in
 a Dockerfile stage from the build platform): gotrue has no health
