@@ -14,25 +14,23 @@ FROM ${BASE_IMAGE}
 ARG ARTIFACT_ROOT
 WORKDIR /app
 ENV NODE_ENV=production
-# The distroless base ships /home/nonroot as 0700. Local stacks mount the
-# file-backend named volume there (the only writable home for uid 65532), and
-# docker seeds a fresh volume's root from the image path, so sidecars running
-# as another uid (imgproxy runs as 999) cannot traverse into the volume.
-# Re-mode the home to 0711: contents stay private by default, but other uids
-# can traverse to the world-readable objects the API writes below it.
-# A RUN chmod diff layer is the only reliable way to do this: COPY onto a
-# directory that already exists in the base — with or without --link — merges
-# contents but keeps the existing directory's metadata (the image smoke caught
-# /home/nonroot still 0700 both ways). The stage runs as nonroot, which owns
-# the directory, so no root round-trip is needed.
+# Legacy volume path: before the image shipped /mnt, local stacks mounted the
+# file-backend named volume at /home/nonroot (the base ships it 0700), and
+# sidecars running as another uid (imgproxy runs as 999) could not traverse
+# into it. Keep re-moding it to 0711 so volumes initialized on that path stay
+# traversable; contents remain private by default. A RUN chmod diff layer is
+# the only reliable way: COPY onto a directory that already exists in the
+# base — with or without --link — merges contents but keeps the existing
+# directory's metadata (the image smoke caught /home/nonroot still 0700 both
+# ways). The stage runs as nonroot, which owns the directory, so no root
+# round-trip is needed.
 RUN --mount=from=tools,source=/out,target=/tools ["/tools/busybox", "chmod", "0711", "/home/nonroot"]
-# docker.io stacks mount the file-backend volume at /mnt; the distroless base
-# ships no /mnt, so docker would auto-create the mountpoint root-owned and
-# uid 65532 could not write a fresh volume. Seed it nonroot-owned and 0755 so
-# sidecars under another uid (imgproxy, 999) can traverse into it. The base
-# has no /mnt, so this COPY creates the directory with our ownership; if a
-# base bump ever ships one, COPY would silently keep the base's metadata —
-# the image smoke asserts uid/mode to catch that.
+# docker.io stacks mount the file-backend volume at /mnt; without the
+# directory in the image, docker auto-creates the mountpoint root-owned and
+# uid 65532 cannot write a fresh volume. Seed it nonroot-owned and 0755 so
+# sidecars under another uid can traverse into it. The base ships no /mnt, so
+# this COPY creates it with our ownership (the image smoke asserts uid/mode
+# against a base bump shipping one — see the COPY-metadata caveat above).
 COPY --from=tools --chown=65532:65532 /mnt-skel/ /mnt/
 COPY ${ARTIFACT_ROOT}/app/ /app/
 COPY ${ARTIFACT_ROOT}/node/ /node/

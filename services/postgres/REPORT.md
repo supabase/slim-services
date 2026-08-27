@@ -30,9 +30,7 @@ development rarely needs. This service prunes the published upstream image
   `maintenance_work_mem=32MB`, `max_wal_size=128MB`,
   `jit=off`, `autovacuum_naptime=60s`, `bgwriter_delay=2000ms`,
   `wal_writer_delay=2000ms`. `wal_level=logical` is left untouched (realtime
-  requires it), and `max_connections` stays at the docker.io image's 100
-  (supavisor's default meta pool alone needs 25; unused slots cost only a few
-  KB of shared memory each).
+  requires it).
 - Gosu, busybox userland, `/etc`, and the init/migration scripts are preserved
   unchanged. The image entrypoint is a thin wrapper (`slim-entrypoint.sh`) that
   restores postgres ownership of `/etc/postgresql*` (lost when Docker COPY
@@ -235,7 +233,15 @@ appends an `lc_* = 'C'` fallback on hosts that cannot resolve the locale
 
 `nix/packages/local-dev.conf` is the single, complete list of deliberate
 divergences (loopback/54322 native contract, `/tmp` socket, low-footprint
-profile); `entry.sh` shrinks to the two docker overrides (listen/port).
+profile — `max_connections` stays at the recipe's 100: supavisor's default
+pools need it, and the lower 50 forced the CLI to carry a slim-only
+DB_POOL_SIZE cap; note a PGDATA initialized before this change keeps 50
+until re-initialized). `entry.sh` shrinks to the two docker overrides
+(listen/port) plus docker.io's one-shot command dispatch: a non-flag argv
+(`docker run IMAGE bash -c …`, the CLI's db dump/pull/diff path) execs
+directly instead of being passed to the server as bogus flags. The artifact
+ships `pg_dumpall` and the image toolbox the `uniq` applet so the CLI's
+role-only dump pipeline runs on slim; both smokes exercise it.
 pg_hba carries one adaptation: `peer map=supabase_map` becomes `trust` —
 the map assumes the docker.io image's OS users, and it resolves them to
 full role access anyway, so single-OS-user environments get the same

@@ -154,7 +154,10 @@ host-only). First Linux verification happens in CI
 
 ## Volume-Root Traversal Fix (2026-08)
 
-- Local stacks mount the file-backend named volume at `/home/nonroot` (the
+Superseded as the mount path by `/mnt` (next section); the `0711` layer stays
+for volumes already initialized at `/home/nonroot`.
+
+- Local stacks mounted the file-backend named volume at `/home/nonroot` (the
   only writable home for uid 65532), and docker seeds a fresh volume's root
   from the image path. The distroless base ships `/home/nonroot` as `0700
   nonroot`, so imgproxy (uid 999) could not traverse into the volume and every

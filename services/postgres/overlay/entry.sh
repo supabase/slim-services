@@ -14,6 +14,18 @@ export POSTGRES_USER="${POSTGRES_USER:-supabase_admin}"
 export POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-postgres}"
 export POSTGRES_DB="${POSTGRES_DB:-postgres}"
 
+# docker.io parity (docker-entrypoint.sh): a non-flag command word is a
+# one-shot — exec it directly, skipping init (the CLI's db dump/pull/diff
+# run `docker run IMAGE bash -c <script>` with no entrypoint override).
+# Flags and a leading "postgres" fall through to init + server.
+if [ "$#" -gt 0 ]; then
+  case "$1" in
+    postgres) shift ;;
+    -*) ;;
+    *) exec "$@" ;;
+  esac
+fi
+
 first_boot=0
 if [ ! -s "$PGDATA/PG_VERSION" ]; then
   first_boot=1

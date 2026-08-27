@@ -123,25 +123,30 @@ fi
 
 ensure_image "$image"
 
-# Local stacks mount the file-backend volume at /home/nonroot and docker seeds
-# the volume root from the image, so imgproxy (uid 999) needs the baked 0711 to
-# traverse it. Guard it so a base-image change cannot silently regress renders.
+# Legacy volume path: stacks that initialized their file-backend volume at
+# /home/nonroot need the baked 0711 so imgproxy (uid 999) can traverse it.
+# Guard it so a base-image change cannot silently regress renders.
 log "checking /home/nonroot volume-root permissions"
 home_stat="$(docker run --rm --entrypoint /node/bin/node "$image" \
   -e 'const s = require("node:fs").statSync("/home/nonroot"); console.log((s.mode & 0o7777).toString(8), s.uid)')"
 [[ "$home_stat" == "711 65532" ]] \
   || fail "expected /home/nonroot mode 711 uid 65532, got: $home_stat"
 
-# docker.io stacks mount the file-backend volume at /mnt. The image bakes the
-# mountpoint nonroot-owned (0755 so sidecars under another uid can traverse),
-# and a COPY onto a directory the base suddenly ships would silently keep the
-# base's metadata — assert the baked stat, then prove a fresh named volume
-# seeded from it is writable by running the object round-trip against it.
+# docker.io stacks mount the file-backend volume at /mnt: assert the baked
+# stat, then prove a fresh named volume seeded from it is writable by uid
+# 65532 by running the object round-trip against it.
 log "checking /mnt volume-mountpoint permissions"
 mnt_stat="$(docker run --rm --entrypoint /node/bin/node "$image" \
   -e 'const s = require("node:fs").statSync("/mnt"); console.log((s.mode & 0o7777).toString(8), s.uid)')"
 [[ "$mnt_stat" == "755 65532" ]] \
   || fail "expected /mnt mode 755 uid 65532, got: $mnt_stat"
+
+# storage-api prefers IMAGE_TRANSFORMATION_ENABLED over the legacy
+# ENABLE_IMAGE_TRANSFORMATION the CLI sets; a baked value silently overrides
+# the user's imgproxy choice, so the image must not carry one.
+if docker image inspect -f '{{json .Config.Env}}' "$image" | grep -q IMAGE_TRANSFORMATION_ENABLED; then
+  fail "image must not bake IMAGE_TRANSFORMATION_ENABLED"
+fi
 
 mnt_volume="storage-smoke-mnt-$RUN_ID"
 cleanup_storage_image_smoke() {

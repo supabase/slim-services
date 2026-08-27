@@ -117,14 +117,16 @@ PY
   nearest="$(psql_host "SELECT id FROM smoke_vec ORDER BY v <-> '[1,2,2]' LIMIT 1")"
   [[ "$nearest" == "1" ]] || fail "pgvector nearest-neighbour query returned $nearest, expected 1"
 
-  # The CLI's `db dump --role-only` pipes pg_dumpall through sed/grep/uniq.
-  # Capture before grepping: `grep -q` exits at first match and its SIGPIPE
-  # would flake the pipeline under pipefail.
+  # The CLI's `db dump --role-only` pipes pg_dumpall through `sed -E … | uniq`
+  # (pkg/migration/scripts/dump_role.sh). Capture before grepping: `grep -q`
+  # exits at first match and its SIGPIPE would flake under pipefail.
   log "pg_dumpall role-only dump (CLI db dump --role-only contract)"
-  roles_dump="$("$artifact_rootfs/bin/pg_dumpall" -h 127.0.0.1 -p "$port" -U supabase_admin --roles-only | uniq)" \
+  roles_dump="$("$artifact_rootfs/bin/pg_dumpall" -h 127.0.0.1 -p "$port" -U supabase_admin \
+      --roles-only --quote-all-identifier --no-role-passwords --no-comments \
+    | sed -E -n 's/^CREATE ROLE "([^"]+)".*/\1/p' | uniq)" \
     || fail "pg_dumpall --roles-only failed"
-  grep -q "CREATE ROLE" <<<"$roles_dump" \
-    || fail "pg_dumpall --roles-only produced no CREATE ROLE statements"
+  grep -qx supabase_admin <<<"$roles_dump" \
+    || fail "role-only dump did not emit supabase_admin"
 
   # Postgres needs a longer settle than the 10s default (autovacuum /
   # checkpointer churn right after initdb + extension creation).
@@ -274,14 +276,15 @@ for ext in "${extensions[@]}"; do
 done
 log "all ${#extensions[@]} extensions created"
 
-# The CLI's `db dump --role-only` runs pg_dumpall piped through sed/uniq
-# inside the container; exercise the whole pipeline so an image prune cannot
-# silently drop either tool.
-log "checking the role-only dump pipeline (pg_dumpall | sed | uniq)"
-docker exec -e PGPASSWORD=postgres "$container" sh -c \
-  'pg_dumpall -h 127.0.0.1 -U supabase_admin --roles-only \
-     | sed -n "s/^CREATE ROLE \([^ ;]*\).*/\1/p" | uniq | grep -qx supabase_admin' \
-  || fail "pg_dumpall role-only pipeline failed in the image"
+# The CLI's `db dump` family runs `docker run IMAGE bash -c <script>` with no
+# entrypoint override — the entrypoint's one-shot dispatch must exec it, and
+# the script (dump_role.sh) needs pg_dumpall, bash, sed -E, and uniq in the
+# image. Exercise the whole contract as a one-shot against the live server.
+log "checking the role-only dump one-shot (CLI db dump --role-only contract)"
+docker run --rm --network "container:$container" -e PGPASSWORD=postgres "$image" \
+  bash -c 'pg_dumpall -h 127.0.0.1 -U supabase_admin --roles-only --quote-all-identifier --no-role-passwords --no-comments \
+    | sed -E -n "s/^CREATE ROLE \"([^\"]+)\".*/\1/p" | uniq | grep -qx supabase_admin' \
+  || fail "role-only dump one-shot failed (entrypoint dispatch or pg_dumpall/sed/uniq)"
 
 log "basic SQL round-trip"
 psql_admin "CREATE TABLE IF NOT EXISTS smoke_check(id serial primary key, v text)" >/dev/null
