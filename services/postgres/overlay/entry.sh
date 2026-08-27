@@ -25,22 +25,17 @@ if [ ! -s "$PGDATA/PG_VERSION" ]; then
   # argument; after -D it is parsed as a GUC assignment and FATALs).
   bash "$BUNDLE/share/supabase-cli/bin/supabase-postgres-init.sh" -C max_connections >/dev/null
 
-  # The CLI config template targets a loopback dev server (port 54322,
-  # listen 127.0.0.1, wal_level=replica); append the docker/network settings
-  # and the low-footprint local-dev profile. Later values win in
-  # postgresql.conf.
+  # The bundle's config is the docker.io recipe plus the local-dev divergence
+  # file, which targets a loopback dev server (port 54322, listen 127.0.0.1)
+  # for the native runtime; append only the docker overrides. Later values
+  # win in postgresql.conf. Network auth (scram) and wal_level=logical come
+  # from the shared recipe itself.
   {
     echo ""
     echo "# --- slim-services derived image: docker wiring ---"
     echo "listen_addresses = '*'"
     echo "port = 5432"
-    echo "wal_level = logical"
-    echo ""
-    echo "# --- slim-services low-footprint local-dev profile ---"
-    cat /usr/local/share/postgres/99-local-dev.conf
   } >> "$PGDATA/postgresql.conf"
-  # The template only allows loopback; containers connect over the network.
-  echo "host all all all scram-sha-256" >> "$PGDATA/pg_hba.conf"
 fi
 
 if [ "$first_boot" = 1 ] && [ -f "$BUNDLE/share/supabase-cli/migrations/migrate.sh" ]; then
