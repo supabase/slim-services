@@ -132,16 +132,36 @@ home_stat="$(docker run --rm --entrypoint /node/bin/node "$image" \
 [[ "$home_stat" == "711 65532" ]] \
   || fail "expected /home/nonroot mode 711 uid 65532, got: $home_stat"
 
+# docker.io parity mountpoint: a fresh named volume at /mnt seeds its root
+# from the image path, so the baked owner is what makes it writable for the
+# API (and traversable for other-uid sidecars).
+log "checking /mnt volume-root permissions"
+mnt_stat="$(docker run --rm --entrypoint /node/bin/node "$image" \
+  -e 'const s = require("node:fs").statSync("/mnt"); console.log((s.mode & 0o7777).toString(8), s.uid)')"
+[[ "$mnt_stat" == "755 65532" ]] \
+  || fail "expected /mnt mode 755 uid 65532, got: $mnt_stat"
+
+# Run the file backend on a FRESH named volume mounted at /mnt — the exact
+# docker.io stack layout — so the round-trip below proves the seeded volume
+# root is writable, not just the container filesystem.
+volume="storage-smoke-vol-$RUN_ID"
+cleanup_storage_image_smoke() {
+  cleanup_smoke
+  docker volume rm -f "$volume" >/dev/null 2>&1 || true
+}
+trap cleanup_storage_image_smoke EXIT
+
 container="storage-smoke-$RUN_ID"
 run_container \
   "$container" \
   --network "$NETWORK" \
   -p 127.0.0.1::5000 \
+  -v "$volume:/mnt" \
   -e DATABASE_URL="postgresql://postgres:postgres@$POSTGRES_CONTAINER:5432/storage_smoke" \
   -e AUTH_JWT_SECRET="$jwt_secret" \
   -e PGRST_JWT_SECRET="$jwt_secret" \
   -e STORAGE_BACKEND=file \
-  -e FILE_STORAGE_BACKEND_PATH=/tmp/storage \
+  -e FILE_STORAGE_BACKEND_PATH=/mnt \
   "$image"
 port="$(host_port "$container" 5000)"
 
@@ -149,6 +169,12 @@ log "smoke testing storage on port $port"
 if ! wait_for_http_code "http://127.0.0.1:$port/status" "200" 120 "" "$container"; then
   container_logs "$container"
   fail "storage /status did not return 200"
+fi
+
+log "waiting for the baked HEALTHCHECK to report healthy"
+if ! wait_for_container_healthy "$container" 60; then
+  container_logs "$container"
+  fail "storage container did not become healthy via the image HEALTHCHECK"
 fi
 
 log "smoke testing storage object round-trip"

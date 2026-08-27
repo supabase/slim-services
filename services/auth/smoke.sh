@@ -58,6 +58,11 @@ if [[ -n "$image" ]]; then
     container_logs "$container"
     fail "auth /health did not return 200"
   fi
+  log "waiting for the baked HEALTHCHECK to report healthy"
+  if ! wait_for_container_healthy "$container" 60; then
+    container_logs "$container"
+    fail "auth container did not become healthy via the image HEALTHCHECK"
+  fi
   record_runtime_metrics "$container"
 else
   require_cmd python3

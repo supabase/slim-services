@@ -73,5 +73,10 @@ if ! wait_for_http_code "http://127.0.0.1:$port/api/platform/profile" "200" 180 
   container_logs "$container"
   fail "studio /api/platform/profile did not return 200"
 fi
+log "waiting for the baked HEALTHCHECK to report healthy"
+if ! wait_for_container_healthy "$container" 120; then
+  container_logs "$container"
+  fail "studio container did not become healthy via the image HEALTHCHECK"
+fi
 record_runtime_metrics "$container"
 log "studio smoke passed"

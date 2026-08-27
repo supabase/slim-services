@@ -123,3 +123,14 @@ stage supplies the CA bundle, passwd/group, and the `gotrue` symlink;
 entrypoint unchanged). The docker-source builder is gone. linux-arm64
 verified: derived image smoke green (`/health` 200, RSS 8.0 MiB, 11.4 MiB
 gzip ≈ before); linux-amd64 artifact builds a static x86-64 ELF.
+
+## Image HEALTHCHECK (2026-08)
+
+The scratch image cannot run CMD-SHELL healthchecks, so slim `supabase
+start` reported auth ready on `Running` (CLI_IMAGE_GAPS_PLAN.md). The image
+now bakes an exec-form `HEALTHCHECK` backed by `bin/auth-healthcheck`, a
+static stdlib-only Go probe (`services/auth/healthcheck/`, cross-compiled in
+a Dockerfile stage from the build platform): gotrue has no health
+subcommand, and the image has no shell to fetch `/health` otherwise. The
+probe resolves the port like gotrue (`GOTRUE_API_PORT`, `PORT`, default
+9999). The image smoke waits for `docker inspect` to report `healthy`.

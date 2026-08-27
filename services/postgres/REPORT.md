@@ -244,3 +244,19 @@ the recipe live (conf.d, replication slots, loopback trust, ICU provider,
 custom-script grants via non-superuser creates of pg_cron/vault, pgaudit +
 pg_tle creates); the host smoke asserts the shipped files. Drop the overlay
 once upstream's `cli-config` assembles from `ansible/files/` itself.
+
+## CLI Image-Gap Closure (2026-08)
+
+Dogfooding the slim stack in supabase/cli surfaced gaps vs the docker.io
+image (CLI_IMAGE_GAPS_PLAN.md):
+
+- `pg_dumpall` joins the portable artifact's binary set and `uniq` the
+  image's busybox applets: `db dump --role-only` pipes
+  `pg_dumpall | ... | uniq` inside the container and was broken on slim.
+  Both smokes now exercise the role-only path (the image smoke runs the
+  pipeline in-container).
+- Local-dev `max_connections` raised 50 → 100 (docker.io parity):
+  supavisor's default meta pool alone is 25, and the halved budget forced
+  the CLI to carry a slim-only `DB_POOL_SIZE=5`. Unused slots cost a few KB
+  of shared memory each; the low-footprint profile keeps every other value.
+  The image smoke asserts the new value.

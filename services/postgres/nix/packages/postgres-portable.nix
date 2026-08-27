@@ -236,7 +236,7 @@ stdenv.mkDerivation {
     mkdir -p $out/bin $out/lib $out/share
 
     # List of PostgreSQL binaries to include in the Supabase CLI bundle
-    binaries="postgres pg_config pg_ctl initdb psql pg_dump pg_restore createdb dropdb pg_isready"
+    binaries="postgres pg_config pg_ctl initdb psql pg_dump pg_dumpall pg_restore createdb dropdb pg_isready"
 
     # Helper function to check if a library should be excluded (system libraries)
     should_exclude_library() {

@@ -1,7 +1,15 @@
 # CLI Image-Gap Closure Plan
 
 Plan for closing the image-family gaps surfaced by CLI dogfooding
-(supabase/cli slim-stack integration). Scope rule, applied throughout:
+(supabase/cli slim-stack integration).
+
+> **Status (2026-08-27): implemented.** All five hard-gate items (PR 1 items
+> 1–4 and the PR 2 HEALTHCHECKs) are implemented on this branch; each
+> service's `REPORT.md` records the change. Remaining before the CLI
+> follow-ups can merge: build + smoke on the platform matrix, publish, and
+> the CLI pin bump.
+
+Scope rule, applied throughout:
 
 > If the slim image cannot run the docker.io command (no `pg_dumpall`, no
 > shell, baked entrypoint, non-root `/root`), that is an image-family gap —
