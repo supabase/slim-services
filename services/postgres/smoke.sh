@@ -181,26 +181,50 @@ psql_admin() {
 # encodings/locales, and the host pg_hba rules — must match the upstream
 # image exactly.
 # ---------------------------------------------------------------------------
-parity_image="${PARITY_UPSTREAM_IMAGE:-}"
-if [[ -z "$parity_image" && -n "${VERSION:-}" && "$VERSION" != "dev" ]]; then
-  # Docker Hub defines release eligibility (recipe.env), so the same tag
-  # always exists upstream; the public ECR mirror dodges Hub pull limits.
-  parity_image="public.ecr.aws/supabase/postgres:$VERSION"
+# Candidate upstream images, tried in order: an explicit override wins;
+# otherwise the public ECR mirror first (bigger anonymous pull budget) with
+# Docker Hub as fallback — the mirror throttles anonymous pulls when a
+# fleet-wide rebuild smokes many versions at once. Docker Hub defines
+# release eligibility (recipe.env), so the tag always exists upstream.
+parity_candidates=""
+if [[ -n "${PARITY_UPSTREAM_IMAGE:-}" ]]; then
+  parity_candidates="$PARITY_UPSTREAM_IMAGE"
+elif [[ -n "${VERSION:-}" && "$VERSION" != "dev" ]]; then
+  parity_candidates="public.ecr.aws/supabase/postgres:$VERSION docker.io/supabase/postgres:$VERSION"
 fi
 
-if [[ -z "$parity_image" ]]; then
+if [[ -z "$parity_candidates" ]]; then
   log "SKIPPING docker.io differential parity: no released VERSION (set PARITY_UPSTREAM_IMAGE to compare against a specific upstream image)"
 else
-  log "docker.io differential parity against $parity_image"
-  if ! docker image inspect "$parity_image" >/dev/null 2>&1; then
-    if [[ -n "${PLATFORM:-}" ]]; then
-      docker pull --platform "$PLATFORM" -q "$parity_image" >/dev/null \
-        || fail "could not pull the upstream parity image: $parity_image"
-    else
-      docker pull -q "$parity_image" >/dev/null \
-        || fail "could not pull the upstream parity image: $parity_image"
+  parity_image=""
+  for parity_candidate in $parity_candidates; do
+    if docker image inspect "$parity_candidate" >/dev/null 2>&1; then
+      parity_image="$parity_candidate"
+      break
     fi
-  fi
+    for parity_attempt in 1 2 3; do
+      parity_pulled=0
+      if [[ -n "${PLATFORM:-}" ]]; then
+        docker pull --platform "$PLATFORM" -q "$parity_candidate" >/dev/null 2>&1 && parity_pulled=1
+      else
+        docker pull -q "$parity_candidate" >/dev/null 2>&1 && parity_pulled=1
+      fi
+      if [[ "$parity_pulled" == "1" ]]; then
+        parity_image="$parity_candidate"
+        break
+      fi
+      log "pull failed for $parity_candidate (attempt $parity_attempt/3)"
+      # Registry throttling backs off within a rebuild storm; a guard, not a
+      # correctness wait.
+      if [[ "$parity_attempt" -lt 3 ]]; then
+        sleep $((parity_attempt * 20))
+      fi
+    done
+    [[ -n "$parity_image" ]] && break
+  done
+  [[ -n "$parity_image" ]] \
+    || fail "could not pull an upstream parity image (tried: $parity_candidates)"
+  log "docker.io differential parity against $parity_image"
 
   parity_container="postgres-parity-$RUN_ID"
   run_container \
