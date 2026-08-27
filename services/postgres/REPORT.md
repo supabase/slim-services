@@ -142,9 +142,11 @@ target — an accepted divergence from upstream supabase/postgres bundling:
   expected). (Preload set superseded by the shared-recipe section below:
   the bundle now ships the docker.io set.)
 - `Dockerfile.artifact` is a nixos/nix flake builder producing the same
-  portable rootfs as darwin (`--accept-flake-config` uses upstream's binary
-  cache); the old docker-image prune (`prune.sh`, `slim-entrypoint.sh`) is
-  gone.
+  portable rootfs as darwin (upstream's binary cache is enabled by explicit
+  `--extra-substituters`/`--extra-trusted-public-keys` flags, mirroring
+  `recipe.env` — the pinned flake has no `nixConfig`, so
+  `--accept-flake-config` alone never enabled it); the old docker-image
+  prune (`prune.sh`, `slim-entrypoint.sh`) is gone.
 - `Dockerfile.slim` derives the image: distroless `base-debian13:nonroot` +
   busybox/bash tools stage + the bundle at `/opt/postgres` + repo-owned
   `entry.sh`. First boot delegates to the bundle's own

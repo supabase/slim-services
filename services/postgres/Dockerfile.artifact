@@ -23,12 +23,19 @@ COPY services/postgres/nix/packages/ nix/packages/
 # The submodule's .git pointer references the host worktree; drop it so the
 # flake is used as a plain path.
 RUN rm -rf .git
-# --accept-flake-config enables upstream's public binary cache
-# (nix-postgres-artifacts); the unmodified postgres/extension derivations
-# substitute instead of compiling.
+# Upstream's public binary cache (substituter + signing key straight from
+# the pinned source's nix/docs/start-here.md, mirroring recipe.env): the
+# unmodified postgres/extension derivations substitute instead of
+# compiling. The flags must be explicit — the upstream flake declares no
+# nixConfig, so --accept-flake-config alone never enabled the cache (it
+# stays so an upstream nixConfig applies if one lands). The nixos/nix
+# builder runs as root (single-user Nix, always trusted), so the
+# CLI-passed flags take effect here just like on CI's single-user install.
 RUN nix --extra-experimental-features "nix-command flakes" build \
       ".#packages.${NIX_SYSTEM}.${NIX_ATTR}" \
       --accept-flake-config \
+      --extra-substituters https://nix-postgres-artifacts.s3.amazonaws.com \
+      --extra-trusted-public-keys nix-postgres-artifacts:dGZlQOvKcNEjvT7QEAJbcV6b6uk7VF/hWMjhYleiaLI= \
       --out-link /result \
   && mkdir -p /rootfs \
   && cp -RP /result/. /rootfs/ \
