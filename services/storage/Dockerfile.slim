@@ -4,27 +4,28 @@
 # entrypoint execs the bundled node directly).
 ARG BASE_IMAGE=gcr.io/distroless/base-debian13:nonroot
 
-# The distroless base ships /home/nonroot as 0700. Local stacks mount the
-# file-backend named volume there (the only writable home for uid 65532), and
-# docker seeds a fresh volume's root from the image path, so sidecars running
-# as another uid (imgproxy runs as 999) cannot traverse into the volume.
-# Re-bake the home as 0711: contents stay private by default, but other uids
-# can traverse to the world-readable objects the API writes below it.
+# Static busybox for the one RUN below; bind-mounted at build time only,
+# never shipped in the image.
 FROM debian:trixie-slim AS tools
-RUN mkdir -p /home-skel/nonroot && chmod 0711 /home-skel/nonroot
-
-# --link is load-bearing below: a plain COPY onto a directory that already
-# exists in the base merges contents but keeps the existing directory's
-# metadata (the smoke caught /home/nonroot still 0700). --link writes the
-# copy as an independent layer whose directory entry re-applies mode and
-# ownership when the layer lands on the base — the same mechanism a
-# RUN chmod layer uses.
+RUN apt-get update -y && apt-get install -y --no-install-recommends busybox-static \
+  && mkdir -p /out && cp /bin/busybox /out/busybox
 
 FROM ${BASE_IMAGE}
 ARG ARTIFACT_ROOT
 WORKDIR /app
 ENV NODE_ENV=production
-COPY --link --from=tools --chown=65532:65532 --chmod=711 /home-skel/nonroot /home/nonroot
+# The distroless base ships /home/nonroot as 0700. Local stacks mount the
+# file-backend named volume there (the only writable home for uid 65532), and
+# docker seeds a fresh volume's root from the image path, so sidecars running
+# as another uid (imgproxy runs as 999) cannot traverse into the volume.
+# Re-mode the home to 0711: contents stay private by default, but other uids
+# can traverse to the world-readable objects the API writes below it.
+# A RUN chmod diff layer is the only reliable way to do this: COPY onto a
+# directory that already exists in the base — with or without --link — merges
+# contents but keeps the existing directory's metadata (the image smoke caught
+# /home/nonroot still 0700 both ways). The stage runs as nonroot, which owns
+# the directory, so no root round-trip is needed.
+RUN --mount=from=tools,source=/out,target=/tools ["/tools/busybox", "chmod", "0711", "/home/nonroot"]
 COPY ${ARTIFACT_ROOT}/app/ /app/
 COPY ${ARTIFACT_ROOT}/node/ /node/
 EXPOSE 5000
