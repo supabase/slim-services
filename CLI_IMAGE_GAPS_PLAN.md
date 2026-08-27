@@ -12,13 +12,36 @@ Plan for closing the image-family gaps surfaced by CLI dogfooding
 Each item below removes a CLI special case once shipped. Items are ordered by
 CLI unblock value over implementation effort.
 
+## Hard gates: what the CLI is waiting on
+
+The CLI has decided NOT to carry interim workarounds for these (no docker.io
+role-dump exception, no Kong/host readiness probes). Each row is therefore a
+hard gate: the matching CLI follow-up must not merge until the slim image is
+published and the CLI's Dockerfile pin can see it — and until then the listed
+degradation is live on slim stacks.
+
+| slim-services deliverable | Gated CLI change | Behavior until it lands |
+|---|---|---|
+| postgres: `pg_dumpall` + `uniq` in the image (same tag the CLI pins, or bump the pin) | `db dump --role-only` runs on the slim image | Role dumps stay broken on slim |
+| auth, studio, pg-meta, storage: exec-form `HEALTHCHECK` | CLI keeps omitting `--health-cmd`; Docker uses the image probe | Slim `start` reports ready on `Running` |
+| storage: `/mnt` owned by uid 65532 | CLI remounts slim storage at `/mnt` (one path with docker.io) | CLI keeps mounting at `/home/nonroot` |
+| storage: no baked `IMAGE_TRANSFORMATION_ENABLED=false` | CLI relies on its existing dual-key set from config | Transforms stay silently off if anyone drops those env keys |
+| postgres: local-dev `max_connections` = 100 | CLI reverts the unconditional `DB_POOL_SIZE=5` in `supavisor.service.ts` | Keep a slim-only pool cap, or the pooler is unbootable under a full stack |
+
+CLI changes with no image gate (ship independently of this repo, listed for
+cross-reference only): gen types argv, functions `/root` → `/tmp` mounts,
+realtime one-shot before user migrations, current-pin-only version
+translation, storage volume write probe, SIDE_EFFECTS cleanup.
+
 ## PR 1 — quick wins (config + small binary additions)
 
 ### 1. `pg_dumpall` + `uniq` in the postgres image (`db dump --role-only`)
 
 The CLI's role-only dump script needs `pg_dumpall` and `uniq`; the slim
 postgres image has `pg_dump`, `bash`, and `sed` but neither of those two.
-Until this ships, the CLI keeps the role-only job on docker.io postgres.
+The CLI will NOT carry a docker.io fallback for this — role dumps are simply
+broken on slim until this ships, which makes it the most user-visible gap in
+PR 1.
 
 - Add `pg_dumpall` to the artifact binaries list in
   `services/postgres/nix/packages/postgres-portable.nix` (the
@@ -36,8 +59,9 @@ Until this ships, the CLI keeps the role-only job on docker.io postgres.
   in-container and `uniq` resolves, so a future prune can't silently regress
   the CLI contract. Ideally exercise the actual role-only pipeline (`pg_dumpall
   --roles-only | … | uniq`) against the initialized database.
-- CLI follow-up once published: delete the role-only docker.io exception and
-  bump the image pin.
+- Publish on the tag the CLI already pins if the pin scheme allows a
+  rebuild, otherwise as a new tag with a coordinated CLI pin bump — the gate
+  is "the CLI's Dockerfile pin can see an image containing both tools".
 
 ### 2. Stop baking `IMAGE_TRANSFORMATION_ENABLED=false` in storage
 
@@ -59,7 +83,10 @@ even when the user enables imgproxy. docker.io bakes no such default.
 
 `services/postgres/nix/packages/local-dev.conf` sets `max_connections = 50`;
 docker.io ships 100 and supavisor's default meta pool alone is 25, so 50
-forces the CLI to carry a slim-only `DB_POOL_SIZE` divergence.
+forced the CLI to add an unconditional `DB_POOL_SIZE=5` in
+`supavisor.service.ts` just to keep the pooler bootable under a full stack.
+The CLI reverts that line once this lands — it is the one CLI change
+explicitly queued as a revert rather than a follow-up.
 
 - Change `max_connections = 50` → `100` in the divergence block (one line,
   with the comment noting it restores docker.io parity for pooler headroom).
@@ -105,9 +132,10 @@ cannot write it. The CLI currently diverges to `/home/nonroot`.
 
 Distroless/scratch images cannot run the CLI's `CMD-SHELL` healthchecks, so
 the CLI currently reports "ready on Running" for auth/studio/pg-meta. Docker
-uses an image-baked `HEALTHCHECK` whenever the CLI omits `--health-cmd`, so
-baking exec-form probes makes the CLI's host/Kong probes optional and closes
-the gap for every consumer, not just the CLI.
+uses an image-baked `HEALTHCHECK` whenever the CLI omits `--health-cmd`. The
+CLI has decided NOT to add Kong/host readiness probes as an interim, so this
+is the only path to real readiness on slim — a hard gate, not an
+optimization, and it closes the gap for every consumer, not just the CLI.
 
 - Node images (`services/pgmeta`, `services/studio`, `services/storage`
   Dockerfile.slim) bundle `/node/bin/node`, so the probe is free:
@@ -140,11 +168,15 @@ the gap for every consumer, not just the CLI.
 - Smokes: assert `docker inspect` reports the container reaching `healthy`,
   not just the endpoint returning 200 — that is the contract the CLI relies
   on.
-- CLI follow-ups once published: drop the Kong/host readiness probes (auth
-  first), keep `--health-cmd` omitted so the image HEALTHCHECK governs.
+- CLI side once published: nothing to add or remove — the CLI already omits
+  `--health-cmd` on slim, so the image HEALTHCHECK governs as soon as the pin
+  sees it.
 
 ## Explicitly not closing (fights the slim design)
 
+- **No storage `migrate-call.js` (or equivalent one-shot migrate entry).**
+  The CLI keeps its storage migration one-shot on docker.io; the slim image
+  only needs to serve.
 - **No shell in edge-runtime.** The CLI carries the exception.
 - **No world-traversable `/root`.** The CLI mounts eszips and deno cache
   under `/tmp` or the writable home instead — that is a CLI argv/mount fix.
@@ -157,13 +189,15 @@ the gap for every consumer, not just the CLI.
 
 ## Sequencing
 
-1. **PR 1** (this branch): items 1–4. Small, independent, each deletes or
-   unblocks deleting a CLI exception. Re-run the affected service builds +
-   smokes (`postgres`, `storage`) on the current platform matrix, then
-   `scripts/update-results-tables.sh` if sizes moved.
+1. **PR 1** (this branch): items 1–4. Small and independent. Re-run the
+   affected service builds + smokes (`postgres`, `storage`) on the current
+   platform matrix, then `scripts/update-results-tables.sh` if sizes moved.
 2. **PR 2**: HEALTHCHECKs. Needs per-service endpoint confirmation and the
-   auth probe helper, so it ships separately rather than holding up PR 1.
-3. **Publish + notify CLI**: after each PR's images publish, the CLI deletes
-   the matching exception (role-only dump exception, slim-only
-   `DB_POOL_SIZE`, host readiness probes, `/home/nonroot` storage mount
-   path).
+   auth probe helper, so it ships separately rather than holding up PR 1 —
+   but it is a hard gate too (slim `start` misreports readiness until it
+   lands), so it follows immediately, not "eventually".
+3. **Publish + notify CLI**: after each PR's images publish and the CLI pin
+   can see them, the gated CLI follow-ups from the table above merge
+   (role-only dump on slim, `/mnt` remount, `DB_POOL_SIZE=5` revert);
+   the HEALTHCHECK and image-transform rows need no CLI change at all.
+   None of those follow-ups merge before the matching image is visible.
