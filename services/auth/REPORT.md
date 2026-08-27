@@ -132,5 +132,9 @@ now bakes an exec-form `HEALTHCHECK` backed by `bin/auth-healthcheck`, a
 static stdlib-only Go probe (`services/auth/healthcheck/`, cross-compiled in
 a Dockerfile stage from the build platform): gotrue has no health
 subcommand, and the image has no shell to fetch `/health` otherwise. The
-probe resolves the port like gotrue (`GOTRUE_API_PORT`, `PORT`, default
-9999). The image smoke waits for `docker inspect` to report `healthy`.
+probe resolves the port with gotrue's own `GOTRUE_API_PORT` → `PORT`
+precedence, falling back to the image's baked `ENV PORT=9999` (gotrue's
+built-in default is 8081, so the image bakes the port its EXPOSE and the
+CLI already assume). The image smoke runs without injecting a port env and
+waits for `docker inspect` to report `healthy`, pinning the baked-port
+contract.

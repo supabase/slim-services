@@ -39,11 +39,10 @@ USER nonroot
 COPY ${ARTIFACT_ROOT}/app/ /app/
 COPY ${ARTIFACT_ROOT}/node/ /node/
 EXPOSE 5000
-# Exec-form probe (no shell in the image): Docker uses this whenever the
-# stack omits --health-cmd, which is how the CLI gets real readiness on a
-# distroless image. node -e reads process.env, so a port override at run
-# time keeps the probe honest.
+# Exec-form probe — Docker uses it when the stack omits --health-cmd; node -e
+# reads process.env (same SERVER_PORT → PORT order as storage-api's config),
+# so runtime port overrides stay honest.
 HEALTHCHECK --interval=5s --timeout=5s --retries=10 --start-period=10s \
-  CMD ["/node/bin/node", "-e", "fetch('http://127.0.0.1:'+(process.env.SERVER_PORT||5000)+'/status').then((r)=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+  CMD ["/node/bin/node", "-e", "fetch('http://127.0.0.1:'+(process.env.SERVER_PORT||process.env.PORT||5000)+'/status').then((r)=>process.exit(r.ok?0:1),()=>process.exit(1))"]
 ENTRYPOINT ["/node/bin/node"]
 CMD ["dist/start/server.js"]

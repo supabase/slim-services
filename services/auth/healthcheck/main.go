@@ -14,8 +14,11 @@ import (
 
 func probeURL() string {
 	// Exec form cannot expand env vars, so the probe resolves the port
-	// itself the same way gotrue does: GOTRUE_API_PORT, then PORT, then
-	// the image default. An explicit URL argument overrides everything.
+	// itself with the same GOTRUE_API_PORT → PORT precedence gotrue's
+	// envconfig uses. The final fallback matches the image's baked
+	// ENV PORT=9999 (gotrue's own built-in default is 8081) and only
+	// fires if that env is stripped. An explicit URL argument overrides
+	// everything.
 	if len(os.Args) > 1 {
 		return os.Args[1]
 	}

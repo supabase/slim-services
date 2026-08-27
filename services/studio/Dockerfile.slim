@@ -14,11 +14,9 @@ EXPOSE 3000
 # localhost checks) get connection refused. Bake the canonical Next.js
 # Docker bind; a runtime -e HOSTNAME still overrides it.
 ENV HOSTNAME=0.0.0.0
-# Exec-form probe (no shell in the image): Docker uses this whenever the
-# stack omits --health-cmd, which is how the CLI gets real readiness on a
-# distroless image. node -e reads process.env, so a port override at run
-# time keeps the probe honest. Studio is the slowest boot in the stack —
-# give it a generous start period.
+# Exec-form probe — Docker uses it when the stack omits --health-cmd; node -e
+# reads process.env, so runtime port overrides stay honest. Studio is the
+# slowest boot in the stack — give it a generous start period.
 HEALTHCHECK --interval=5s --timeout=10s --retries=10 --start-period=60s \
   CMD ["/node/bin/node", "-e", "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/api/platform/profile').then((r)=>process.exit(r.ok?0:1),()=>process.exit(1))"]
 ENTRYPOINT ["/node/bin/node", "/app/apps/studio/docker-entrypoint.mjs"]
