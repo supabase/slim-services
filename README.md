@@ -67,7 +67,7 @@ from the matching upstream image tag; Pooler retains its documented comparison
 override because its exact release tag is unavailable on Docker Hub.
 
 <!-- generated:results:begin -->
-| Service | Version | Upstream ARM64 | Published slim | Reduction | Idle RSS | Idle CPU | Sources |
+| Service | Version | Upstream ARM64 | Current slim | Reduction | Idle RSS | Idle CPU | Report |
 |---|---:|---:|---:|---:|---:|---:|---|
 | Postgres | `17.6.1.166` (all PG17 extensions, minimal preload) | `349.8 MiB` | `132.7 MiB` | `62.1%` | `47.6 MiB` | `0.01%` | [release](https://github.com/supabase/slim-services/releases/tag/postgres-17.6.1.166) · [report](services/postgres/REPORT.md) |
 | PostgREST | `v16.2` | `6.2 MiB` | `5.9 MiB` | `4.2%` | `8.7 MiB` | `0.09%` | [release](https://github.com/supabase/slim-services/releases/tag/postgrest-v16.2) · [report](services/postgrest/REPORT.md) |
@@ -117,7 +117,7 @@ macOS archives require macOS 14+. The manifest records the exact floor as
 `os_floor`.
 
 <!-- generated:host-native:begin -->
-| Service | Version | Archive | rootfs | Idle RSS | Idle CPU | Portable | Sources |
+| Service | Version | Archive | rootfs | Idle RSS | Idle CPU | Portable | Report |
 |---|---:|---:|---:|---:|---:|---|---|
 | Postgres | `17.6.1.166` | `103.0 MiB` | `662.7 MiB` | `70.5 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/postgres-17.6.1.166) · [report](services/postgres/REPORT.md) |
 | PostgREST | `v16.2` | `12.5 MiB` | `78.1 MiB` | `55.7 MiB` | `0.07%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/postgrest-v16.2) · [report](services/postgrest/REPORT.md) |
