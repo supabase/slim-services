@@ -55,6 +55,30 @@ ref="$(pinned_upstream_ref)"
 pass "pin ref resolves a new digest when the image tag is not IDENTITY_SOURCE_TAG"
 unset -f resolve_image_index_digest
 
+# load_recipe must key UPSTREAM_IMAGE off VERSION, not the recipe SOURCE_REF.
+resolve_image_index_digest() {
+  printf 'sha256:resolved-for-%s' "${1##*:}"
+}
+for service in postgres storage edge-runtime; do
+  recipe_version=""
+  case "$service" in
+    postgres) recipe_version="17.6.1.999" ;;
+    storage) recipe_version="v9.9.9" ;;
+    edge-runtime) recipe_version="v9.9.9" ;;
+  esac
+  unset SOURCE_IMAGE_DIGEST UPSTREAM_IMAGE SOURCE_REF VERSION IDENTITY_SOURCE_TAG SOURCE_IMAGE
+  VERSION="$recipe_version"
+  load_recipe "$service"
+  [[ "$UPSTREAM_IMAGE" == *":$recipe_version" ]] \
+    || fail_test "$service load_recipe under VERSION=$recipe_version set UPSTREAM_IMAGE=$UPSTREAM_IMAGE"
+  ref="$(pinned_upstream_ref)"
+  [[ "$ref" == *":$recipe_version@sha256:resolved-for-$recipe_version" ]] \
+    || fail_test "$service pin under VERSION must resolve a new digest, got: $ref"
+done
+unset -f resolve_image_index_digest
+unset SOURCE_IMAGE_DIGEST UPSTREAM_IMAGE SOURCE_REF VERSION IDENTITY_SOURCE_TAG SOURCE_IMAGE
+pass "load_recipe pin follows VERSION, not IDENTITY_SOURCE_TAG"
+
 # shellcheck source=scripts/identity-lib.sh
 source "$ROOT_DIR/scripts/identity-lib.sh"
 [[ "$(normalize_config_user "")" == "" ]] || fail_test "empty user should normalize to empty"
@@ -90,6 +114,12 @@ grep -q 'SOURCE_IMAGE_DIGEST' "$ROOT_DIR/IMAGE_CONTRACT.md" \
   || fail_test "IMAGE_CONTRACT.md does not describe SOURCE_IMAGE_DIGEST"
 grep -q 'IDENTITY_SOURCE_TAG' "$ROOT_DIR/IMAGE_CONTRACT.md" \
   || fail_test "IMAGE_CONTRACT.md does not describe IDENTITY_SOURCE_TAG"
+grep -q 'VERSION:-\$SOURCE_REF' "$ROOT_DIR/services/storage/recipe.env" \
+  || fail_test "storage UPSTREAM_IMAGE must follow VERSION"
+grep -q 'VERSION:-\$SOURCE_REF' "$ROOT_DIR/services/edge-runtime/recipe.env" \
+  || fail_test "edge-runtime UPSTREAM_IMAGE must follow VERSION"
+grep -q 'path exists' "$ROOT_DIR/scripts/identity-lib.sh" \
+  || fail_test "storage /mnt must fail when the path exists but stat failed"
 grep -q 'cannot build' "$ROOT_DIR/scripts/build-image-from-artifact.sh" \
   || fail_test "image build must refuse SKIP_UPSTREAM_IDENTITY"
 pass "contract docs; SKIP cannot invent identity"

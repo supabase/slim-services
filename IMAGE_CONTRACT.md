@@ -8,16 +8,20 @@ at image-build time.
 ## Pin
 
 Each identity-contract service sets `SOURCE_IMAGE_DIGEST` and
-`IDENTITY_SOURCE_TAG` in `recipe.env`. The digest belongs to that tag,
-not to `SOURCE_REF` (release CI overwrites `SOURCE_REF` to `VERSION`).
-Introspection, image build, and smokes pull `tag@digest`. A missing
-digest or a failed pull is a hard error. When the image tag is not
-`IDENTITY_SOURCE_TAG`, that tag's index digest is resolved — the
-committed digest is not reused across versions. There is no ECR-first
-fallback.
+`IDENTITY_SOURCE_TAG` in `recipe.env`. `UPSTREAM_IMAGE` uses
+`${VERSION:-$SOURCE_REF}` so pin selection follows the released tag
+(release CI sets `VERSION` and overwrites `SOURCE_REF`). The digest
+belongs to `IDENTITY_SOURCE_TAG`, not to `SOURCE_REF`. Introspection,
+image build, and smokes pull `tag@digest`. A missing digest or a failed
+pull is a hard error. When the image tag is not `IDENTITY_SOURCE_TAG`,
+that tag's index digest is resolved — the committed digest is not reused
+across versions. There is no ECR-first fallback.
 
 `SKIP_UPSTREAM_IDENTITY=1` is rejected for identity-contract image builds
 and image smokes. Never invent uid/gid/mode as a substitute for the pin.
+Storage `/mnt` is the one exception: invent `0:0:755` only when the path
+is absent and the pin starts as root. If the path exists but `stat`
+failed, fail.
 
 ## Generation
 

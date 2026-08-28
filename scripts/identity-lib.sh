@@ -178,23 +178,26 @@ write_upstream_identity() {
   vol_path="$(cli_volume_path "$service")"
 
   vol_stat="$(run_in_pin "$ref" stat -c '%u %g %a' "$vol_path" 2>/dev/null || true)"
-  if [[ -z "$vol_stat" ]]; then
-    # storage /mnt is often absent from the image (CLI creates the mount).
-    # Owner is the pin's start user; mode is Docker's default for a
-    # root-created directory. Other services must have the path in the pin.
-    if [[ "$service" != "storage" ]]; then
-      fail "cannot stat $vol_path in $ref"
-    fi
-    if [[ "$(normalize_config_user "$start_user")" != "" ]]; then
-      fail "cannot resolve $vol_path owner in $ref and Config.User is $start_user"
-    fi
-    vol_uid=0
-    vol_gid=0
-    vol_mode=755
-  else
+  vol_exists=0
+  if run_in_pin "$ref" test -e "$vol_path" >/dev/null 2>&1; then
+    vol_exists=1
+  fi
+  if [[ -n "$vol_stat" ]]; then
     vol_uid="${vol_stat%% *}"
     vol_gid="$(printf '%s' "$vol_stat" | awk '{print $2}')"
     vol_mode="$(printf '%s' "$vol_stat" | awk '{print $3}')"
+  elif [[ "$vol_exists" -eq 1 ]]; then
+    fail "cannot stat $vol_path in $ref (path exists)"
+  elif [[ "$service" != "storage" ]]; then
+    fail "cannot stat $vol_path in $ref"
+  elif [[ "$(normalize_config_user "$start_user")" != "" ]]; then
+    fail "cannot resolve $vol_path owner in $ref and Config.User is $start_user"
+  else
+    # /mnt is often absent from the pin (CLI creates the mount). Invent
+    # Docker's root-created directory only when the path is missing.
+    vol_uid=0
+    vol_gid=0
+    vol_mode=755
   fi
 
   drop_uid="$vol_uid"
