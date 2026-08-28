@@ -9,8 +9,8 @@ RUN test -n "$VOLUME_MODE"
 RUN apt-get update -y && apt-get install -y --no-install-recommends busybox \
   && mkdir -p /out/usr/bin /out/usr/local/bin \
   && cp /usr/bin/busybox /out/usr/bin/busybox \
-  && for applet in sh cat dirname uname; do ln -sf busybox "/out/usr/bin/${applet}"; done \
-  && printf 'chmod %s /root\n' "$VOLUME_MODE" \
+  && for applet in sh cat dirname uname chmod; do ln -sf busybox "/out/usr/bin/${applet}"; done \
+  && printf 'set -e\nchmod %s /root\n' "$VOLUME_MODE" \
     > /out/usr/local/bin/fix-root-mode \
   && chmod 0755 /out/usr/local/bin/fix-root-mode
 

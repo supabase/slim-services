@@ -100,6 +100,21 @@ if grep -q 'chown' "$ROOT_DIR/scripts/render-dockerfile.sh"; then
 fi
 pass "render-dockerfile.sh stays append-only"
 
+# Distroless has no coreutils. Fix scripts call mkdir/chown/chmod via PATH,
+# so those busybox applets must be linked in the tools stage.
+for spec in \
+  "services/storage/Dockerfile.slim:mkdir" \
+  "services/storage/Dockerfile.slim:chown" \
+  "services/storage/Dockerfile.slim:chmod" \
+  "services/edge-runtime/Dockerfile.slim:chmod" \
+  "services/postgres/Dockerfile.slim:chown"; do
+  file="${spec%%:*}"
+  applet="${spec##*:}"
+  grep -q "for applet in .*${applet}" "$ROOT_DIR/$file" \
+    || fail_test "$file tools stage must link busybox $applet"
+done
+pass "identity Dockerfiles link mkdir/chown/chmod applets"
+
 quoted_dir="$(mktemp -d "${TMPDIR:-/tmp}/slim-identity-quote.XXXXXX")"
 trap 'rm -rf "$quoted_dir"' EXIT
 # Simulate the writer: values go through %q so a GECOS space cannot break source.
