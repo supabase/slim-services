@@ -52,7 +52,8 @@ append-only for `runtime.env` — it does not rewrite `COPY --chown`.
   extensions); then the CLI `--from-backup` restore in `initdb.d`. Hide
   `/etc/postgresql.schema.sql` during the bundle pass when
   `initdb.d/migrate.sh` is the CLI restore (root copies the contents
-  aside and truncates the inode — no `mv` after drop). Both would run
+  aside, truncates the inode, and chowns the copy — no `mv` after drop,
+  and sticky `/tmp` only lets the owner unlink). Both would run
   the unconditional `CREATE DATABASE _supabase`. A real `db dump --local`
   has no `CREATE ROLE` and assumes `extensions` exists. `--help` /
   `--version` exec postgres directly (no initdb).

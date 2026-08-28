@@ -49,7 +49,8 @@ if [ "$(id -u)" = "0" ] && [ ! -s "$PGDATA/PG_VERSION" ] \
   && [ -s "$schema_sql" ] && [ -f /docker-entrypoint-initdb.d/migrate.sh ]; then
   cp "$schema_sql" /tmp/slim-schema.sql
   : > "$schema_sql"
-  chown "${DROP_TO_UID:-0}:${DROP_TO_GID:-0}" "$schema_sql"
+  # Sticky /tmp: drop-to must own the copy to restore and unlink it.
+  chown "${DROP_TO_UID:-0}:${DROP_TO_GID:-0}" /tmp/slim-schema.sql "$schema_sql"
 fi
 
 # busybox su -c puts the first operand in $0; a dummy keeps "$@" intact.
