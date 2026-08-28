@@ -23,6 +23,6 @@ COPY ${ARTIFACT_ROOT}/lib/ /lib/
 COPY --from=tools /out/ /
 # Distroless already ships /root; COPY cannot replace its mode. No USER
 # instruction — Config.User stays empty like the pin. Invoke busybox
-# explicitly: distroless does not exec shebang interpreters.
+# plus linked applets: distroless has no coreutils on PATH.
 RUN ["/usr/bin/busybox", "sh", "/usr/local/bin/fix-root-mode"]
 ENTRYPOINT ["/bin/.edge-runtime-wrapped"]

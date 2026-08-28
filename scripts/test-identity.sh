@@ -115,6 +115,13 @@ for spec in \
 done
 pass "identity Dockerfiles link mkdir/chown/chmod applets"
 
+if grep -q -- '--entrypoint /busybox' "$ROOT_DIR/services/edge-runtime/smoke.sh"; then
+  fail_test "edge leftover must not exec host busybox inside the pin"
+fi
+grep -q 'IDENTITY_BUSYBOX_IMAGE' "$ROOT_DIR/services/edge-runtime/smoke.sh" \
+  || fail_test "edge leftover must write the volume via IDENTITY_BUSYBOX_IMAGE"
+pass "edge leftover uses the static busybox image"
+
 quoted_dir="$(mktemp -d "${TMPDIR:-/tmp}/slim-identity-quote.XXXXXX")"
 trap 'rm -rf "$quoted_dir"' EXIT
 # Simulate the writer: values go through %q so a GECOS space cannot break source.

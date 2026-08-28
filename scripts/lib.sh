@@ -184,8 +184,8 @@ load_recipe() {
   source "$recipe"
 }
 
-# Index digest of an immutable version tag. Used when release CI sets
-# VERSION to something other than the recipe SOURCE_REF pin.
+# Index digest of an immutable version tag. Used when the image tag is
+# not IDENTITY_SOURCE_TAG (the tag SOURCE_IMAGE_DIGEST was recorded for).
 resolve_image_index_digest() {
   local image="$1"
   local digest

@@ -52,34 +52,53 @@ normalize_config_user() {
   esac
 }
 
+# Official busybox is static. A dynamic host/debian binary cannot exec
+# inside an older pin (GLIBC_2.38+).
+busybox_is_static() {
+  local bin="$1"
+  [[ -f "$bin" && ! -d "$bin" && -x "$bin" ]] || return 1
+  if command -v file >/dev/null 2>&1; then
+    file "$bin" | grep -qi 'statically linked'
+    return $?
+  fi
+  ! ldd "$bin" >/dev/null 2>&1
+}
+
+ensure_identity_busybox_image() {
+  local pulled attempt
+  if docker image inspect "$IDENTITY_BUSYBOX_IMAGE" >/dev/null 2>&1; then
+    return 0
+  fi
+  pulled=0
+  for attempt in 1 2 3; do
+    if [[ -n "${PLATFORM:-}" ]]; then
+      docker pull --platform "$PLATFORM" -q "$IDENTITY_BUSYBOX_IMAGE" >/dev/null 2>&1 && pulled=1
+    else
+      docker pull -q "$IDENTITY_BUSYBOX_IMAGE" >/dev/null 2>&1 && pulled=1
+    fi
+    [[ "$pulled" == "1" ]] && break
+    [[ "$attempt" -lt 3 ]] && sleep $((attempt * 5))
+  done
+  [[ "$pulled" == "1" ]] || fail "could not pull $IDENTITY_BUSYBOX_IMAGE"
+}
+
 # Static busybox on a Docker-Desktop-visible path (not $TMPDIR: a missing
 # bind-mount becomes a directory and `exec /busybox` fails).
 identity_busybox_bin() {
-  if [[ -n "${IDENTITY_BUSYBOX_BIN:-}" && -x "$IDENTITY_BUSYBOX_BIN" ]]; then
+  if [[ -n "${IDENTITY_BUSYBOX_BIN:-}" ]] && busybox_is_static "$IDENTITY_BUSYBOX_BIN"; then
     printf '%s' "$IDENTITY_BUSYBOX_BIN"
     return 0
   fi
-  local bin pulled attempt cid
+  local bin cid
   bin="${HOME}/.cache/slim-services/identity-busybox-$(target_arch)"
-  if [[ -x "$bin" ]]; then
+  if busybox_is_static "$bin"; then
     IDENTITY_BUSYBOX_BIN="$bin"
     printf '%s' "$bin"
     return 0
   fi
+  rm -f "$bin"
   mkdir -p "$(dirname "$bin")"
-  if ! docker image inspect "$IDENTITY_BUSYBOX_IMAGE" >/dev/null 2>&1; then
-    pulled=0
-    for attempt in 1 2 3; do
-      if [[ -n "${PLATFORM:-}" ]]; then
-        docker pull --platform "$PLATFORM" -q "$IDENTITY_BUSYBOX_IMAGE" >/dev/null 2>&1 && pulled=1
-      else
-        docker pull -q "$IDENTITY_BUSYBOX_IMAGE" >/dev/null 2>&1 && pulled=1
-      fi
-      [[ "$pulled" == "1" ]] && break
-      [[ "$attempt" -lt 3 ]] && sleep $((attempt * 5))
-    done
-    [[ "$pulled" == "1" ]] || fail "could not pull $IDENTITY_BUSYBOX_IMAGE"
-  fi
+  ensure_identity_busybox_image
   if [[ -n "${PLATFORM:-}" ]]; then
     cid="$(docker create --platform "$PLATFORM" "$IDENTITY_BUSYBOX_IMAGE")"
   else
@@ -88,25 +107,28 @@ identity_busybox_bin() {
   docker cp "$cid:/bin/busybox" "$bin"
   docker rm -f "$cid" >/dev/null
   chmod +x "$bin"
+  busybox_is_static "$bin" || fail "identity busybox $bin is not statically linked"
   IDENTITY_BUSYBOX_BIN="$bin"
   printf '%s' "$bin"
 }
 
 # Run a command inside the pin as root. Prefer the pin's own shell; fall
 # back to a bind-mounted static busybox when the pin is shell-less.
+# Probe with `:` so a real shell returning 1 (e.g. test -x miss) is not
+# treated as "this entrypoint does not exist".
 run_in_pin() {
   local ref="$1"
   shift
   local args=(--rm --user 0)
-  local ep script bb out
+  local ep script bb
   if [[ -n "${PLATFORM:-}" ]]; then
     args+=(--platform "$PLATFORM")
   fi
   script="$(printf '%q ' "$@")"
   for ep in /bin/bash /usr/bin/bash /bin/sh /usr/bin/sh; do
-    if out="$(docker run "${args[@]}" --entrypoint "$ep" "$ref" -c "$script" 2>/dev/null)"; then
-      [[ -n "$out" ]] && printf '%s\n' "$out"
-      return 0
+    if docker run "${args[@]}" --entrypoint "$ep" "$ref" -c ':' >/dev/null 2>&1; then
+      docker run "${args[@]}" --entrypoint "$ep" "$ref" -c "$script"
+      return $?
     fi
   done
   bb="$(identity_busybox_bin)"

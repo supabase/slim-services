@@ -113,12 +113,14 @@ S
   [[ "$heredoc_body" == *"Usage:"* ]] || fail "heredoc+exec edge-runtime --help: $heredoc_body"
 
   log "leftover volume: /root both directions"
+  # Write/read the volume with the static busybox image. Do not exec a
+  # host busybox inside the pin — debian busybox needs a newer glibc.
   edge_vol="edge-runtime-leftover-$RUN_ID"
   create_volume "$edge_vol"
-  bb="$(identity_busybox_bin)"
+  ensure_identity_busybox_image
   docker run --rm ${docker_platform_args[@]+"${docker_platform_args[@]}"} \
-    -v "$bb:/busybox:ro" -v "$edge_vol:/root" --entrypoint /busybox \
-    "$pinned_image" sh -c 'echo leftover-from-dockerio > /root/leftover.txt' \
+    -v "$edge_vol:/root" "$IDENTITY_BUSYBOX_IMAGE" \
+    sh -c 'echo leftover-from-dockerio > /root/leftover.txt' \
     || fail "upstream could not write leftover /root"
   leftover_body="$(docker run --rm ${docker_platform_args[@]+"${docker_platform_args[@]}"} \
     -v "$edge_vol:/root" --entrypoint sh "$image" \
@@ -131,8 +133,8 @@ S
     -c 'echo leftover-from-slim > /root/leftover-slim.txt' \
     || fail "slim could not write leftover /root"
   leftover_body="$(docker run --rm ${docker_platform_args[@]+"${docker_platform_args[@]}"} \
-    -v "$bb:/busybox:ro" -v "$edge_vol:/root" --entrypoint /busybox \
-    "$pinned_image" cat /root/leftover-slim.txt)" \
+    -v "$edge_vol:/root" "$IDENTITY_BUSYBOX_IMAGE" \
+    cat /root/leftover-slim.txt)" \
     || fail "docker.io could not read slim leftover /root"
   [[ "$leftover_body" == "leftover-from-slim" ]] \
     || fail "docker.io leftover /root mismatch: $leftover_body"
