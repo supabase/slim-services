@@ -358,6 +358,7 @@ def test_repository_checks_runs_dynamic_and_external_contracts():
         "scripts/test-portable-audit.sh",
         "scripts/test-license-compliance.sh",
         "scripts/test-poll-service-releases.sh",
+        "scripts/test-identity.sh",
         "services/vector/test-smoke.sh",
     }
     combined = "\n".join(run_blocks)

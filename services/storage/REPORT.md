@@ -27,9 +27,10 @@ telemetry/pprof because the extra gain was too small.
 ## Build Contract
 
 - Current backend: source submodule build.
-- Source ref: `v1.55.3`.
-- Upstream image: `supabase/storage-api:v1.55.3`.
-- Runtime base: `gcr.io/distroless/base-debian13:nonroot` plus the artifact's
+- Source ref: `v1.62.6`.
+- Upstream image: `supabase/storage-api:v1.62.6`.
+- Runtime base: `gcr.io/distroless/base-debian13` (root, empty Config.User)
+  plus the artifact's
   upstream-selected bundled Node runtime.
 - Smoke test: `/status` returns `200`.
 - `sources/storage` is read-only; bundling changes live in overlay files.
@@ -153,29 +154,12 @@ and `node/` trees on the generic distroless base (the `bin/storage` wrapper is
 host-only). First Linux verification happens in CI
 (`service-artifacts.yml`), by design.
 
-## Volume-Root Traversal Fix (2026-08)
+## Image identity (docker.io interchange)
 
-- Local stacks mount the file-backend named volume at `/home/nonroot` (the
-  only writable home for uid 65532), and docker seeds a fresh volume's root
-  from the image path. The distroless base ships `/home/nonroot` as `0700
-  nonroot`, so imgproxy (uid 999) could not traverse into the volume and every
-  `/render/image` request on a fresh project failed with a permission error.
-- `Dockerfile.slim` now re-bakes `/home/nonroot` as `0711` (still owned by
-  `nonroot`): contents stay private by default while other uids can traverse
-  to the world-readable objects the API writes below it. The image smoke
-  asserts the baked mode so a base-image change cannot silently regress it.
-
-## CLI Image-Gap Closure (2026-08)
-
-Dogfooding the slim stack in supabase/cli surfaced gaps vs the docker.io
-image (supabase/slim-services#280):
-
-- `/mnt` is baked owned by `65532` mode `0755`: docker.io stacks mount the
-  file-backend named volume there, and without the mountpoint Docker created
-  it root-owned, forcing the CLI to diverge to `/home/nonroot`. The image
-  smoke asserts the baked stat and now runs its object round-trip on a fresh
-  named volume mounted at `/mnt` (the exact docker.io layout). Ownership of
-  a volume already initialized by another image family stays a CLI concern.
+Start user and `/mnt` owner/mode are generated from the digest-pinned
+`supabase/storage-api` image (IMAGE_CONTRACT.md). The image stays root,
+ships `wget` for the CLI healthcheck, and pairwise smokes cover leftover
+`/mnt` volumes plus an imgproxy-pin sidecar read.
 - `IMAGE_TRANSFORMATION_ENABLED=false` is no longer baked in `runtime.env`:
   storage-api prefers that key over the legacy `ENABLE_IMAGE_TRANSFORMATION`
   the CLI sets, so the image-level `false` silently disabled imgproxy even

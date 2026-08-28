@@ -147,16 +147,13 @@ target — an accepted divergence from upstream supabase/postgres bundling:
   `recipe.env` — the pinned flake has no `nixConfig`, so
   `--accept-flake-config` alone never enabled it); the old docker-image
   prune (`prune.sh`, `slim-entrypoint.sh`) is gone.
-- `Dockerfile.slim` derives the image: distroless `base-debian13:nonroot` +
-  busybox/bash tools stage + the bundle at `/opt/postgres` + repo-owned
-  `entry.sh`. First boot delegates to the bundle's own
-  `supabase-postgres-init.sh` (initdb, CLI config templates with pgsodium
-  getkey wired, password), then appends the docker network settings
-  (`listen_addresses='*'`, port 5432, `wal_level=logical`, a network
-  scram pg_hba rule) and the low-footprint profile, runs the bundled
-  supabase migrations against a temporary socket-only server, and starts
-  postgres — all as uid 65532 (no gosu/root phase, unlike the upstream
-  image).
+- `Dockerfile.slim` derives the image: distroless `base-debian13` (root,
+  empty Config.User) + busybox/bash tools stage + the bundle at
+  `/opt/postgres` + repo-owned `entry.sh` / `docker-entrypoint.sh`. Start
+  user and drop-to uid are generated from the digest-pinned docker.io
+  image (IMAGE_CONTRACT.md). First boot delegates to the bundle's own
+  `supabase-postgres-init.sh`, then appends the docker network settings
+  and starts postgres after dropping to the probed uid.
 - The image smoke checks the broad preload-free set (29 creates including
   postgis/pgroonga/wrappers, a pgsodium/vault round-trip through the getkey
   wiring, and a pgvector nearest-neighbour query); the host smoke creates
@@ -273,8 +270,8 @@ does not set `pg_net.username` either and the hardcoded check could never
 pass there — despite the slim image being in perfect parity with its own
 upstream version.
 
-The smoke now boots `public.ecr.aws/supabase/postgres:$VERSION` (the mirror
-dodges Docker Hub pull limits) next to the slim container and requires the
+The smoke now boots the digest-pinned docker.io image (no ECR-first
+fallback) next to the slim container and requires the
 two servers to be identical: full `pg_settings`, `pg_dumpall --globals-only`
 (roles and attributes), the schema of `postgres` and `template1`,
 `pg_available_extensions`, database encodings/locales, and the host

@@ -79,6 +79,7 @@ find dist-bundle/node_modules -type f \( -name '*.o' -o -name '*.o.d' \) -print0
 mkdir -p "$ROOTFS/app/dist" "$ROOTFS/bin"
 cp dist-bundle/package.json "$ROOTFS/app/package.json"
 cp -R dist-bundle/start "$ROOTFS/app/dist/start"
+cp -R dist-bundle/scripts "$ROOTFS/app/dist/scripts"
 cp -R dist-bundle/static "$ROOTFS/app/dist/static"
 cp -R dist-bundle/node_modules "$ROOTFS/app/node_modules"
 cp -R migrations "$ROOTFS/app/migrations"

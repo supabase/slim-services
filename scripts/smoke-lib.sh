@@ -9,6 +9,7 @@ RUN_ID="${RUN_ID:-$(date +%s)-$$}"
 NETWORK="${NETWORK:-slim-smoke-$RUN_ID}"
 POSTGRES_CONTAINER="${POSTGRES_CONTAINER:-slim-smoke-postgres-$RUN_ID}"
 created_containers=()
+created_volumes=()
 host_service_pids=()
 network_created=0
 host_pg_dir=""
@@ -30,6 +31,9 @@ cleanup_smoke() {
   fi
   for container in "${created_containers[@]:-}"; do
     docker rm -f "$container" >/dev/null 2>&1 || true
+  done
+  for volume in "${created_volumes[@]:-}"; do
+    docker volume rm -f "$volume" >/dev/null 2>&1 || true
   done
   if [[ "${network_created:-0}" == "1" ]]; then
     docker network rm "$NETWORK" >/dev/null 2>&1 || true
@@ -55,6 +59,12 @@ run_container() {
   shift
   docker run -d --name "$name" "$@" >/dev/null
   created_containers+=("$name")
+}
+
+create_volume() {
+  local name="$1"
+  docker volume create "$name" >/dev/null
+  created_volumes+=("$name")
 }
 
 container_logs() {

@@ -39,4 +39,5 @@ EXPOSE 9999
 # how the CLI gets real readiness on a shell-less image.
 HEALTHCHECK --interval=5s --timeout=5s --retries=10 --start-period=10s \
   CMD ["/usr/local/bin/auth-healthcheck"]
-ENTRYPOINT ["/usr/local/bin/auth"]
+# Empty ENTRYPOINT: CLI `["gotrue","migrate"]` must not become `auth gotrue migrate`.
+CMD ["gotrue"]

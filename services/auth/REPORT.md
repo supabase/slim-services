@@ -30,7 +30,7 @@ symlink, CA certificates, and minimal user metadata.
 - Source ref: `v2.189.0`.
 - Upstream image: `supabase/gotrue:v2.189.0`.
 - Runtime base: `scratch`.
-- Entrypoint: `/usr/local/bin/auth`.
+- Empty `ENTRYPOINT`, `CMD ["gotrue"]` (symlink to `auth`).
 - Smoke test: `/health` returns `200` against a temporary Postgres.
 - `sources/auth` is read-only.
 
@@ -119,8 +119,8 @@ for the service.
 `build-host.sh` now builds the Linux artifacts too (Go cross-compiles from
 any host), so every target shares the `bin/auth` layout, and
 `Dockerfile.slim` derives the scratch image from the artifact (an alpine
-stage supplies the CA bundle, passwd/group, and the `gotrue` symlink;
-entrypoint unchanged). The docker-source builder is gone. linux-arm64
+stage supplies the CA bundle, passwd/group, and the `gotrue` symlink).
+The docker-source builder is gone. linux-arm64
 verified: derived image smoke green (`/health` 200, RSS 8.0 MiB, 11.4 MiB
 gzip ≈ before); linux-amd64 artifact builds a static x86-64 ELF.
 

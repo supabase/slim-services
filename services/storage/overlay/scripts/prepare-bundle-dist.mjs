@@ -12,6 +12,7 @@ const outputNodeModules = path.join(outputDir, 'node_modules')
 const outputStaticDir = path.join(outputDir, 'static')
 const outputStartStaticDir = path.join(outputDir, 'start', 'static')
 const outputStartMigrationsDir = path.join(outputDir, 'start', 'migrations')
+const outputScriptsMigrationsDir = path.join(outputDir, 'scripts', 'migrations')
 const copiedPackages = new Set()
 
 async function copyPackage(packageName) {
@@ -47,22 +48,25 @@ await fs.rm(outputNodeModules, { recursive: true, force: true })
 await fs.rm(outputStaticDir, { recursive: true, force: true })
 await fs.rm(outputStartStaticDir, { recursive: true, force: true })
 await fs.rm(outputStartMigrationsDir, { recursive: true, force: true })
+await fs.rm(outputScriptsMigrationsDir, { recursive: true, force: true })
 
 for (const packageName of runtimeExternalPackages) {
   await copyPackage(packageName)
 }
 
-await fs.mkdir(outputStartMigrationsDir, { recursive: true })
-await fs.copyFile(
-  path.join(
-    sourceNodeModules,
-    'postgres-migrations',
-    'dist',
-    'migrations',
-    '0_create-migrations-table.sql'
-  ),
-  path.join(outputStartMigrationsDir, '0_create-migrations-table.sql')
+// postgres-migrations reads 0_create-migrations-table.sql from
+// __dirname/migrations next to each bundled entry.
+const bootstrapSql = path.join(
+  sourceNodeModules,
+  'postgres-migrations',
+  'dist',
+  'migrations',
+  '0_create-migrations-table.sql'
 )
+for (const destDir of [outputStartMigrationsDir, outputScriptsMigrationsDir]) {
+  await fs.mkdir(destDir, { recursive: true })
+  await fs.copyFile(bootstrapSql, path.join(destDir, '0_create-migrations-table.sql'))
+}
 
 const swaggerUiStaticDir = path.join(sourceNodeModules, '@fastify', 'swagger-ui', 'static')
 await fs.cp(swaggerUiStaticDir, outputStaticDir, { recursive: true, force: true })

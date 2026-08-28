@@ -1,15 +1,18 @@
 # syntax=docker/dockerfile:1.7
-ARG BASE_IMAGE=gcr.io/distroless/base-debian13:nonroot
+# USER unset (root), matching docker.io. /root mode comes from the
+# digest-pinned upstream probe. CLI one-shots use `--entrypoint sh -c`.
+ARG BASE_IMAGE=gcr.io/distroless/base-debian13
 
-# Dynamic busybox: CLI one-shots use `--entrypoint sh -c` with `cat` heredocs
-# then `exec edge-runtime` (the portable wrapper needs dirname + uname).
-# Distroless has none of these. Same binary as postgres/pooler/analytics
-# (~1% size).
 FROM debian:trixie-slim AS tools
+ARG VOLUME_MODE
+RUN test -n "$VOLUME_MODE"
 RUN apt-get update -y && apt-get install -y --no-install-recommends busybox \
-  && mkdir -p /out/usr/bin \
+  && mkdir -p /out/usr/bin /out/usr/local/bin \
   && cp /usr/bin/busybox /out/usr/bin/busybox \
-  && for applet in sh cat dirname uname; do ln -sf busybox "/out/usr/bin/${applet}"; done
+  && for applet in sh cat dirname uname chmod stat; do ln -sf busybox "/out/usr/bin/${applet}"; done \
+  && printf 'set -e\nchmod %s /root\n' "$VOLUME_MODE" \
+    > /out/usr/local/bin/fix-root-mode \
+  && chmod 0755 /out/usr/local/bin/fix-root-mode
 
 FROM ${BASE_IMAGE}
 ARG ARTIFACT_ROOT
@@ -18,9 +21,8 @@ ENV ORT_DYLIB_PATH=/lib/libonnxruntime.so
 COPY ${ARTIFACT_ROOT}/bin/ /usr/bin/
 COPY ${ARTIFACT_ROOT}/lib/ /lib/
 COPY --from=tools /out/ /
-# Distroless ships /root 0700; COPY onto it keeps that mode. uid 65532 must
-# traverse /root for host-mirrored binds and /root/eszips.
-USER 0
-RUN ["/usr/bin/busybox", "chmod", "0755", "/root"]
-USER nonroot
+# Distroless already ships /root; COPY cannot replace its mode. No USER
+# instruction — Config.User stays empty like the pin. Invoke busybox
+# plus linked applets: distroless has no coreutils on PATH.
+RUN ["/usr/bin/busybox", "sh", "/usr/local/bin/fix-root-mode"]
 ENTRYPOINT ["/bin/.edge-runtime-wrapped"]
