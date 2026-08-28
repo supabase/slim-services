@@ -375,15 +375,16 @@ cli_wal="$(docker exec -e PGPASSWORD=postgres "$cli_container" \
   || fail "CLI-shaped start did not run /docker-entrypoint-initdb.d"
 
 # CLI `cat >` leaves migrate.sh non-executable; entry.sh sources that path.
-log "CLI --from-backup overwrite: initdb.d/migrate.sh must skip bundle migrate.sh"
+# Real dumps need bundle roles/extensions first, then the restore.
+log "CLI --from-backup: bundle migrate then initdb.d restore"
 from_backup_vol="postgres-from-backup-$RUN_ID"
 create_volume "$from_backup_vol"
 from_backup_container="postgres-from-backup-$RUN_ID"
 from_backup_migrate="$(cat <<'EOF'
 #!/bin/sh
 set -eu
-if [ "$(psql -h /tmp -p 5432 -U supabase_admin -d postgres -v ON_ERROR_STOP=1 -qAt -c "SELECT 1 FROM pg_roles WHERE rolname = 'anon'")" = 1 ]; then
-  echo "bundle migrate.sh already created role anon" >&2
+if [ "$(psql -h /tmp -p 5432 -U supabase_admin -d postgres -v ON_ERROR_STOP=1 -qAt -c "SELECT 1 FROM pg_roles WHERE rolname = 'anon'")" != 1 ]; then
+  echo "bundle migrate.sh must create role anon before restore" >&2
   exit 1
 fi
 psql -h /tmp -p 5432 -U supabase_admin -d postgres -v ON_ERROR_STOP=1 -c "CREATE TABLE from_backup_restore(id int primary key); INSERT INTO from_backup_restore VALUES (1);"
@@ -407,8 +408,38 @@ wait_for_postgres 240 "$from_backup_container" supabase_admin \
   || fail "CLI --from-backup overwrite did not run initdb.d/migrate.sh"
 [[ "$(docker exec -e PGPASSWORD=postgres "$from_backup_container" \
   psql -h 127.0.0.1 -U supabase_admin -d postgres -v ON_ERROR_STOP=1 -qAt -c \
-  "SELECT count(*) FROM pg_roles WHERE rolname = 'anon'")" == "0" ]] \
-  || fail "CLI --from-backup overwrite still ran bundle migrate.sh"
+  "SELECT count(*) FROM pg_roles WHERE rolname = 'anon'")" == "1" ]] \
+  || fail "CLI --from-backup overwrite skipped bundle migrate.sh"
+
+log "failed initdb.d script must not start postgres"
+fail_init_vol="postgres-fail-init-$RUN_ID"
+create_volume "$fail_init_vol"
+fail_init_container="postgres-fail-init-$RUN_ID"
+run_container \
+  "$fail_init_container" \
+  --network "$NETWORK" \
+  -e POSTGRES_PASSWORD=postgres \
+  -v "$fail_init_vol:/var/lib/postgresql/data" \
+  --entrypoint /usr/bin/sh \
+  "$image" \
+  -c 'printf "#!/bin/sh\nexit 1\n" > /docker-entrypoint-initdb.d/migrate.sh && exec docker-entrypoint.sh postgres -D /etc/postgresql'
+if wait_for_postgres 240 "$fail_init_container" supabase_admin; then
+  fail "failed initdb.d script still started postgres"
+fi
+[[ "$(docker inspect -f '{{.State.Running}}' "$fail_init_container")" != "true" ]] \
+  || fail "failed initdb.d script still running after timeout"
+[[ "$(docker inspect -f '{{.State.ExitCode}}' "$fail_init_container")" != "0" ]] \
+  || fail "failed initdb.d script left ExitCode 0"
+
+log "default socket is /run/postgresql (psql with no -h)"
+sock_dirs="$(docker exec -e PGPASSWORD=postgres "$container" \
+  psql -h 127.0.0.1 -U supabase_admin -d postgres -v ON_ERROR_STOP=1 -qAt -c \
+  "SHOW unix_socket_directories")"
+[[ "$sock_dirs" == *"/run/postgresql"* ]] \
+  || fail "unix_socket_directories='$sock_dirs' (expected /run/postgresql)"
+docker exec -e PGPASSWORD=postgres "$container" \
+  psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c "SELECT 1" \
+  >/dev/null || fail "psql with no -h could not use /run/postgresql"
 
 log "docker-entrypoint.sh id must not initdb"
 id_vol="postgres-id-$RUN_ID"

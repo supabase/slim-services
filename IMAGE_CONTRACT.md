@@ -48,13 +48,18 @@ append-only for `runtime.env` — it does not rewrite `COPY --chown`.
   (`postgres -D /etc/postgresql`); any other argv is `exec`'d as-is so
   `db dump` / `db pull` (`bash -c`) do not initdb. First boot runs
   `/docker-entrypoint-initdb.d` (`.sh` / `.sql`) in the temp-server window
-  after bundle initdb. When that directory already has `migrate.sh` (CLI
-  `--from-backup` overwrite), skip the bundle copy so restore replaces
-  image migrations. The shim uses busybox-`su`, not extracted upstream
-  `gosu`. Cluster files stay in `PGDATA`.
+  after bundle initdb. Always run bundle `migrate.sh` first (roles +
+  extensions); then the CLI `--from-backup` restore in `initdb.d`. A real
+  `db dump --local` has no `CREATE ROLE` and assumes `extensions` exists.
+  A non-zero sourced or exec'd `*.sh` stops the temp server and exits 1 —
+  do not start postgres. The shim uses busybox-`su`, not extracted
+  upstream `gosu`. Cluster files stay in `PGDATA`.
   `/etc/postgresql/postgresql.conf` sets `data_directory` /
   `hba_file` / `ident_file` at `PGDATA`, includes the bundle recipe (not
-  leftover initdb conf), and stays root-writable for CLI `>>` / `>` writes.
+  leftover initdb conf), overrides `unix_socket_directories` to
+  `/run/postgresql,/tmp` (native `local-dev.conf` stays `/tmp` only), and
+  stays root-writable for CLI `>>` / `>` writes. Create `/run/postgresql`
+  at start (`/run` is often tmpfs) and chown it to the drop-to uid.
 - **storage** and **edge-runtime** stay root. Seed `/mnt` and `/root` from
   the probe. Ship `wget` (storage) and `sh` (edge-runtime) unconditionally
   because the CLI always uses them. Storage ships `dist/scripts/migrate-call.js`
@@ -75,7 +80,9 @@ closed on pull miss. They assert identity (USER + mount owner/mode),
 leftover volumes in both directions, and a CLI-shaped start for postgres
 (`docker-entrypoint.sh postgres -D /etc/postgresql`, plus an `initdb.d`
 marker, a `--from-backup` overwrite of `initdb.d/migrate.sh` that must
-skip the bundle copy, and a foreign-argv `id` that must not initdb).
+run after bundle migrate, a failed init script that must not start
+postgres, default-socket `psql` with no `-h`, and a foreign-argv `id`
+that must not initdb).
 Storage leftover also checks that the imgproxy pin's `Config.User` can
 read objects on `/mnt`. Edge leftover write/read of `/root` runs inside
 the pin (`run_in_pin` with the named volume mounted). Static busybox is

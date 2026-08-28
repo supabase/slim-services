@@ -10,6 +10,13 @@ set -eu
 
 DROP_TO_NAME="${DROP_TO_NAME:-root}"
 
+# /run is often tmpfs; create the docker.io socket dir before drop.
+if [ "$(id -u)" = "0" ]; then
+  mkdir -p /run/postgresql
+  chown "${DROP_TO_UID:-0}:${DROP_TO_GID:-0}" /run/postgresql
+  chmod 2775 /run/postgresql
+fi
+
 # Image USER is unset (root), matching docker.io. Postgres refuses euid 0.
 if [ "$(id -u)" = "0" ] && [ "$DROP_TO_NAME" != "root" ]; then
   exec /usr/bin/busybox su -s /usr/bin/sh "$DROP_TO_NAME" -c \
@@ -52,8 +59,8 @@ if [ ! -s "$PGDATA/PG_VERSION" ]; then
   } >> "$PGDATA/postgresql.conf"
 fi
 
-# Official: migrate.sh lives in initdb.d. CLI --from-backup overwrites
-# that path; skip the bundle copy so restore replaces image migrations.
+# CLI --from-backup writes initdb.d/migrate.sh. A real dump has no
+# CREATE ROLE and assumes extensions exist — run bundle migrate first.
 initdb_d_has_files=0
 for f in /docker-entrypoint-initdb.d/*; do
   if [ -f "$f" ]; then
@@ -62,13 +69,18 @@ for f in /docker-entrypoint-initdb.d/*; do
   fi
 done
 
+fail_first_boot() {
+  cat "$PGDATA/migrate.log" >&2
+  "$BUNDLE/bin/pg_ctl" -D "$PGDATA" -m fast -w stop || true
+  exit 1
+}
+
 if [ "$first_boot" = 1 ] && { [ -f "$BUNDLE/share/supabase-cli/migrations/migrate.sh" ] || [ "$initdb_d_has_files" = 1 ]; }; then
   echo "Running supabase migrations"
   "$BUNDLE/bin/pg_ctl" -D "$PGDATA" -l "$PGDATA/migrate.log" \
     -o "-c listen_addresses='' -c port=5432" -w start \
     || { cat "$PGDATA/migrate.log" >&2; exit 1; }
-  if [ ! -f /docker-entrypoint-initdb.d/migrate.sh ] \
-      && [ -f "$BUNDLE/share/supabase-cli/migrations/migrate.sh" ]; then
+  if [ -f "$BUNDLE/share/supabase-cli/migrations/migrate.sh" ]; then
     if ! ( cd "$BUNDLE/share/supabase-cli/migrations" \
         && PATH="$BUNDLE/bin:$PATH" \
           POSTGRES_HOST=/tmp \
@@ -76,9 +88,7 @@ if [ "$first_boot" = 1 ] && { [ -f "$BUNDLE/share/supabase-cli/migrations/migrat
           POSTGRES_DB="$POSTGRES_DB" \
           POSTGRES_PASSWORD="$POSTGRES_PASSWORD" \
           sh ./migrate.sh ); then
-      cat "$PGDATA/migrate.log" >&2
-      "$BUNDLE/bin/pg_ctl" -D "$PGDATA" -m fast -w stop || true
-      exit 1
+      fail_first_boot
     fi
   fi
   if [ "$initdb_d_has_files" = 1 ]; then
@@ -90,6 +100,7 @@ if [ "$first_boot" = 1 ] && { [ -f "$BUNDLE/share/supabase-cli/migrations/migrat
       [ -f "$f" ] || continue
       case "$f" in
         *.sh)
+          set +e
           if [ -x "$f" ]; then
             echo "running $f"
             "$f"
@@ -98,11 +109,15 @@ if [ "$first_boot" = 1 ] && { [ -f "$BUNDLE/share/supabase-cli/migrations/migrat
             # shellcheck disable=SC1090
             . "$f"
           fi
+          init_rc=$?
+          set -e
+          [ "$init_rc" -eq 0 ] || fail_first_boot
           ;;
         *.sql)
           echo "running $f"
           "$BUNDLE/bin/psql" -h /tmp -p 5432 -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
-            -v ON_ERROR_STOP=1 --no-password --no-psqlrc -f "$f"
+            -v ON_ERROR_STOP=1 --no-password --no-psqlrc -f "$f" \
+            || fail_first_boot
           ;;
         *)
           echo "ignoring $f"

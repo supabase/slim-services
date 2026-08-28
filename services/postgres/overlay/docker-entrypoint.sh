@@ -6,6 +6,13 @@ set -eu
 
 DROP_TO_NAME="${DROP_TO_NAME:-root}"
 
+# /run is often tmpfs; create the docker.io socket dir before drop.
+if [ "$(id -u)" = "0" ]; then
+  mkdir -p /run/postgresql
+  chown "${DROP_TO_UID:-0}:${DROP_TO_GID:-0}" /run/postgresql
+  chmod 2775 /run/postgresql
+fi
+
 if [ -z "${1:-}" ] || [ "${1#-}" != "$1" ]; then
   set -- postgres -D /etc/postgresql "$@"
 fi
