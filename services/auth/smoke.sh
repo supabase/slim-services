@@ -33,8 +33,31 @@ harness_psql auth_smoke -c 'CREATE SCHEMA IF NOT EXISTS auth' >/dev/null
 if [[ -n "$image" ]]; then
   ensure_image "$image"
 
-  log "checking auth executable"
-  docker run --rm --entrypoint /usr/local/bin/auth "$image" version >/dev/null
+  auth_ep="$(docker inspect -f '{{json .Config.Entrypoint}}' "$image")"
+  [[ "$auth_ep" == "null" || "$auth_ep" == "[]" ]] \
+    || fail "auth ENTRYPOINT is $auth_ep (expected empty)"
+  auth_cmd="$(docker inspect -f '{{json .Config.Cmd}}' "$image")"
+  [[ "$auth_cmd" == '["gotrue"]' ]] \
+    || fail "auth CMD is $auth_cmd (expected [gotrue])"
+
+  log "checking gotrue executable"
+  docker run --rm "$image" gotrue version >/dev/null \
+    || fail "gotrue version failed (empty ENTRYPOINT + gotrue symlink)"
+
+  log "CLI one-shot: gotrue migrate"
+  if ! docker run --rm --network "$NETWORK" \
+    -e GOTRUE_SITE_URL=http://localhost:9999 \
+    -e API_EXTERNAL_URL=http://localhost:9999 \
+    -e GOTRUE_API_HOST=0.0.0.0 \
+    -e GOTRUE_DB_DRIVER=postgres \
+    -e GOTRUE_DB_DATABASE_URL="postgres://postgres:postgres@$POSTGRES_CONTAINER:5432/auth_smoke?sslmode=disable" \
+    -e GOTRUE_JWT_SECRET="$jwt_secret" \
+    -e GOTRUE_JWT_AUD=authenticated \
+    -e GOTRUE_LOG_LEVEL=warn \
+    "$image" \
+    gotrue migrate; then
+    fail "gotrue migrate one-shot failed"
+  fi
 
   container="auth-smoke-$RUN_ID"
   # No -e PORT: the image bakes ENV PORT=9999 (gotrue's built-in default is

@@ -144,6 +144,15 @@ grep -q '/node/bin/node","dist/start/server.js' "$ROOT_DIR/services/storage/reci
 if grep -q 'ENTRYPOINT \["/node/bin/node"\]' "$ROOT_DIR/services/storage/Dockerfile.slim"; then
   fail_test "storage Dockerfile must not set a node ENTRYPOINT"
 fi
+grep -Fq "ENTRYPOINT_JSON='[]'" "$ROOT_DIR/services/auth/recipe.env" \
+  || fail_test "auth recipe must have an empty ENTRYPOINT"
+grep -Fq "CMD_JSON='[\"gotrue\"]'" "$ROOT_DIR/services/auth/recipe.env" \
+  || fail_test "auth CMD must be gotrue"
+if grep -q 'ENTRYPOINT \["/usr/local/bin/auth"\]' "$ROOT_DIR/services/auth/Dockerfile.slim"; then
+  fail_test "auth Dockerfile must not set an auth ENTRYPOINT"
+fi
+grep -q 'gotrue migrate' "$ROOT_DIR/services/auth/smoke.sh" \
+  || fail_test "auth smoke must run gotrue migrate"
 grep -q 'cannot build' "$ROOT_DIR/scripts/build-image-from-artifact.sh" \
   || fail_test "image build must refuse SKIP_UPSTREAM_IDENTITY"
 pass "contract docs; SKIP cannot invent identity"
