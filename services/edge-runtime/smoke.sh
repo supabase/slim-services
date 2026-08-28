@@ -12,6 +12,9 @@ cleanup_edge_smoke() {
     wait "$edge_runtime_pid" >/dev/null 2>&1 || true
   fi
   rm -f "${edge_runtime_log:-}"
+  if [[ -n "${probe_dir:-}" ]]; then
+    rm -rf "$probe_dir"
+  fi
   cleanup_smoke
 }
 trap cleanup_edge_smoke EXIT
@@ -76,6 +79,39 @@ if [[ -n "$image" ]]; then
 
   # ${arr[@]+...} keeps the empty-array expansion safe under `set -u` on
   # bash 3.2 (macOS /bin/bash), where a plain "${arr[@]}" errors.
+  log "checking image layout for uid 65532"
+  image_user="$(docker inspect -f '{{.Config.User}}' "$image")"
+  [[ "$image_user" == "nonroot" ]] || fail "expected image USER nonroot; got: $image_user"
+  layout="$(docker run --rm ${docker_platform_args[@]+"${docker_platform_args[@]}"} \
+    --user 65532 --entrypoint sh "$image" -c \
+    'busybox stat -c "%a %u" /root; busybox stat -c "%a %u" /home/nonroot; busybox stat -c "%a" /tmp; busybox test -x /usr/bin/sh && busybox test -x /usr/bin/cat && busybox test -x /usr/bin/dirname && busybox test -x /usr/bin/uname && echo ok')" \
+    || fail "layout probe failed"
+  [[ "$layout" == $'755 0\n700 65532\n1777\nok' ]] \
+    || fail "expected /root 755:0, /home/nonroot 700:65532, /tmp 1777, sh+cat+dirname+uname; got: $layout"
+
+  log "checking /root traversal as uid 65532"
+  probe_dir="$(mktemp -d "${TMPDIR:-/tmp}/edge-runtime-root-probe.XXXXXX")"
+  printf 'probe\n' > "$probe_dir/file"
+  chmod 0644 "$probe_dir/file"
+  probe_body="$(docker run --rm ${docker_platform_args[@]+"${docker_platform_args[@]}"} \
+    --user 65532 \
+    -v "$probe_dir/file:/root/probe/file:ro" \
+    --entrypoint sh \
+    "$image" -c 'cat /root/probe/file')" \
+    || fail "uid 65532 could not traverse /root/probe/file"
+  [[ "$probe_body" == "probe" ]] || fail "uid 65532 read /root/probe/file as: $probe_body"
+
+  log "checking CLI-shaped sh -c heredoc as uid 65532"
+  # Same shape as CLI `legacyBuildEdgeRuntimeEntrypoint`:
+  # `cat <<'SENTINEL' > file && exec edge-runtime …`.
+  heredoc_body="$(docker run --rm ${docker_platform_args[@]+"${docker_platform_args[@]}"} \
+    --user 65532 --entrypoint sh "$image" -c \
+    "cat <<'S' > /tmp/p && exec edge-runtime --help
+hello
+S
+")" || fail "sh -c heredoc+exec edge-runtime failed"
+  [[ "$heredoc_body" == *"Usage:"* ]] || fail "heredoc+exec edge-runtime --help: $heredoc_body"
+
   log "smoke testing edge-runtime image: --help"
   docker run --rm ${docker_platform_args[@]+"${docker_platform_args[@]}"} "$image" --help >/dev/null
 
