@@ -8,6 +8,20 @@
 # and starts the server.
 set -eu
 
+DROP_TO_NAME="${DROP_TO_NAME:-root}"
+
+# Image USER is unset (root), matching docker.io. Postgres refuses euid 0.
+if [ "$(id -u)" = "0" ] && [ "$DROP_TO_NAME" != "root" ]; then
+  exec /usr/bin/busybox su -s /usr/bin/sh "$DROP_TO_NAME" -c \
+    'exec /usr/bin/sh /usr/local/bin/entry.sh "$@"' -- "$@"
+fi
+
+prepare_only=0
+if [ "${1:-}" = "--prepare" ]; then
+  prepare_only=1
+  shift
+fi
+
 BUNDLE=/opt/postgres
 export PGDATA="${PGDATA:-/var/lib/postgresql/data}"
 export POSTGRES_USER="${POSTGRES_USER:-supabase_admin}"
@@ -57,5 +71,12 @@ if [ "$first_boot" = 1 ] && [ -f "$BUNDLE/share/supabase-cli/migrations/migrate.
   "$BUNDLE/bin/pg_ctl" -D "$PGDATA" -m fast -w stop
 fi
 
+if [ "$prepare_only" = 1 ]; then
+  exit 0
+fi
+
 echo "Starting PostgreSQL"
-exec "$BUNDLE/bin/postgres" -D "$PGDATA" "$@"
+# ConfigDir is /etc/postgresql (CLI `postgres -D /etc/postgresql`). Cluster
+# files stay in PGDATA. Do not -D leftover PGDATA: that file is initdb
+# defaults on a docker.io volume.
+exec "$BUNDLE/bin/postgres" -D /etc/postgresql "$@"

@@ -1,41 +1,29 @@
 # syntax=docker/dockerfile:1.7
-# Derived image: distroless base + the portable artifact's app/ tree and its
-# bundled Node runtime (bin/storage host wrapper is unused in Docker — the
-# entrypoint execs the bundled node directly).
-ARG BASE_IMAGE=gcr.io/distroless/base-debian13:nonroot
+# Derived image: distroless root base + the portable artifact's app/ tree
+# and bundled Node runtime. USER unset (root), matching docker.io.
+# /mnt owner/mode come from the digest-pinned upstream probe.
+ARG BASE_IMAGE=gcr.io/distroless/base-debian13
 
-# Static busybox for the one RUN below; bind-mounted at build time only,
-# never shipped in the image.
 FROM debian:trixie-slim AS tools
-RUN apt-get update -y && apt-get install -y --no-install-recommends busybox-static \
-  && mkdir -p /out && cp /bin/busybox /out/busybox
+ARG DROP_TO_UID
+ARG DROP_TO_GID
+ARG VOLUME_MODE
+RUN test -n "$DROP_TO_UID" && test -n "$DROP_TO_GID" && test -n "$VOLUME_MODE"
+RUN apt-get update -y && apt-get install -y --no-install-recommends busybox \
+  && mkdir -p /out/usr/bin /out/usr/local/bin \
+  && cp /usr/bin/busybox /out/usr/bin/busybox \
+  && for applet in sh wget; do ln -sf busybox "/out/usr/bin/${applet}"; done \
+  && printf '#!/usr/bin/busybox sh\nmkdir -p /mnt\nchown %s:%s /mnt\nchmod %s /mnt\n' \
+    "$DROP_TO_UID" "$DROP_TO_GID" "$VOLUME_MODE" \
+    > /out/usr/local/bin/fix-mnt-mode \
+  && chmod 0755 /out/usr/local/bin/fix-mnt-mode
 
 FROM ${BASE_IMAGE}
 ARG ARTIFACT_ROOT
+COPY --from=tools /out/ /
+RUN ["/usr/local/bin/fix-mnt-mode"]
 WORKDIR /app
 ENV NODE_ENV=production
-# The distroless base ships /home/nonroot as 0700. Local stacks mount the
-# file-backend named volume there (the only writable home for uid 65532), and
-# docker seeds a fresh volume's root from the image path, so sidecars running
-# as another uid (imgproxy runs as 999) cannot traverse into the volume.
-# Re-mode the home to 0711: contents stay private by default, but other uids
-# can traverse to the world-readable objects the API writes below it.
-# A RUN chmod diff layer is the only reliable way to do this: COPY onto a
-# directory that already exists in the base — with or without --link — merges
-# contents but keeps the existing directory's metadata (the image smoke caught
-# /home/nonroot still 0700 both ways). The stage runs as nonroot, which owns
-# the directory, so no root round-trip is needed.
-RUN --mount=from=tools,source=/out,target=/tools ["/tools/busybox", "chmod", "0711", "/home/nonroot"]
-# docker.io stacks mount the file-backend volume at /mnt; ship the same
-# mountpoint owned by 65532 so a fresh named volume seeds writable for the
-# API (0755: sidecars on other uids traverse it, same reasoning as the 0711
-# home above). mkdir -p also covers a base that one day ships /mnt root-owned
-# — the chown/chmod still land. Needs root: the nonroot default user cannot
-# create directories under /.
-USER 0
-RUN --mount=from=tools,source=/out,target=/tools \
-  ["/tools/busybox", "sh", "-c", "mkdir -p /mnt && chown 65532:65532 /mnt && chmod 0755 /mnt"]
-USER nonroot
 COPY ${ARTIFACT_ROOT}/app/ /app/
 COPY ${ARTIFACT_ROOT}/node/ /node/
 EXPOSE 5000

@@ -184,6 +184,51 @@ load_recipe() {
   source "$recipe"
 }
 
+# Index digest of an immutable version tag. Used when release CI sets
+# VERSION to something other than the recipe SOURCE_REF pin.
+resolve_image_index_digest() {
+  local image="$1"
+  local digest
+  require_cmd docker
+  require_cmd python3
+  digest="$(
+    docker buildx imagetools inspect "$image" --format '{{json .Manifest}}' \
+      | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("digest") or "")'
+  )"
+  case "$digest" in
+    sha256:*) printf '%s' "$digest" ;;
+    *) fail "could not resolve index digest for $image" ;;
+  esac
+}
+
+# Digest-pinned upstream ref. Keep the recipe tag so a release that
+# overrides VERSION/SOURCE_REF cannot silently reuse another tag's digest
+# (`docker pull tag@wrong-digest` fails closed). When VERSION is a
+# different tag than SOURCE_REF, resolve that tag's own index digest.
+pinned_upstream_ref() {
+  local image tag digest
+  [[ -n "${SOURCE_IMAGE_DIGEST:-}" ]] || fail "SOURCE_IMAGE_DIGEST is required (refusing a floating tag)"
+  case "$SOURCE_IMAGE_DIGEST" in
+    sha256:*) ;;
+    *) fail "SOURCE_IMAGE_DIGEST must be sha256:<hex>, got: $SOURCE_IMAGE_DIGEST" ;;
+  esac
+  [[ -n "${UPSTREAM_IMAGE:-}" ]] || fail "UPSTREAM_IMAGE is required"
+  image="${UPSTREAM_IMAGE%%@*}"
+  tag="${image##*:}"
+  digest="$SOURCE_IMAGE_DIGEST"
+  if [[ -n "${SOURCE_REF:-}" && "$tag" != "$SOURCE_REF" ]]; then
+    digest="$(resolve_image_index_digest "$image")"
+  fi
+  printf '%s@%s' "$image" "$digest"
+}
+
+identity_service() {
+  case "$1" in
+    postgres|storage|edge-runtime) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 host_arch() {
   case "$(uname -m)" in
     arm64|aarch64) printf 'arm64' ;;

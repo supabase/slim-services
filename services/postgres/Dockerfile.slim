@@ -1,49 +1,88 @@
 # syntax=docker/dockerfile:1.7
-# Derived image: distroless base + the portable postgres artifact + entry
-# wiring (HOST_NATIVE_PLAN.md, native-first — no exceptions). The artifact
-# bundles every non-glibc library with $ORIGIN rpaths, so the glibc-only
-# base is enough. Runs unprivileged (uid 65532) — no gosu/root phase.
+# Derived image: distroless root base + portable postgres artifact.
+# USER is unset (root), matching docker.io. entry.sh / docker-entrypoint.sh
+# drop to the probed uid before postgres execs.
 #
-# The artifact ships the full PG17 extension set (installed, not enabled:
-# only the minimal shared_preload_libraries set is on by default, so the
-# low-footprint profile is unaffected).
-ARG BASE_IMAGE=gcr.io/distroless/base-debian13:nonroot
+# DROP_TO_* / VOLUME_MODE are generated from the digest-pinned upstream
+# image (scripts/introspect-upstream-identity.sh). Do not hardcode them.
+ARG BASE_IMAGE=gcr.io/distroless/base-debian13
 
 FROM debian:trixie-slim AS tools
+ARG DROP_TO_UID
+ARG DROP_TO_GID
+ARG DROP_TO_NAME
+ARG VOLUME_MODE
+RUN test -n "$DROP_TO_UID" && test -n "$DROP_TO_GID" && test -n "$DROP_TO_NAME" && test -n "$VOLUME_MODE"
 RUN apt-get update -y && apt-get install -y --no-install-recommends busybox bash ca-certificates locales \
   # The shared recipe pins lc_* = en_US.UTF-8 (docker.io parity). The bundle's
   # binaries run against the SYSTEM glibc (nix glibc's LOCALE_ARCHIVE patch
   # does not apply), so generate the locale with THIS Debian release's own
   # localedef — same glibc as the distroless base — at the system path.
   && localedef -i en_US -f UTF-8 en_US.UTF-8 \
-  && mkdir -p /out/usr/bin /out/usr/lib /out/etc/ssl/certs /out/usr/lib/locale /pgdata-skel/data \
+  && mkdir -p /out/usr/bin /out/usr/lib /out/usr/local/bin /out/etc/ssl/certs /out/usr/lib/locale \
+    /out/etc/postgresql /out/etc/postgresql-custom /out/docker-entrypoint-initdb.d \
+    /pgdata-skel/data \
   && cp /usr/lib/locale/locale-archive /out/usr/lib/locale/locale-archive \
   && cp /usr/bin/busybox /out/usr/bin/busybox \
-  && for applet in sh basename cat chmod cp cut date dirname env grep gunzip head id mkdir od readlink rm sed sleep tr uname uniq wc; do \
+  && for applet in sh basename cat chmod cp cut date dirname env grep gunzip head id mkdir od readlink rm sed sleep su tr uname uniq wc; do \
        ln -sf busybox "/out/usr/bin/${applet}"; \
      done \
-  # The bundle's supabase-postgres-init.sh is bash; bring bash + its one
-  # non-glibc library.
   && cp /bin/bash /out/usr/bin/bash \
   && cp -L "$(ldd /bin/bash | awk '/libtinfo/ { print $3 }')" /out/usr/lib/ \
   && cp /etc/ssl/certs/ca-certificates.crt /out/etc/ssl/certs/ca-certificates.crt \
-  && chmod 0700 /pgdata-skel/data
+  && { \
+       printf "data_directory = '/var/lib/postgresql/data'\n"; \
+       printf "hba_file = '/var/lib/postgresql/data/pg_hba.conf'\n"; \
+       printf "ident_file = '/var/lib/postgresql/data/pg_ident.conf'\n"; \
+       printf "include '/opt/postgres/share/supabase-cli/config/postgresql.conf.template'\n"; \
+       printf "listen_addresses = '*'\n"; \
+       printf "port = 5432\n"; \
+     } > /out/etc/postgresql/postgresql.conf \
+  && { \
+       printf 'root:x:0:0:root:/root:/sbin/nologin\n'; \
+       if [ "$DROP_TO_UID" != "0" ]; then \
+         printf '%s:x:%s:%s::/var/lib/postgresql:/usr/bin/sh\n' \
+           "$DROP_TO_NAME" "$DROP_TO_UID" "$DROP_TO_GID"; \
+       fi; \
+     } > /out/etc/passwd \
+  && { \
+       printf 'root:x:0:\n'; \
+       if [ "$DROP_TO_GID" != "0" ]; then \
+         printf '%s:x:%s:\n' "$DROP_TO_NAME" "$DROP_TO_GID"; \
+       fi; \
+     } > /out/etc/group \
+  && chown "$DROP_TO_UID:$DROP_TO_GID" /pgdata-skel/data /out/etc/postgresql /out/etc/postgresql/postgresql.conf \
+  && chmod "$VOLUME_MODE" /pgdata-skel/data \
+  && chmod 0755 /out/etc/postgresql /out/etc/postgresql-custom /out/docker-entrypoint-initdb.d \
+  && printf '#!/usr/bin/busybox sh\nmkdir -p /var/lib/postgresql/data /etc/postgresql /etc/postgresql-custom /docker-entrypoint-initdb.d\nchown %s:%s /var/lib/postgresql/data /etc/postgresql /etc/postgresql/postgresql.conf\nchmod %s /var/lib/postgresql/data\nchmod 0755 /etc/postgresql /etc/postgresql-custom /docker-entrypoint-initdb.d\n' \
+    "$DROP_TO_UID" "$DROP_TO_GID" "$VOLUME_MODE" \
+    > /out/usr/local/bin/fix-pg-identity \
+  && chmod 0755 /out/usr/local/bin/fix-pg-identity
 
 FROM ${BASE_IMAGE}
 ARG ARTIFACT_ROOT
+ARG DROP_TO_UID
+ARG DROP_TO_GID
+ARG DROP_TO_NAME
 COPY --from=tools /out/ /
-COPY --from=tools --chown=65532:65532 /pgdata-skel/ /var/lib/postgresql/
-COPY --chown=65532:65532 ${ARTIFACT_ROOT}/ /opt/postgres/
+COPY --from=tools --chown=${DROP_TO_UID}:${DROP_TO_GID} /pgdata-skel/ /var/lib/postgresql/
+COPY --chown=${DROP_TO_UID}:${DROP_TO_GID} ${ARTIFACT_ROOT}/ /opt/postgres/
 COPY services/postgres/overlay/entry.sh /usr/local/bin/entry.sh
+COPY services/postgres/overlay/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN ["/usr/local/bin/fix-pg-identity"]
 # LANG/LC_ALL mirror Dockerfile-supabase so initdb's libc locale fields match
 # the docker.io image; the locale itself resolves via the system archive the
 # tools stage generated (see stage-shared-config.sh for the native fallback).
 ENV PGDATA=/var/lib/postgresql/data \
     POSTGRES_USER=supabase_admin \
     POSTGRES_DB=postgres \
+    DROP_TO_UID=${DROP_TO_UID} \
+    DROP_TO_GID=${DROP_TO_GID} \
+    DROP_TO_NAME=${DROP_TO_NAME} \
     LANG=en_US.UTF-8 \
     LANGUAGE=en_US:en \
     LC_ALL=en_US.UTF-8 \
     PATH=/opt/postgres/bin:/usr/local/bin:/usr/bin:/bin
 EXPOSE 5432
+# USER unset: Config.User stays empty like docker.io.
 ENTRYPOINT ["/usr/bin/sh", "/usr/local/bin/entry.sh"]

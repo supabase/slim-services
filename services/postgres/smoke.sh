@@ -136,6 +136,19 @@ fi
 require_cmd docker
 ensure_image "$image"
 
+# shellcheck source=scripts/identity-lib.sh
+source "$ROOT_DIR/scripts/identity-lib.sh"
+load_recipe postgres
+identity_dir="$(mktemp -d "${TMPDIR:-/tmp}/postgres-identity.XXXXXX")"
+if [[ "${SKIP_UPSTREAM_IDENTITY:-}" == "1" ]]; then
+  fail "postgres image smoke requires the digest-pinned upstream identity (unset SKIP_UPSTREAM_IDENTITY)"
+fi
+write_upstream_identity postgres "$identity_dir"
+assert_slim_matches_identity "$image" "$identity_dir/identity.env"
+# shellcheck source=/dev/null
+source "$identity_dir/identity.env"
+pinned_image="$PINNED_IMAGE"
+
 container="postgres-smoke-$RUN_ID"
 ensure_network
 run_container \
@@ -181,50 +194,9 @@ psql_admin() {
 # encodings/locales, and the host pg_hba rules — must match the upstream
 # image exactly.
 # ---------------------------------------------------------------------------
-# Candidate upstream images, tried in order: an explicit override wins;
-# otherwise the public ECR mirror first (bigger anonymous pull budget) with
-# Docker Hub as fallback — the mirror throttles anonymous pulls when a
-# fleet-wide rebuild smokes many versions at once. Docker Hub defines
-# release eligibility (recipe.env), so the tag always exists upstream.
-parity_candidates=""
-if [[ -n "${PARITY_UPSTREAM_IMAGE:-}" ]]; then
-  parity_candidates="$PARITY_UPSTREAM_IMAGE"
-elif [[ -n "${VERSION:-}" && "$VERSION" != "dev" ]]; then
-  parity_candidates="public.ecr.aws/supabase/postgres:$VERSION docker.io/supabase/postgres:$VERSION"
-fi
-
-if [[ -z "$parity_candidates" ]]; then
-  log "SKIPPING docker.io differential parity: no released VERSION (set PARITY_UPSTREAM_IMAGE to compare against a specific upstream image)"
-else
-  parity_image=""
-  for parity_candidate in $parity_candidates; do
-    if docker image inspect "$parity_candidate" >/dev/null 2>&1; then
-      parity_image="$parity_candidate"
-      break
-    fi
-    for parity_attempt in 1 2 3; do
-      parity_pulled=0
-      if [[ -n "${PLATFORM:-}" ]]; then
-        docker pull --platform "$PLATFORM" -q "$parity_candidate" >/dev/null 2>&1 && parity_pulled=1
-      else
-        docker pull -q "$parity_candidate" >/dev/null 2>&1 && parity_pulled=1
-      fi
-      if [[ "$parity_pulled" == "1" ]]; then
-        parity_image="$parity_candidate"
-        break
-      fi
-      log "pull failed for $parity_candidate (attempt $parity_attempt/3)"
-      # Registry throttling backs off within a rebuild storm; a guard, not a
-      # correctness wait.
-      if [[ "$parity_attempt" -lt 3 ]]; then
-        sleep $((parity_attempt * 20))
-      fi
-    done
-    [[ -n "$parity_image" ]] && break
-  done
-  [[ -n "$parity_image" ]] \
-    || fail "could not pull an upstream parity image (tried: $parity_candidates)"
-  log "docker.io differential parity against $parity_image"
+# Same digest the image was generated from. No tag override, no ECR-first.
+parity_image="$pinned_image"
+log "docker.io differential parity against $parity_image"
 
   parity_container="postgres-parity-$RUN_ID"
   run_container \
@@ -296,7 +268,102 @@ else
   docker rm -f "$parity_container" >/dev/null
   rm -rf "$parity_dir"
   log "docker.io differential parity passed"
-fi
+
+log "leftover volume: docker.io -> slim"
+vol_up="postgres-leftover-up-$RUN_ID"
+create_volume "$vol_up"
+leftover_up="postgres-leftover-up-$RUN_ID"
+run_container \
+  "$leftover_up" \
+  --network "$NETWORK" \
+  -e POSTGRES_PASSWORD=postgres \
+  -v "$vol_up:/var/lib/postgresql/data" \
+  "$parity_image"
+wait_for_postgres 240 "$leftover_up" supabase_admin \
+  || fail "upstream leftover postgres did not become ready"
+sleep 5
+wait_for_postgres 60 "$leftover_up" supabase_admin \
+  || fail "upstream leftover postgres not ready after migrations"
+docker exec -e PGPASSWORD=postgres "$leftover_up" \
+  psql -h 127.0.0.1 -U supabase_admin -d postgres -v ON_ERROR_STOP=1 -c \
+  "CREATE TABLE leftover_marker(id int primary key); INSERT INTO leftover_marker VALUES (1)" \
+  >/dev/null
+docker rm -f "$leftover_up" >/dev/null
+leftover_slim="postgres-leftover-slim-$RUN_ID"
+run_container \
+  "$leftover_slim" \
+  --network "$NETWORK" \
+  -e POSTGRES_PASSWORD=postgres \
+  -v "$vol_up:/var/lib/postgresql/data" \
+  "$image"
+wait_for_postgres 240 "$leftover_slim" supabase_admin \
+  || fail "slim could not open a docker.io leftover PGDATA"
+[[ "$(docker exec -e PGPASSWORD=postgres "$leftover_slim" \
+  psql -h 127.0.0.1 -U supabase_admin -d postgres -v ON_ERROR_STOP=1 -qAt -c \
+  "SELECT id FROM leftover_marker")" == "1" ]] \
+  || fail "slim did not see leftover_marker from docker.io"
+[[ "$(docker exec -e PGPASSWORD=postgres "$leftover_slim" \
+  psql -h 127.0.0.1 -U supabase_admin -d postgres -v ON_ERROR_STOP=1 -qAt -c \
+  "SHOW listen_addresses")" == "*" ]] \
+  || fail "slim leftover listen_addresses is not * (recipe not loaded)"
+
+log "leftover volume: slim -> docker.io"
+vol_slim="postgres-leftover-slim-$RUN_ID"
+create_volume "$vol_slim"
+leftover_slim2="postgres-leftover-slim2-$RUN_ID"
+run_container \
+  "$leftover_slim2" \
+  --network "$NETWORK" \
+  -e POSTGRES_PASSWORD=postgres \
+  -v "$vol_slim:/var/lib/postgresql/data" \
+  "$image"
+wait_for_postgres 240 "$leftover_slim2" supabase_admin \
+  || fail "slim leftover postgres did not become ready"
+sleep 5
+wait_for_postgres 60 "$leftover_slim2" supabase_admin \
+  || fail "slim leftover postgres not ready after migrations"
+docker exec -e PGPASSWORD=postgres "$leftover_slim2" \
+  psql -h 127.0.0.1 -U supabase_admin -d postgres -v ON_ERROR_STOP=1 -c \
+  "CREATE TABLE leftover_marker(id int primary key); INSERT INTO leftover_marker VALUES (2)" \
+  >/dev/null
+docker rm -f "$leftover_slim2" >/dev/null
+leftover_up2="postgres-leftover-up2-$RUN_ID"
+run_container \
+  "$leftover_up2" \
+  --network "$NETWORK" \
+  -e POSTGRES_PASSWORD=postgres \
+  -v "$vol_slim:/var/lib/postgresql/data" \
+  "$parity_image"
+wait_for_postgres 240 "$leftover_up2" supabase_admin \
+  || fail "docker.io could not open a slim leftover PGDATA"
+[[ "$(docker exec -e PGPASSWORD=postgres "$leftover_up2" \
+  psql -h 127.0.0.1 -U supabase_admin -d postgres -v ON_ERROR_STOP=1 -qAt -c \
+  "SELECT id FROM leftover_marker")" == "2" ]] \
+  || fail "docker.io did not see leftover_marker from slim"
+
+log "CLI-shaped start: docker-entrypoint.sh postgres -D /etc/postgresql"
+cli_vol="postgres-cli-$RUN_ID"
+create_volume "$cli_vol"
+cli_container="postgres-cli-$RUN_ID"
+run_container \
+  "$cli_container" \
+  --network "$NETWORK" \
+  -e POSTGRES_PASSWORD=postgres \
+  -v "$cli_vol:/var/lib/postgresql/data" \
+  --entrypoint /usr/bin/sh \
+  "$image" \
+  -c 'printf "\n# cli-append\n" >> /etc/postgresql/postgresql.conf && exec docker-entrypoint.sh postgres -D /etc/postgresql'
+wait_for_postgres 240 "$cli_container" supabase_admin \
+  || fail "CLI-shaped docker-entrypoint.sh start did not become ready"
+docker exec -e PGPASSWORD=postgres "$cli_container" \
+  psql -h 127.0.0.1 -U supabase_admin -d postgres -v ON_ERROR_STOP=1 -c "SELECT 1" \
+  >/dev/null || fail "CLI-shaped postgres rejected SELECT 1"
+cli_listen="$(docker exec -e PGPASSWORD=postgres "$cli_container" \
+  psql -h 127.0.0.1 -U supabase_admin -d postgres -v ON_ERROR_STOP=1 -qAt -c "SHOW listen_addresses")"
+[[ "$cli_listen" == "*" ]] || fail "CLI-shaped start listen_addresses='$cli_listen' (expected *)"
+cli_wal="$(docker exec -e PGPASSWORD=postgres "$cli_container" \
+  psql -h 127.0.0.1 -U supabase_admin -d postgres -v ON_ERROR_STOP=1 -qAt -c "SHOW wal_level")"
+[[ "$cli_wal" == "logical" ]] || fail "CLI-shaped start wal_level='$cli_wal' (expected logical)"
 
 log "checking local-dev config profile is active"
 [[ "$(psql_admin "SHOW shared_buffers")" == "32MB" ]] || fail "expected shared_buffers=32MB"
