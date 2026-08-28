@@ -64,6 +64,10 @@ require_cmd docker
 ensure_image "$image"
 ensure_network
 
+log "checking sh and node on PATH (CLI healthcheck)"
+docker run --rm --entrypoint /usr/bin/sh "$image" -c 'command -v sh && command -v node && command -v wget' >/dev/null \
+  || fail "studio image is missing sh, node, or wget"
+
 container="studio-smoke-$RUN_ID"
 run_container "$container" --network "$NETWORK" -p 127.0.0.1::3000 "$image"
 port="$(host_port "$container" 3000)"
@@ -72,6 +76,11 @@ log "smoke testing studio on port $port"
 if ! wait_for_http_code "http://127.0.0.1:$port/api/platform/profile" "200" 180 "" "$container"; then
   container_logs "$container"
   fail "studio /api/platform/profile did not return 200"
+fi
+log "CLI health-cmd: node --eval fetch /api/platform/profile"
+if ! docker exec "$container" node --eval="fetch('http://127.0.0.1:3000/api/platform/profile').then((r) => {if (!r.ok) throw new Error(r.status)})"; then
+  container_logs "$container"
+  fail "studio node --eval health-cmd failed"
 fi
 log "waiting for the baked HEALTHCHECK to report healthy"
 if ! wait_for_container_healthy "$container" 120; then

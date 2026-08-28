@@ -84,6 +84,10 @@ fi
 
 ensure_image "$image"
 
+log "checking wget is on PATH (CLI healthcheck)"
+docker run --rm --entrypoint /usr/bin/wget "$image" --help >/dev/null \
+  || fail "analytics image is missing wget"
+
 container="analytics-smoke-$RUN_ID"
 run_container \
   "$container" \
@@ -106,6 +110,11 @@ log "smoke testing analytics on port $port"
 if ! wait_for_http_code "http://127.0.0.1:$port/health" "200" 180 "" "$container"; then
   container_logs "$container"
   fail "analytics /health did not return 200"
+fi
+log "CLI health-cmd: wget --spider /health"
+if ! docker exec "$container" wget -q --spider http://127.0.0.1:4000/health; then
+  container_logs "$container"
+  fail "analytics wget --spider /health failed"
 fi
 record_runtime_metrics "$container"
 log "analytics smoke passed"

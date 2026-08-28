@@ -123,6 +123,8 @@ grep -Fq "ENTRYPOINT_JSON='[]'" "$ROOT_DIR/services/storage/recipe.env" \
   || fail_test "storage recipe must have an empty ENTRYPOINT"
 grep -Fq "ENTRYPOINT_JSON='[]'" "$ROOT_DIR/services/auth/recipe.env" \
   || fail_test "auth recipe must have an empty ENTRYPOINT"
+grep -Fq "ENTRYPOINT_JSON='[]'" "$ROOT_DIR/services/pgmeta/recipe.env" \
+  || fail_test "pgmeta recipe must have an empty ENTRYPOINT"
 if grep -q 'chown' "$ROOT_DIR/scripts/render-dockerfile.sh"; then
   fail_test "render-dockerfile.sh rewrites chown; identity must use build-args"
 fi

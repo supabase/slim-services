@@ -165,3 +165,9 @@ are pinned per target
 (darwin-arm64, linux-arm64, linux-amd64). linux-arm64 verified: derived
 image smoke green — RSS 479.7 MiB (was 546.7) and 58.4 MiB gzip (was 89.7,
 no npm assets + tighter pruning). disksup disabled via `vm.args`.
+
+## CLI healthcheck (2026-08)
+
+Curl stays out of the portable artifact. The derived image exposes busybox
+`wget` on PATH so the CLI can use `wget -q --spider /health` instead of
+`/bin/busybox wget` or curl.
