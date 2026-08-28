@@ -116,15 +116,37 @@ identity_busybox_bin() {
 # back to a bind-mounted static busybox when the pin is shell-less.
 # Probe with `:` so a real shell returning 1 (e.g. test -x miss) is not
 # treated as "this entrypoint does not exist".
+# Extra docker run flags go before `--`:
+#   run_in_pin "$ref" -v "$vol:/root" -- sh -c 'echo x > /root/f'
+# No `--` means every remaining arg is the command (existing callers).
 run_in_pin() {
   local ref="$1"
   shift
-  local args=(--rm --user 0)
-  local ep script bb rc
+  local extra=() cmd=() args=(--rm --user 0)
+  local saw_sep=0 arg ep script bb rc
+  for arg in "$@"; do
+    if [[ "$saw_sep" -eq 0 && "$arg" == "--" ]]; then
+      saw_sep=1
+      continue
+    fi
+    if [[ "$saw_sep" -eq 1 ]]; then
+      cmd+=("$arg")
+    else
+      extra+=("$arg")
+    fi
+  done
+  if [[ "$saw_sep" -eq 0 ]]; then
+    cmd=("${extra[@]}")
+    extra=()
+  fi
+  [[ ${#cmd[@]} -gt 0 ]] || fail "run_in_pin: missing command"
   if [[ -n "${PLATFORM:-}" ]]; then
     args+=(--platform "$PLATFORM")
   fi
-  script="$(printf '%q ' "$@")"
+  if [[ ${#extra[@]} -gt 0 ]]; then
+    args+=("${extra[@]}")
+  fi
+  script="$(printf '%q ' "${cmd[@]}")"
   for ep in /bin/bash /usr/bin/bash /bin/sh /usr/bin/sh; do
     if docker run "${args[@]}" --entrypoint "$ep" "$ref" -c ':' >/dev/null 2>&1; then
       rc=0
@@ -135,17 +157,17 @@ run_in_pin() {
   done
   bb="$(identity_busybox_bin)"
   [[ -f "$bb" && ! -d "$bb" ]] || fail "identity busybox is missing or a directory: $bb"
-  docker run "${args[@]}" -v "$bb:/busybox:ro" --entrypoint /busybox "$ref" "$@"
+  docker run "${args[@]}" -v "$bb:/busybox:ro" --entrypoint /busybox "$ref" "${cmd[@]}"
 }
 
-# Write identity.env + passwd/group snippets for SERVICE into OUTDIR.
-# Numbers come only from the digest-pinned upstream image.
+# Write identity.env for SERVICE into OUTDIR. Numbers come only from the
+# digest-pinned upstream image. DROP_TO_NAME comes from the pin passwd
+# line when uid ≠ 0; postgres synthesizes /etc/passwd from DROP_TO_*.
 write_upstream_identity() {
   local service="$1"
   local outdir="$2"
   local ref start_user vol_path vol_stat vol_uid vol_gid vol_mode
-  local passwd_line group_line drop_uid drop_gid drop_name
-  local has_wget=0 has_sh=0 has_entrypoint=0
+  local passwd_line drop_uid drop_gid drop_name
 
   mkdir -p "$outdir"
   ref="$(pinned_upstream_ref)"
@@ -180,29 +202,12 @@ write_upstream_identity() {
   if [[ "$drop_uid" == "0" ]]; then
     drop_name="root"
     passwd_line=""
-    group_line=""
   else
     passwd_line="$(run_in_pin "$ref" cat /etc/passwd | awk -F: -v uid="$drop_uid" '$3==uid {print; exit}')"
     [[ -n "$passwd_line" ]] || fail "no /etc/passwd line for uid $drop_uid in $ref"
     drop_name="${passwd_line%%:*}"
-    group_line="$(run_in_pin "$ref" cat /etc/group | awk -F: -v gid="$drop_gid" '$3==gid {print; exit}')"
-    [[ -n "$group_line" ]] || group_line="${drop_name}:x:${drop_gid}:"
   fi
 
-  if run_in_pin "$ref" test -x /usr/local/bin/docker-entrypoint.sh >/dev/null \
-    || run_in_pin "$ref" test -x /docker-entrypoint.sh >/dev/null; then
-    has_entrypoint=1
-  fi
-  if run_in_pin "$ref" test -x /usr/bin/wget >/dev/null \
-    || run_in_pin "$ref" test -x /bin/wget >/dev/null; then
-    has_wget=1
-  fi
-  if run_in_pin "$ref" test -x /bin/sh >/dev/null \
-    || run_in_pin "$ref" test -x /usr/bin/sh >/dev/null; then
-    has_sh=1
-  fi
-
-  # passwd/group stay in sidecar files — a GECOS space would break `source`.
   {
     printf 'START_USER=%q\n' "$start_user"
     printf 'DROP_TO_UID=%q\n' "$drop_uid"
@@ -212,21 +217,8 @@ write_upstream_identity() {
     printf 'VOLUME_UID=%q\n' "$vol_uid"
     printf 'VOLUME_GID=%q\n' "$vol_gid"
     printf 'VOLUME_MODE=%q\n' "$vol_mode"
-    printf 'HAS_DOCKER_ENTRYPOINT=%q\n' "$has_entrypoint"
-    printf 'HAS_WGET=%q\n' "$has_wget"
-    printf 'HAS_SH=%q\n' "$has_sh"
     printf 'PINNED_IMAGE=%q\n' "$ref"
   } >"$outdir/identity.env"
-  if [[ -n "$passwd_line" ]]; then
-    printf '%s\n' "$passwd_line" >"$outdir/passwd.extra"
-  else
-    : >"$outdir/passwd.extra"
-  fi
-  if [[ -n "$group_line" ]]; then
-    printf '%s\n' "$group_line" >"$outdir/group.extra"
-  else
-    : >"$outdir/group.extra"
-  fi
   log "identity $service: start_user=${start_user:-root} drop=${drop_name}:${drop_uid}:${drop_gid} ${vol_path} ${vol_mode}"
 }
 
@@ -241,7 +233,7 @@ load_identity_env() {
 assert_slim_matches_identity() {
   local slim="$1"
   local identity_file="$2"
-  local start_user vol_path vol_stat
+  local start_user pin_user vol_path vol_stat
   load_identity_env "$identity_file"
 
   start_user="$(normalize_config_user "$(image_config_user "$slim")")"

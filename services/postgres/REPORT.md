@@ -270,8 +270,8 @@ does not set `pg_net.username` either and the hardcoded check could never
 pass there — despite the slim image being in perfect parity with its own
 upstream version.
 
-The smoke now boots `public.ecr.aws/supabase/postgres:$VERSION` (the mirror
-dodges Docker Hub pull limits) next to the slim container and requires the
+The smoke now boots the digest-pinned docker.io image (no ECR-first
+fallback) next to the slim container and requires the
 two servers to be identical: full `pg_settings`, `pg_dumpall --globals-only`
 (roles and attributes), the schema of `postgres` and `template1`,
 `pg_available_extensions`, database encodings/locales, and the host

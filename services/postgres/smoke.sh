@@ -140,6 +140,11 @@ ensure_image "$image"
 source "$ROOT_DIR/scripts/identity-lib.sh"
 load_recipe postgres
 identity_dir="$(mktemp -d "${TMPDIR:-/tmp}/postgres-identity.XXXXXX")"
+cleanup_postgres_image_smoke() {
+  rm -rf "${identity_dir:-}"
+  cleanup_smoke
+}
+trap cleanup_postgres_image_smoke EXIT
 if [[ "${SKIP_UPSTREAM_IDENTITY:-}" == "1" ]]; then
   fail "postgres image smoke requires the digest-pinned upstream identity (unset SKIP_UPSTREAM_IDENTITY)"
 fi

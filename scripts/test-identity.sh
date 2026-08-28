@@ -118,12 +118,16 @@ for spec in \
 done
 pass "identity Dockerfiles link mkdir/chown/chmod applets"
 
+if grep -q -- 'IDENTITY_BUSYBOX_IMAGE' "$ROOT_DIR/services/edge-runtime/smoke.sh"; then
+  fail_test "edge leftover must not start a standalone busybox image"
+fi
 if grep -q -- '--entrypoint /busybox' "$ROOT_DIR/services/edge-runtime/smoke.sh"; then
   fail_test "edge leftover must not exec host busybox inside the pin"
 fi
-grep -q 'IDENTITY_BUSYBOX_IMAGE' "$ROOT_DIR/services/edge-runtime/smoke.sh" \
-  || fail_test "edge leftover must write the volume via IDENTITY_BUSYBOX_IMAGE"
-pass "edge leftover uses the static busybox image"
+grep -q 'run_in_pin "$pinned_image" -v "$edge_vol:/root"' \
+  "$ROOT_DIR/services/edge-runtime/smoke.sh" \
+  || fail_test "edge leftover must write/read /root via run_in_pin on the pin"
+pass "edge leftover uses run_in_pin against the pin"
 
 quoted_dir="$(mktemp -d "${TMPDIR:-/tmp}/slim-identity-quote.XXXXXX")"
 trap 'rm -rf "$quoted_dir"' EXIT

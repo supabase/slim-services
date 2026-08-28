@@ -127,6 +127,15 @@ ensure_image "$image"
 source "$ROOT_DIR/scripts/identity-lib.sh"
 load_recipe storage
 identity_dir="$(mktemp -d "${TMPDIR:-/tmp}/storage-identity.XXXXXX")"
+volume=""
+cleanup_storage_image_smoke() {
+  rm -rf "${identity_dir:-}"
+  cleanup_smoke
+  if [[ -n "${volume:-}" ]]; then
+    docker volume rm -f "$volume" >/dev/null 2>&1 || true
+  fi
+}
+trap cleanup_storage_image_smoke EXIT
 if [[ "${SKIP_UPSTREAM_IDENTITY:-}" == "1" ]]; then
   fail "storage image smoke requires the digest-pinned upstream identity (unset SKIP_UPSTREAM_IDENTITY)"
 fi
@@ -144,11 +153,6 @@ docker run --rm --entrypoint /usr/bin/wget "$image" --help >/dev/null \
 # docker.io stack layout — so the round-trip below proves the seeded volume
 # root is writable, not just the container filesystem.
 volume="storage-smoke-vol-$RUN_ID"
-cleanup_storage_image_smoke() {
-  cleanup_smoke
-  docker volume rm -f "$volume" >/dev/null 2>&1 || true
-}
-trap cleanup_storage_image_smoke EXIT
 
 container="storage-smoke-$RUN_ID"
 run_container \

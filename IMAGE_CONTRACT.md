@@ -58,4 +58,7 @@ closed on pull miss. They assert identity (USER + mount owner/mode),
 leftover volumes in both directions, and a CLI-shaped start for postgres
 (`docker-entrypoint.sh postgres -D /etc/postgresql`). Storage leftover
 also checks that the imgproxy pin's `Config.User` can read objects on
-`/mnt`.
+`/mnt`. Edge leftover write/read of `/root` runs inside the pin
+(`run_in_pin` with the named volume mounted). Static busybox is only
+that container's entrypoint when the pin has no shell — not a separate
+image.

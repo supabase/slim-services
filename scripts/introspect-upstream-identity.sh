@@ -27,6 +27,9 @@ outdir="${2:-}"
 
 load_recipe "$service"
 identity_service "$service" || fail "$service is not an identity-contract service"
+if [[ "${SKIP_UPSTREAM_IDENTITY:-}" == "1" ]]; then
+  fail "SKIP_UPSTREAM_IDENTITY=1 is rejected (it would invent uid/gid/mode)"
+fi
 
 if [[ -z "$outdir" ]]; then
   outdir="$(mktemp -d "${TMPDIR:-/tmp}/slim-identity.XXXXXX")"
