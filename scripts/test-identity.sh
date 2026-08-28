@@ -140,6 +140,12 @@ grep -q "input: './dist/scripts/migrate-call.js'" \
   || fail_test "storage rolldown must bundle dist/scripts/migrate-call.js"
 grep -q 'dist-bundle/scripts' "$ROOT_DIR/services/storage/build-host.sh" \
   || fail_test "storage build-host must copy dist/scripts/migrate-call.js"
+grep -q "scripts', 'migrations'" \
+  "$ROOT_DIR/services/storage/overlay/scripts/prepare-bundle-dist.mjs" \
+  || fail_test "storage bundle must copy postgres-migrations SQL beside migrate-call.js"
+grep -q 'dist/scripts/migrations/0_create-migrations-table.sql' \
+  "$ROOT_DIR/services/storage/smoke.sh" \
+  || fail_test "storage artifact smoke must assert migrate-call.js bootstrap SQL"
 grep -q 'migrate-call.js' "$ROOT_DIR/IMAGE_CONTRACT.md" \
   || fail_test "IMAGE_CONTRACT.md must describe migrate-call.js"
 grep -q 'node dist/scripts/migrate-call.js' "$ROOT_DIR/services/storage/smoke.sh" \

@@ -81,6 +81,8 @@ if [[ -n "$artifact_rootfs" ]]; then
     || fail "storage artifact does not bundle a node runtime: $artifact_rootfs/node/bin/node"
   [[ -f "$artifact_rootfs/app/dist/scripts/migrate-call.js" ]] \
     || fail "storage artifact is missing dist/scripts/migrate-call.js"
+  [[ -f "$artifact_rootfs/app/dist/scripts/migrations/0_create-migrations-table.sql" ]] \
+    || fail "storage artifact is missing dist/scripts/migrations bootstrap SQL"
 
   pg_port="$(postgres_port)"
   port="$(python3 - <<'PY'

@@ -57,7 +57,8 @@ append-only for `runtime.env` — it does not rewrite `COPY --chown`.
 - **storage** and **edge-runtime** stay root. Seed `/mnt` and `/root` from
   the probe. Ship `wget` (storage) and `sh` (edge-runtime) unconditionally
   because the CLI always uses them. Storage ships `dist/scripts/migrate-call.js`
-  (third Rolldown input). Empty `ENTRYPOINT` and
+  (third Rolldown input) plus `postgres-migrations`'
+  `0_create-migrations-table.sql` beside that script. Empty `ENTRYPOINT` and
   `CMD ["/node/bin/node","dist/start/server.js"]` so default `docker run`
   still serves, while `docker run IMAGE node dist/scripts/migrate-call.js`
   is the CLI one-shot (`node` is on `PATH`). A node `ENTRYPOINT` would turn
