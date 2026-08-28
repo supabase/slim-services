@@ -1,16 +1,19 @@
 # syntax=docker/dockerfile:1.7
 # Derived image: the portable artifact (static bin/auth) plus the CA bundle
 # and user metadata a scratch image needs (on hosts, the system trust store
-# and passwd are assumed instead). Static busybox from busybox:1.36.1 — Debian
-# busybox is dynamically linked and will not run on scratch.
+# and passwd are assumed instead). Debian busybox is dynamically linked and
+# will not run on scratch. The default busybox:1.36.1 tag is also glibc;
+# busybox:1.36.1-musl is static.
 ARG BASE_IMAGE=scratch
 
-FROM busybox:1.36.1 AS busybox
+FROM busybox:1.36.1-musl AS busybox
 
 FROM alpine:3.23 AS meta
-COPY --from=busybox /bin/busybox /out/bin/busybox
+COPY --from=busybox /bin/busybox /tmp/busybox
 RUN apk add --no-cache ca-certificates \
-  && mkdir -p /out/etc/ssl/certs /out/usr/local/bin \
+  && mkdir -p /out/bin /out/etc/ssl/certs /out/usr/local/bin \
+  && cp -L /tmp/busybox /out/bin/busybox \
+  && chmod 0755 /out/bin/busybox \
   && ln -sf busybox /out/bin/sh \
   && ln -sf busybox /out/bin/wget \
   && cp /etc/ssl/certs/ca-certificates.crt /out/etc/ssl/certs/ca-certificates.crt \
