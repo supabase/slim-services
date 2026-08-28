@@ -1,8 +1,26 @@
+# syntax=docker/dockerfile:1.7
 ARG BASE_IMAGE=gcr.io/distroless/base-debian13:nonroot
+
+# Dynamic busybox: CLI one-shots use `--entrypoint sh -c` with `cat` heredocs
+# then `exec edge-runtime` (the portable wrapper needs dirname + uname).
+# Distroless has none of these. Same binary as postgres/pooler/analytics
+# (~1% size).
+FROM debian:trixie-slim AS tools
+RUN apt-get update -y && apt-get install -y --no-install-recommends busybox \
+  && mkdir -p /out/usr/bin \
+  && cp /usr/bin/busybox /out/usr/bin/busybox \
+  && for applet in sh cat dirname uname; do ln -sf busybox "/out/usr/bin/${applet}"; done
+
 FROM ${BASE_IMAGE}
 ARG ARTIFACT_ROOT
 ENV LD_LIBRARY_PATH=/lib
 ENV ORT_DYLIB_PATH=/lib/libonnxruntime.so
 COPY ${ARTIFACT_ROOT}/bin/ /usr/bin/
 COPY ${ARTIFACT_ROOT}/lib/ /lib/
+COPY --from=tools /out/ /
+# Distroless ships /root 0700; COPY onto it keeps that mode. uid 65532 must
+# traverse /root for host-mirrored binds and /root/eszips.
+USER 0
+RUN ["/usr/bin/busybox", "chmod", "0755", "/root"]
+USER nonroot
 ENTRYPOINT ["/bin/.edge-runtime-wrapped"]
