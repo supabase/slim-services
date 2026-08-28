@@ -18,3 +18,13 @@
   hide recipe incompatibility. If an upstream version is genuinely
   unreleasable, record an explicit release-policy decision and a demonstrated
   reason instead of silently skipping it.
+
+## Verify image changes in CI
+
+Do not local-build artifacts or smoke slim images when `service-release`
+can run the same path. Push the branch (and `workflow_dispatch`
+`service-release.yml` with `force=true` on the PR ref when a published
+tag must be rebuilt), then watch those GitHub Actions runs.
+`scripts/test-identity.sh` and other host-only unit scripts may still
+run locally. Build or smoke on the laptop only when CI cannot exercise
+the change (no workflow, iterating on a script before push).
