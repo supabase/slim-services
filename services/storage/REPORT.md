@@ -27,8 +27,8 @@ telemetry/pprof because the extra gain was too small.
 ## Build Contract
 
 - Current backend: source submodule build.
-- Source ref: `v1.55.3`.
-- Upstream image: `supabase/storage-api:v1.55.3`.
+- Source ref: `v1.62.6`.
+- Upstream image: `supabase/storage-api:v1.62.6`.
 - Runtime base: `gcr.io/distroless/base-debian13` (root, empty Config.User)
   plus the artifact's
   upstream-selected bundled Node runtime.

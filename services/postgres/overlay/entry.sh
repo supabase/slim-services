@@ -18,9 +18,10 @@ if [ "$(id -u)" = "0" ]; then
 fi
 
 # Image USER is unset (root), matching docker.io. Postgres refuses euid 0.
+# busybox su -c puts the first operand in $0; a dummy keeps "$@" intact.
 if [ "$(id -u)" = "0" ] && [ "$DROP_TO_NAME" != "root" ]; then
   exec /usr/bin/busybox su -s /usr/bin/sh "$DROP_TO_NAME" -c \
-    'exec /usr/bin/sh /usr/local/bin/entry.sh "$@"' -- "$@"
+    'exec /usr/bin/sh /usr/local/bin/entry.sh "$@"' -- x "$@"
 fi
 
 prepare_only=0
@@ -80,6 +81,15 @@ if [ "$first_boot" = 1 ] && { [ -f "$BUNDLE/share/supabase-cli/migrations/migrat
   "$BUNDLE/bin/pg_ctl" -D "$PGDATA" -l "$PGDATA/migrate.log" \
     -o "-c listen_addresses='' -c port=5432" -w start \
     || { cat "$PGDATA/migrate.log" >&2; exit 1; }
+  # Bundle migrate.sh also runs /etc/postgresql.schema.sql. CLI --from-backup
+  # writes that file and a restore in initdb.d/migrate.sh that runs it again;
+  # hide it for the bundle pass so CREATE DATABASE _supabase runs once.
+  schema_sql=/etc/postgresql.schema.sql
+  schema_sql_hold=
+  if [ -f "$schema_sql" ] && [ -f /docker-entrypoint-initdb.d/migrate.sh ]; then
+    schema_sql_hold="$schema_sql.hold"
+    mv "$schema_sql" "$schema_sql_hold"
+  fi
   if [ -f "$BUNDLE/share/supabase-cli/migrations/migrate.sh" ]; then
     if ! ( cd "$BUNDLE/share/supabase-cli/migrations" \
         && PATH="$BUNDLE/bin:$PATH" \
@@ -90,6 +100,9 @@ if [ "$first_boot" = 1 ] && { [ -f "$BUNDLE/share/supabase-cli/migrations/migrat
           sh ./migrate.sh ); then
       fail_first_boot
     fi
+  fi
+  if [ -n "$schema_sql_hold" ]; then
+    mv "$schema_sql_hold" "$schema_sql"
   fi
   if [ "$initdb_d_has_files" = 1 ]; then
     export PATH="$BUNDLE/bin:$PATH"

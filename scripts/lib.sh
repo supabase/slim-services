@@ -211,11 +211,12 @@ pinned_upstream_ref() {
     sha256:*) ;;
     *) fail "SOURCE_IMAGE_DIGEST must be sha256:<hex>, got: $SOURCE_IMAGE_DIGEST" ;;
   esac
+  [[ -n "${IDENTITY_SOURCE_TAG:-}" ]] || fail "IDENTITY_SOURCE_TAG is required"
   [[ -n "${UPSTREAM_IMAGE:-}" ]] || fail "UPSTREAM_IMAGE is required"
   image="${UPSTREAM_IMAGE%%@*}"
   tag="${image##*:}"
   digest="$SOURCE_IMAGE_DIGEST"
-  if [[ -n "${IDENTITY_SOURCE_TAG:-}" && "$tag" != "$IDENTITY_SOURCE_TAG" ]]; then
+  if [[ "$tag" != "$IDENTITY_SOURCE_TAG" ]]; then
     digest="$(resolve_image_index_digest "$image")"
   fi
   printf '%s@%s' "$image" "$digest"

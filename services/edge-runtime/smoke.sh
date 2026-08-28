@@ -12,9 +12,6 @@ cleanup_edge_smoke() {
     wait "$edge_runtime_pid" >/dev/null 2>&1 || true
   fi
   rm -f "${edge_runtime_log:-}"
-  if [[ -n "${probe_dir:-}" ]]; then
-    rm -rf "$probe_dir"
-  fi
   rm -rf "${identity_dir:-}"
   cleanup_smoke
 }

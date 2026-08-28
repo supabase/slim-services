@@ -235,23 +235,3 @@ assert_slim_matches_identity() {
   [[ "$vol_stat" == "${VOLUME_UID} ${VOLUME_GID} ${VOLUME_MODE}" ]] \
     || fail "slim $vol_path is '$vol_stat', pin is '${VOLUME_UID} ${VOLUME_GID} ${VOLUME_MODE}'"
 }
-
-# Sidecar uid from the imgproxy pin Config.User (empty → 0).
-imgproxy_sidecar_uid() {
-  local ref="${IMGPROXY_UPSTREAM_IMAGE:-ghcr.io/imgproxy/imgproxy:v3.8.0@sha256:75fcf5f5a72bc4bce354d1b5dfb4636a2e6979f0ce68cdacc51ed1bce2ab494e}"
-  local user
-  if ! docker image inspect "$ref" >/dev/null 2>&1; then
-    pull_pinned_image "$ref"
-  fi
-  user="$(image_config_user "$ref")"
-  if [[ -z "$user" || "$user" == "root" ]]; then
-    printf '0'
-    return 0
-  fi
-  if [[ "$user" =~ ^[0-9]+$ ]]; then
-    printf '%s' "$user"
-    return 0
-  fi
-  # name form: resolve via a one-shot in that image
-  run_in_pin "$ref" id -u "$user"
-}

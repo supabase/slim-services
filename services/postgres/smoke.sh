@@ -203,76 +203,76 @@ psql_admin() {
 parity_image="$pinned_image"
 log "docker.io differential parity against $parity_image"
 
-  parity_container="postgres-parity-$RUN_ID"
-  run_container \
-    "$parity_container" \
-    --network "$NETWORK" \
-    -e POSTGRES_PASSWORD=postgres \
-    "$parity_image"
-  log "waiting for the upstream parity postgres (init + migrations)"
-  wait_for_postgres 240 "$parity_container" supabase_admin \
-    || fail "upstream parity postgres did not become ready in time"
-  sleep 5
-  wait_for_postgres 60 "$parity_container" supabase_admin \
-    || fail "upstream parity postgres not ready after migrations"
+parity_container="postgres-parity-$RUN_ID"
+run_container \
+  "$parity_container" \
+  --network "$NETWORK" \
+  -e POSTGRES_PASSWORD=postgres \
+  "$parity_image"
+log "waiting for the upstream parity postgres (init + migrations)"
+wait_for_postgres 240 "$parity_container" supabase_admin \
+  || fail "upstream parity postgres did not become ready in time"
+sleep 5
+wait_for_postgres 60 "$parity_container" supabase_admin \
+  || fail "upstream parity postgres not ready after migrations"
 
-  parity_dir="$(mktemp -d "${TMPDIR:-/tmp}/postgres-parity.XXXXXX")"
-  parity_allow_re='^(autovacuum_naptime|bgwriter_delay|checkpoint_completion_target|effective_cache_size|jit|maintenance_work_mem|max_wal_size|shared_buffers|unix_socket_directories|wal_writer_delay|config_file|data_directory|hba_file|ident_file|pgsodium\.getkey_script|vault\.getkey_script|supautils\.extension_custom_scripts_path|supautils\.privileged_extensions_custom_scripts_path|commit_timestamp_buffers|multixact_member_buffers|multixact_offset_buffers|notify_buffers|serializable_buffers|subtransaction_buffers|transaction_buffers|wal_buffers|shared_memory_size|shared_memory_size_in_huge_pages)='
+parity_dir="$(mktemp -d "${TMPDIR:-/tmp}/postgres-parity.XXXXXX")"
+parity_allow_re='^(autovacuum_naptime|bgwriter_delay|checkpoint_completion_target|effective_cache_size|jit|maintenance_work_mem|max_wal_size|shared_buffers|unix_socket_directories|wal_writer_delay|config_file|data_directory|hba_file|ident_file|pgsodium\.getkey_script|vault\.getkey_script|supautils\.extension_custom_scripts_path|supautils\.privileged_extensions_custom_scripts_path|commit_timestamp_buffers|multixact_member_buffers|multixact_offset_buffers|notify_buffers|serializable_buffers|subtransaction_buffers|transaction_buffers|wal_buffers|shared_memory_size|shared_memory_size_in_huge_pages)='
 
-  parity_psql() {
+parity_psql() {
+  docker exec -e PGPASSWORD=postgres "$container" \
+    psql -h "$1" -U supabase_admin -d postgres -v ON_ERROR_STOP=1 -qAt -c "$2"
+}
+
+parity_capture() {
+  local side="$1" host="$2" db
+  # \restrict/\unrestrict carry a random per-dump nonce; SCRAM hashes carry
+  # a random per-initdb salt. Neither encodes real state — mask them.
+  docker exec -e PGPASSWORD=postgres "$container" \
+    pg_dumpall --globals-only -h "$host" -U supabase_admin \
+    | sed -e '/^\\restrict /d' -e '/^\\unrestrict /d' \
+      -e "s/PASSWORD 'SCRAM-SHA-256[^']*'/PASSWORD '<scram>'/" \
+    >"$parity_dir/$side.globals.sql" \
+    || fail "parity capture failed: $side globals"
+  for db in postgres template1; do
     docker exec -e PGPASSWORD=postgres "$container" \
-      psql -h "$1" -U supabase_admin -d postgres -v ON_ERROR_STOP=1 -qAt -c "$2"
-  }
-
-  parity_capture() {
-    local side="$1" host="$2" db
-    # \restrict/\unrestrict carry a random per-dump nonce; SCRAM hashes carry
-    # a random per-initdb salt. Neither encodes real state — mask them.
-    docker exec -e PGPASSWORD=postgres "$container" \
-      pg_dumpall --globals-only -h "$host" -U supabase_admin \
+      pg_dump --schema-only -d "$db" -h "$host" -U supabase_admin \
       | sed -e '/^\\restrict /d' -e '/^\\unrestrict /d' \
-        -e "s/PASSWORD 'SCRAM-SHA-256[^']*'/PASSWORD '<scram>'/" \
-      >"$parity_dir/$side.globals.sql" \
-      || fail "parity capture failed: $side globals"
-    for db in postgres template1; do
-      docker exec -e PGPASSWORD=postgres "$container" \
-        pg_dump --schema-only -d "$db" -h "$host" -U supabase_admin \
-        | sed -e '/^\\restrict /d' -e '/^\\unrestrict /d' \
-        >"$parity_dir/$side.schema-$db.sql" \
-        || fail "parity capture failed: $side schema of $db"
-    done
-    parity_psql "$host" "SELECT name || '=' || setting FROM pg_settings ORDER BY name" \
-      | grep -Ev "$parity_allow_re" >"$parity_dir/$side.settings.txt" \
-      || fail "parity capture failed: $side settings"
-    parity_psql "$host" "SELECT name || '=' || default_version FROM pg_available_extensions ORDER BY name" \
-      >"$parity_dir/$side.extensions.txt" \
-      || fail "parity capture failed: $side extensions"
-    parity_psql "$host" "SELECT datname || '|' || datlocprovider::text || '|' || pg_encoding_to_char(encoding) || '|' || datcollate || '|' || datctype FROM pg_database ORDER BY datname" \
-      >"$parity_dir/$side.databases.txt" \
-      || fail "parity capture failed: $side databases"
-    # Socket-local rules are excluded: distroless ships no OS user database,
-    # so the slim image trusts the in-container socket where docker.io uses
-    # peer. Host rules are what the CLI and other stack services depend on.
-    parity_psql "$host" "SELECT type || '|' || coalesce(array_to_string(database, ','), '') || '|' || coalesce(array_to_string(user_name, ','), '') || '|' || coalesce(address, '') || '|' || coalesce(netmask, '') || '|' || coalesce(auth_method, '') FROM pg_hba_file_rules WHERE type <> 'local' ORDER BY rule_number" \
-      >"$parity_dir/$side.hba.txt" \
-      || fail "parity capture failed: $side pg_hba rules"
-  }
-
-  parity_capture slim 127.0.0.1
-  parity_capture upstream "$parity_container"
-
-  parity_failed=0
-  for f in globals.sql schema-postgres.sql schema-template1.sql settings.txt extensions.txt databases.txt hba.txt; do
-    if ! diff -u "$parity_dir/upstream.$f" "$parity_dir/slim.$f" >&2; then
-      printf '[slim-smoke] parity divergence in %s (upstream is -, slim is +)\n' "$f" >&2
-      parity_failed=1
-    fi
+      >"$parity_dir/$side.schema-$db.sql" \
+      || fail "parity capture failed: $side schema of $db"
   done
-  [[ "$parity_failed" == "0" ]] || fail "slim image diverges from $parity_image"
+  parity_psql "$host" "SELECT name || '=' || setting FROM pg_settings ORDER BY name" \
+    | grep -Ev "$parity_allow_re" >"$parity_dir/$side.settings.txt" \
+    || fail "parity capture failed: $side settings"
+  parity_psql "$host" "SELECT name || '=' || default_version FROM pg_available_extensions ORDER BY name" \
+    >"$parity_dir/$side.extensions.txt" \
+    || fail "parity capture failed: $side extensions"
+  parity_psql "$host" "SELECT datname || '|' || datlocprovider::text || '|' || pg_encoding_to_char(encoding) || '|' || datcollate || '|' || datctype FROM pg_database ORDER BY datname" \
+    >"$parity_dir/$side.databases.txt" \
+    || fail "parity capture failed: $side databases"
+  # Socket-local rules are excluded: distroless ships no OS user database,
+  # so the slim image trusts the in-container socket where docker.io uses
+  # peer. Host rules are what the CLI and other stack services depend on.
+  parity_psql "$host" "SELECT type || '|' || coalesce(array_to_string(database, ','), '') || '|' || coalesce(array_to_string(user_name, ','), '') || '|' || coalesce(address, '') || '|' || coalesce(netmask, '') || '|' || coalesce(auth_method, '') FROM pg_hba_file_rules WHERE type <> 'local' ORDER BY rule_number" \
+    >"$parity_dir/$side.hba.txt" \
+    || fail "parity capture failed: $side pg_hba rules"
+}
 
-  docker rm -f "$parity_container" >/dev/null
-  rm -rf "$parity_dir"
-  log "docker.io differential parity passed"
+parity_capture slim 127.0.0.1
+parity_capture upstream "$parity_container"
+
+parity_failed=0
+for f in globals.sql schema-postgres.sql schema-template1.sql settings.txt extensions.txt databases.txt hba.txt; do
+  if ! diff -u "$parity_dir/upstream.$f" "$parity_dir/slim.$f" >&2; then
+    printf '[slim-smoke] parity divergence in %s (upstream is -, slim is +)\n' "$f" >&2
+    parity_failed=1
+  fi
+done
+[[ "$parity_failed" == "0" ]] || fail "slim image diverges from $parity_image"
+
+docker rm -f "$parity_container" >/dev/null
+rm -rf "$parity_dir"
+log "docker.io differential parity passed"
 
 log "leftover volume: docker.io -> slim"
 vol_up="postgres-leftover-up-$RUN_ID"
@@ -376,10 +376,16 @@ cli_wal="$(docker exec -e PGPASSWORD=postgres "$cli_container" \
 
 # CLI `cat >` leaves migrate.sh non-executable; entry.sh sources that path.
 # Real dumps need bundle roles/extensions first, then the restore.
+# CLI also writes /etc/postgresql.schema.sql (unconditional CREATE DATABASE
+# _supabase); restore runs it after the dump — bundle migrate must not.
 log "CLI --from-backup: bundle migrate then initdb.d restore"
 from_backup_vol="postgres-from-backup-$RUN_ID"
 create_volume "$from_backup_vol"
 from_backup_container="postgres-from-backup-$RUN_ID"
+from_backup_schema="$(cat <<'EOF'
+CREATE DATABASE _supabase WITH OWNER postgres;
+EOF
+)"
 from_backup_migrate="$(cat <<'EOF'
 #!/bin/sh
 set -eu
@@ -388,6 +394,9 @@ if [ "$(psql -h /tmp -p 5432 -U supabase_admin -d postgres -v ON_ERROR_STOP=1 -q
   exit 1
 fi
 psql -h /tmp -p 5432 -U supabase_admin -d postgres -v ON_ERROR_STOP=1 -c "CREATE TABLE from_backup_restore(id int primary key); INSERT INTO from_backup_restore VALUES (1);"
+if [ -e /etc/postgresql.schema.sql ]; then
+  psql -h /tmp -p 5432 -U supabase_admin -d postgres -v ON_ERROR_STOP=1 --no-password --no-psqlrc -f /etc/postgresql.schema.sql
+fi
 EOF
 )"
 run_container \
@@ -397,8 +406,9 @@ run_container \
   -v "$from_backup_vol:/var/lib/postgresql/data" \
   --entrypoint /usr/bin/sh \
   "$image" \
-  -c 'printf %s "$1" > /docker-entrypoint-initdb.d/migrate.sh && exec docker-entrypoint.sh postgres -D /etc/postgresql' \
+  -c 'printf %s "$1" > /etc/postgresql.schema.sql && printf %s "$2" > /docker-entrypoint-initdb.d/migrate.sh && exec docker-entrypoint.sh postgres -D /etc/postgresql' \
   _ \
+  "$from_backup_schema" \
   "$from_backup_migrate"
 wait_for_postgres 240 "$from_backup_container" supabase_admin \
   || fail "CLI --from-backup overwrite did not become ready"
@@ -410,6 +420,10 @@ wait_for_postgres 240 "$from_backup_container" supabase_admin \
   psql -h 127.0.0.1 -U supabase_admin -d postgres -v ON_ERROR_STOP=1 -qAt -c \
   "SELECT count(*) FROM pg_roles WHERE rolname = 'anon'")" == "1" ]] \
   || fail "CLI --from-backup overwrite skipped bundle migrate.sh"
+[[ "$(docker exec -e PGPASSWORD=postgres "$from_backup_container" \
+  psql -h 127.0.0.1 -U supabase_admin -d postgres -v ON_ERROR_STOP=1 -qAt -c \
+  "SELECT count(*) FROM pg_database WHERE datname = '_supabase'")" == "1" ]] \
+  || fail "CLI --from-backup schema.sql did not create _supabase"
 
 log "failed initdb.d script must not start postgres"
 fail_init_vol="postgres-fail-init-$RUN_ID"
@@ -440,6 +454,20 @@ sock_dirs="$(docker exec -e PGPASSWORD=postgres "$container" \
 docker exec -e PGPASSWORD=postgres "$container" \
   psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c "SELECT 1" \
   >/dev/null || fail "psql with no -h could not use /run/postgresql"
+
+log "docker-entrypoint.sh --version must not initdb"
+ver_vol="postgres-version-$RUN_ID"
+create_volume "$ver_vol"
+ver_out="$(docker run --rm \
+  -e POSTGRES_PASSWORD=postgres \
+  -v "$ver_vol:/var/lib/postgresql/data" \
+  "$image" --version)" \
+  || fail "docker-entrypoint.sh --version failed"
+[[ "$ver_out" == PostgreSQL* ]] || fail "docker-entrypoint.sh --version ran as '$ver_out'"
+ver_pgver="$(docker run --rm -v "$ver_vol:/var/lib/postgresql/data" \
+  --entrypoint /usr/bin/sh "$image" -c \
+  'if [ -s /var/lib/postgresql/data/PG_VERSION ]; then echo yes; else echo no; fi')"
+[[ "$ver_pgver" == "no" ]] || fail "docker-entrypoint.sh --version initialized PGDATA"
 
 log "docker-entrypoint.sh id must not initdb"
 id_vol="postgres-id-$RUN_ID"

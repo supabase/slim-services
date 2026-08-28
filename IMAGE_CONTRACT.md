@@ -49,8 +49,12 @@ append-only for `runtime.env` — it does not rewrite `COPY --chown`.
   `db dump` / `db pull` (`bash -c`) do not initdb. First boot runs
   `/docker-entrypoint-initdb.d` (`.sh` / `.sql`) in the temp-server window
   after bundle initdb. Always run bundle `migrate.sh` first (roles +
-  extensions); then the CLI `--from-backup` restore in `initdb.d`. A real
-  `db dump --local` has no `CREATE ROLE` and assumes `extensions` exists.
+  extensions); then the CLI `--from-backup` restore in `initdb.d`. Hide
+  `/etc/postgresql.schema.sql` during the bundle pass when
+  `initdb.d/migrate.sh` is the CLI restore — both would run the
+  unconditional `CREATE DATABASE _supabase`. A real `db dump --local`
+  has no `CREATE ROLE` and assumes `extensions` exists. `--help` /
+  `--version` exec postgres directly (no initdb).
   A non-zero sourced or exec'd `*.sh` stops the temp server and exits 1 —
   do not start postgres. The shim uses busybox-`su`, not extracted
   upstream `gosu`. Cluster files stay in `PGDATA`.
@@ -79,10 +83,11 @@ Pairwise image smokes pull the same digest the build used. They fail
 closed on pull miss. They assert identity (USER + mount owner/mode),
 leftover volumes in both directions, and a CLI-shaped start for postgres
 (`docker-entrypoint.sh postgres -D /etc/postgresql`, plus an `initdb.d`
-marker, a `--from-backup` overwrite of `initdb.d/migrate.sh` that must
-run after bundle migrate, a failed init script that must not start
-postgres, default-socket `psql` with no `-h`, and a foreign-argv `id`
-that must not initdb).
+  marker, a `--from-backup` overwrite of `initdb.d/migrate.sh` plus
+  `/etc/postgresql.schema.sql` that must run after bundle migrate without
+  double-creating `_supabase`, a failed init script that must not start
+  postgres, `--version` that must not initdb, default-socket `psql` with
+  no `-h`, and a foreign-argv `id` that must not initdb).
 Storage leftover also checks that the imgproxy pin's `Config.User` can
 read objects on `/mnt`. Edge leftover write/read of `/root` runs inside
 the pin (`run_in_pin` with the named volume mounted). Static busybox is

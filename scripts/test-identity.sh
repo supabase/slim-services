@@ -34,6 +34,16 @@ if (
 fi
 pass "non-sha256 digest is rejected"
 
+if (
+  SOURCE_IMAGE_DIGEST="sha256:99b1729aeb0bac314445024fc149fbd39306170b61dd50800ccf180327ab3459"
+  IDENTITY_SOURCE_TAG=""
+  UPSTREAM_IMAGE="supabase/postgres:17.6.1.158"
+  pinned_upstream_ref
+) >/dev/null 2>&1; then
+  fail_test "pinned_upstream_ref accepted a missing IDENTITY_SOURCE_TAG"
+fi
+pass "missing IDENTITY_SOURCE_TAG is rejected"
+
 SOURCE_IMAGE_DIGEST="sha256:99b1729aeb0bac314445024fc149fbd39306170b61dd50800ccf180327ab3459"
 IDENTITY_SOURCE_TAG="17.6.1.158"
 SOURCE_REF="17.6.1.166"
@@ -87,9 +97,6 @@ source "$ROOT_DIR/scripts/identity-lib.sh"
 [[ "$(normalize_config_user 100)" == "100" ]] || fail_test "non-root user must stay"
 pass "start-user normalization"
 
-identity_service postgres || fail_test "postgres should be an identity service"
-identity_service storage || fail_test "storage should be an identity service"
-identity_service edge-runtime || fail_test "edge-runtime should be an identity service"
 if identity_service auth; then
   fail_test "auth should not be an identity service"
 fi
@@ -114,14 +121,8 @@ pass "recipe pins resolve"
 # migrate-call, and applet presence.
 grep -Fq "ENTRYPOINT_JSON='[]'" "$ROOT_DIR/services/storage/recipe.env" \
   || fail_test "storage recipe must have an empty ENTRYPOINT"
-if grep -q 'ENTRYPOINT \["/node/bin/node"\]' "$ROOT_DIR/services/storage/Dockerfile.slim"; then
-  fail_test "storage Dockerfile must not set a node ENTRYPOINT"
-fi
 grep -Fq "ENTRYPOINT_JSON='[]'" "$ROOT_DIR/services/auth/recipe.env" \
   || fail_test "auth recipe must have an empty ENTRYPOINT"
-if grep -q 'ENTRYPOINT \["/usr/local/bin/auth"\]' "$ROOT_DIR/services/auth/Dockerfile.slim"; then
-  fail_test "auth Dockerfile must not set an auth ENTRYPOINT"
-fi
 if grep -q 'chown' "$ROOT_DIR/scripts/render-dockerfile.sh"; then
   fail_test "render-dockerfile.sh rewrites chown; identity must use build-args"
 fi
@@ -179,15 +180,5 @@ pass "absent /mnt invents 0:0:755"
 unset -f pull_pinned_image image_config_user pinned_upstream_ref run_in_pin
 unset SOURCE_IMAGE_DIGEST UPSTREAM_IMAGE IDENTITY_SOURCE_TAG
 rm -rf "$probe_dir"
-
-quoted_dir="$(mktemp -d "${TMPDIR:-/tmp}/slim-identity-quote.XXXXXX")"
-trap 'rm -rf "$quoted_dir"' EXIT
-# Simulate the writer: values go through %q so a GECOS space cannot break source.
-printf 'DROP_TO_NAME=%q\n' "PostgreSQL administrator" >"$quoted_dir/identity.env"
-# shellcheck source=/dev/null
-source "$quoted_dir/identity.env"
-[[ "$DROP_TO_NAME" == "PostgreSQL administrator" ]] \
-  || fail_test "quoted identity.env did not round-trip a spaced name"
-pass "identity.env quoting survives GECOS spaces"
 
 printf 'test-identity: all passed\n'

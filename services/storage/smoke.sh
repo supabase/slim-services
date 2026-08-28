@@ -179,6 +179,8 @@ fi
 # Run the file backend on a FRESH named volume mounted at /mnt — the exact
 # docker.io stack layout — so the round-trip below proves the seeded volume
 # root is writable, not just the container filesystem.
+# Do not create_volume first: Docker seeds a new named volume from the
+# image /mnt only on first mount.
 volume="storage-smoke-vol-$RUN_ID"
 
 container="storage-smoke-$RUN_ID"
@@ -271,6 +273,23 @@ body="$(curl -fsS -H "Authorization: Bearer $leftover_jwt" \
 [[ "$body" == "leftover-from-dockerio" ]] || fail "slim leftover download mismatch: $body"
 
 log "imgproxy-pin sidecar can read leftover /mnt objects"
+imgproxy_sidecar_uid() {
+  local ref="${IMGPROXY_UPSTREAM_IMAGE:-ghcr.io/imgproxy/imgproxy:v3.8.0@sha256:75fcf5f5a72bc4bce354d1b5dfb4636a2e6979f0ce68cdacc51ed1bce2ab494e}"
+  local user
+  if ! docker image inspect "$ref" >/dev/null 2>&1; then
+    pull_pinned_image "$ref"
+  fi
+  user="$(image_config_user "$ref")"
+  if [[ -z "$user" || "$user" == "root" ]]; then
+    printf '0'
+    return 0
+  fi
+  if [[ "$user" =~ ^[0-9]+$ ]]; then
+    printf '%s' "$user"
+    return 0
+  fi
+  run_in_pin "$ref" id -u "$user"
+}
 sidecar_uid="$(imgproxy_sidecar_uid)"
 object_path="$(docker run --rm -v "$vol_up:/mnt:ro" --entrypoint /node/bin/node "$image" -e '
 const fs = require("node:fs");
