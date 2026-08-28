@@ -357,7 +357,7 @@ run_container \
   -v "$cli_vol:/var/lib/postgresql/data" \
   --entrypoint /usr/bin/sh \
   "$image" \
-  -c 'printf "\n# cli-append\n" >> /etc/postgresql/postgresql.conf && exec docker-entrypoint.sh postgres -D /etc/postgresql'
+  -c 'printf "CREATE TABLE initdb_d_marker(id int primary key);\nINSERT INTO initdb_d_marker VALUES (1);\n" > /docker-entrypoint-initdb.d/01-marker.sql && printf "\n# cli-append\n" >> /etc/postgresql/postgresql.conf && exec docker-entrypoint.sh postgres -D /etc/postgresql'
 wait_for_postgres 240 "$cli_container" supabase_admin \
   || fail "CLI-shaped docker-entrypoint.sh start did not become ready"
 docker exec -e PGPASSWORD=postgres "$cli_container" \
@@ -369,6 +369,24 @@ cli_listen="$(docker exec -e PGPASSWORD=postgres "$cli_container" \
 cli_wal="$(docker exec -e PGPASSWORD=postgres "$cli_container" \
   psql -h 127.0.0.1 -U supabase_admin -d postgres -v ON_ERROR_STOP=1 -qAt -c "SHOW wal_level")"
 [[ "$cli_wal" == "logical" ]] || fail "CLI-shaped start wal_level='$cli_wal' (expected logical)"
+[[ "$(docker exec -e PGPASSWORD=postgres "$cli_container" \
+  psql -h 127.0.0.1 -U supabase_admin -d postgres -v ON_ERROR_STOP=1 -qAt -c \
+  "SELECT id FROM initdb_d_marker")" == "1" ]] \
+  || fail "CLI-shaped start did not run /docker-entrypoint-initdb.d"
+
+log "docker-entrypoint.sh id must not initdb"
+id_vol="postgres-id-$RUN_ID"
+create_volume "$id_vol"
+id_out="$(docker run --rm \
+  -e POSTGRES_PASSWORD=postgres \
+  -v "$id_vol:/var/lib/postgresql/data" \
+  "$image" id)" \
+  || fail "docker-entrypoint.sh id failed"
+[[ "$id_out" == uid=0* ]] || fail "docker-entrypoint.sh id ran as '$id_out' (expected root)"
+id_pgver="$(docker run --rm -v "$id_vol:/var/lib/postgresql/data" \
+  --entrypoint /usr/bin/sh "$image" -c \
+  'if [ -s /var/lib/postgresql/data/PG_VERSION ]; then echo yes; else echo no; fi')"
+[[ "$id_pgver" == "no" ]] || fail "docker-entrypoint.sh id initialized PGDATA"
 
 log "checking local-dev config profile is active"
 [[ "$(psql_admin "SHOW shared_buffers")" == "32MB" ]] || fail "expected shared_buffers=32MB"

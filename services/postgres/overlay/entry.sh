@@ -52,21 +52,63 @@ if [ ! -s "$PGDATA/PG_VERSION" ]; then
   } >> "$PGDATA/postgresql.conf"
 fi
 
-if [ "$first_boot" = 1 ] && [ -f "$BUNDLE/share/supabase-cli/migrations/migrate.sh" ]; then
+# Official docker-entrypoint: after initdb, a temp server runs
+# /docker-entrypoint-initdb.d (.sh / .sql). CLI --from-backup stages
+# migrate.sh there.
+initdb_d_has_files=0
+for f in /docker-entrypoint-initdb.d/*; do
+  if [ -f "$f" ]; then
+    initdb_d_has_files=1
+    break
+  fi
+done
+
+if [ "$first_boot" = 1 ] && { [ -f "$BUNDLE/share/supabase-cli/migrations/migrate.sh" ] || [ "$initdb_d_has_files" = 1 ]; }; then
   echo "Running supabase migrations"
   "$BUNDLE/bin/pg_ctl" -D "$PGDATA" -l "$PGDATA/migrate.log" \
     -o "-c listen_addresses='' -c port=5432" -w start \
     || { cat "$PGDATA/migrate.log" >&2; exit 1; }
-  if ! ( cd "$BUNDLE/share/supabase-cli/migrations" \
-      && PATH="$BUNDLE/bin:$PATH" \
-        POSTGRES_HOST=/tmp \
-        POSTGRES_PORT=5432 \
-        POSTGRES_DB="$POSTGRES_DB" \
-        POSTGRES_PASSWORD="$POSTGRES_PASSWORD" \
-        sh ./migrate.sh ); then
-    cat "$PGDATA/migrate.log" >&2
-    "$BUNDLE/bin/pg_ctl" -D "$PGDATA" -m fast -w stop || true
-    exit 1
+  if [ -f "$BUNDLE/share/supabase-cli/migrations/migrate.sh" ]; then
+    if ! ( cd "$BUNDLE/share/supabase-cli/migrations" \
+        && PATH="$BUNDLE/bin:$PATH" \
+          POSTGRES_HOST=/tmp \
+          POSTGRES_PORT=5432 \
+          POSTGRES_DB="$POSTGRES_DB" \
+          POSTGRES_PASSWORD="$POSTGRES_PASSWORD" \
+          sh ./migrate.sh ); then
+      cat "$PGDATA/migrate.log" >&2
+      "$BUNDLE/bin/pg_ctl" -D "$PGDATA" -m fast -w stop || true
+      exit 1
+    fi
+  fi
+  if [ "$initdb_d_has_files" = 1 ]; then
+    export PATH="$BUNDLE/bin:$PATH"
+    export POSTGRES_HOST=/tmp POSTGRES_PORT=5432
+    export POSTGRES_DB POSTGRES_PASSWORD
+    export PGHOST=/tmp PGPORT=5432 PGDATABASE="$POSTGRES_DB" PGPASSWORD="$POSTGRES_PASSWORD"
+    for f in /docker-entrypoint-initdb.d/*; do
+      [ -f "$f" ] || continue
+      case "$f" in
+        *.sh)
+          if [ -x "$f" ]; then
+            echo "running $f"
+            "$f"
+          else
+            echo "sourcing $f"
+            # shellcheck disable=SC1090
+            . "$f"
+          fi
+          ;;
+        *.sql)
+          echo "running $f"
+          "$BUNDLE/bin/psql" -h /tmp -p 5432 -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
+            -v ON_ERROR_STOP=1 --no-password --no-psqlrc -f "$f"
+          ;;
+        *)
+          echo "ignoring $f"
+          ;;
+      esac
+    done
   fi
   "$BUNDLE/bin/pg_ctl" -D "$PGDATA" -m fast -w stop
 fi

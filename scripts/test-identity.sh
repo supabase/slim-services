@@ -120,6 +120,14 @@ grep -q 'VERSION:-\$SOURCE_REF' "$ROOT_DIR/services/edge-runtime/recipe.env" \
   || fail_test "edge-runtime UPSTREAM_IMAGE must follow VERSION"
 grep -q 'path exists' "$ROOT_DIR/scripts/identity-lib.sh" \
   || fail_test "storage /mnt must fail when the path exists but stat failed"
+grep -q 'exec "\$@"' "$ROOT_DIR/services/postgres/overlay/docker-entrypoint.sh" \
+  || fail_test "postgres docker-entrypoint.sh must exec foreign argv"
+grep -q '/docker-entrypoint-initdb.d' "$ROOT_DIR/services/postgres/overlay/entry.sh" \
+  || fail_test "postgres first boot must run /docker-entrypoint-initdb.d"
+grep -q 'initdb_d_marker' "$ROOT_DIR/services/postgres/smoke.sh" \
+  || fail_test "postgres smoke must assert an initdb.d marker"
+grep -q 'docker-entrypoint.sh id must not initdb' "$ROOT_DIR/services/postgres/smoke.sh" \
+  || fail_test "postgres smoke must assert foreign-argv does not initdb"
 grep -q 'cannot build' "$ROOT_DIR/scripts/build-image-from-artifact.sh" \
   || fail_test "image build must refuse SKIP_UPSTREAM_IDENTITY"
 pass "contract docs; SKIP cannot invent identity"

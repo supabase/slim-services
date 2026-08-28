@@ -87,4 +87,5 @@ ENV PGDATA=/var/lib/postgresql/data \
     PATH=/opt/postgres/bin:/usr/local/bin:/usr/bin:/bin
 EXPOSE 5432
 # USER unset: Config.User stays empty like docker.io.
-ENTRYPOINT ["/usr/bin/sh", "/usr/local/bin/entry.sh"]
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+CMD ["postgres", "-D", "/etc/postgresql"]

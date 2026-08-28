@@ -42,12 +42,16 @@ append-only for `runtime.env` — it does not rewrite `COPY --chown`.
   are the same (euid 0): docker.io leaves USER unset; distroless's root
   variant bakes `USER 0`.
 - **postgres** starts as root, then drops to the probed owner before
-  `postgres` execs. `docker-entrypoint.sh` is a busybox-`su` shim so the
-  CLI can `exec docker-entrypoint.sh postgres -D /etc/postgresql`. Cluster
-  files stay in `PGDATA`. `/etc/postgresql/postgresql.conf` sets
-  `data_directory` / `hba_file` / `ident_file` at `PGDATA`, includes the
-  bundle recipe (not leftover initdb conf), and stays root-writable for
-  CLI `>>` / `>` writes.
+  `postgres` execs. `docker-entrypoint.sh` is the image `ENTRYPOINT` and
+  follows official argv rules: empty / leading `-` stays the server path
+  (`postgres -D /etc/postgresql`); any other argv is `exec`'d as-is so
+  `db dump` / `db pull` (`bash -c`) do not initdb. First boot runs
+  `/docker-entrypoint-initdb.d` (`.sh` / `.sql`) in the temp-server window
+  after bundle initdb so CLI `--from-backup` `migrate.sh` runs. The shim
+  uses busybox-`su`, not extracted upstream `gosu`. Cluster files stay in
+  `PGDATA`. `/etc/postgresql/postgresql.conf` sets `data_directory` /
+  `hba_file` / `ident_file` at `PGDATA`, includes the bundle recipe (not
+  leftover initdb conf), and stays root-writable for CLI `>>` / `>` writes.
 - **storage** and **edge-runtime** stay root. Seed `/mnt` and `/root` from
   the probe. Ship `wget` (storage) and `sh` (edge-runtime) unconditionally
   because the CLI always uses them.
@@ -60,7 +64,8 @@ stateless service that the pin does not start as root.
 Pairwise image smokes pull the same digest the build used. They fail
 closed on pull miss. They assert identity (USER + mount owner/mode),
 leftover volumes in both directions, and a CLI-shaped start for postgres
-(`docker-entrypoint.sh postgres -D /etc/postgresql`). Storage leftover
+(`docker-entrypoint.sh postgres -D /etc/postgresql`, plus an `initdb.d`
+marker and a foreign-argv `id` that must not initdb). Storage leftover
 also checks that the imgproxy pin's `Config.User` can read objects on
 `/mnt`. Edge leftover write/read of `/root` runs inside the pin
 (`run_in_pin` with the named volume mounted). Static busybox is only
