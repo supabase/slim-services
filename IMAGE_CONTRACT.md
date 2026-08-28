@@ -51,8 +51,9 @@ append-only for `runtime.env` — it does not rewrite `COPY --chown`.
   after bundle initdb. Always run bundle `migrate.sh` first (roles +
   extensions); then the CLI `--from-backup` restore in `initdb.d`. Hide
   `/etc/postgresql.schema.sql` during the bundle pass when
-  `initdb.d/migrate.sh` is the CLI restore — both would run the
-  unconditional `CREATE DATABASE _supabase`. A real `db dump --local`
+  `initdb.d/migrate.sh` is the CLI restore (root copies the contents
+  aside and truncates the inode — no `mv` after drop). Both would run
+  the unconditional `CREATE DATABASE _supabase`. A real `db dump --local`
   has no `CREATE ROLE` and assumes `extensions` exists. `--help` /
   `--version` exec postgres directly (no initdb).
   A non-zero sourced or exec'd `*.sh` stops the temp server and exits 1 —

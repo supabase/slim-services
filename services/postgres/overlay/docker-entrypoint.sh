@@ -23,19 +23,33 @@ pg_want_help() {
   return 1
 }
 
-if pg_want_help "$@"; then
-  if [ -z "${1:-}" ] || [ "${1#-}" != "$1" ]; then
-    set -- postgres "$@"
-  fi
-  exec /opt/postgres/bin/postgres "$@"
-fi
-
+# Help/version before -D rewrite: postgres only accepts those as argv[1].
+# Only the server path — `bash --help` must stay exec-as-is.
 if [ -z "${1:-}" ] || [ "${1#-}" != "$1" ]; then
+  if pg_want_help "$@"; then
+    exec /opt/postgres/bin/postgres "$@"
+  fi
   set -- postgres -D /etc/postgresql "$@"
 fi
 
 if [ "$1" != "postgres" ]; then
   exec "$@"
+fi
+
+if pg_want_help "$@"; then
+  shift
+  exec /opt/postgres/bin/postgres "$@"
+fi
+
+# CLI --from-backup writes schema.sql and a restore that runs it again.
+# Truncate+chown while root: no mv applet, and postgres cannot rename in /etc.
+PGDATA="${PGDATA:-/var/lib/postgresql/data}"
+schema_sql=/etc/postgresql.schema.sql
+if [ "$(id -u)" = "0" ] && [ ! -s "$PGDATA/PG_VERSION" ] \
+  && [ -s "$schema_sql" ] && [ -f /docker-entrypoint-initdb.d/migrate.sh ]; then
+  cp "$schema_sql" /tmp/slim-schema.sql
+  : > "$schema_sql"
+  chown "${DROP_TO_UID:-0}:${DROP_TO_GID:-0}" "$schema_sql"
 fi
 
 # busybox su -c puts the first operand in $0; a dummy keeps "$@" intact.

@@ -70,7 +70,16 @@ for f in /docker-entrypoint-initdb.d/*; do
   fi
 done
 
+restore_schema_sql() {
+  # Root truncated this inode and left the contents in /tmp (see docker-entrypoint.sh).
+  if [ -s /tmp/slim-schema.sql ]; then
+    cat /tmp/slim-schema.sql > /etc/postgresql.schema.sql
+    rm -f /tmp/slim-schema.sql
+  fi
+}
+
 fail_first_boot() {
+  restore_schema_sql
   cat "$PGDATA/migrate.log" >&2
   "$BUNDLE/bin/pg_ctl" -D "$PGDATA" -m fast -w stop || true
   exit 1
@@ -81,15 +90,6 @@ if [ "$first_boot" = 1 ] && { [ -f "$BUNDLE/share/supabase-cli/migrations/migrat
   "$BUNDLE/bin/pg_ctl" -D "$PGDATA" -l "$PGDATA/migrate.log" \
     -o "-c listen_addresses='' -c port=5432" -w start \
     || { cat "$PGDATA/migrate.log" >&2; exit 1; }
-  # Bundle migrate.sh also runs /etc/postgresql.schema.sql. CLI --from-backup
-  # writes that file and a restore in initdb.d/migrate.sh that runs it again;
-  # hide it for the bundle pass so CREATE DATABASE _supabase runs once.
-  schema_sql=/etc/postgresql.schema.sql
-  schema_sql_hold=
-  if [ -f "$schema_sql" ] && [ -f /docker-entrypoint-initdb.d/migrate.sh ]; then
-    schema_sql_hold="$schema_sql.hold"
-    mv "$schema_sql" "$schema_sql_hold"
-  fi
   if [ -f "$BUNDLE/share/supabase-cli/migrations/migrate.sh" ]; then
     if ! ( cd "$BUNDLE/share/supabase-cli/migrations" \
         && PATH="$BUNDLE/bin:$PATH" \
@@ -101,9 +101,7 @@ if [ "$first_boot" = 1 ] && { [ -f "$BUNDLE/share/supabase-cli/migrations/migrat
       fail_first_boot
     fi
   fi
-  if [ -n "$schema_sql_hold" ]; then
-    mv "$schema_sql_hold" "$schema_sql"
-  fi
+  restore_schema_sql
   if [ "$initdb_d_has_files" = 1 ]; then
     export PATH="$BUNDLE/bin:$PATH"
     export POSTGRES_HOST=/tmp POSTGRES_PORT=5432
