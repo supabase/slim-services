@@ -64,24 +64,6 @@ busybox_is_static() {
   ! ldd "$bin" >/dev/null 2>&1
 }
 
-ensure_identity_busybox_image() {
-  local pulled attempt
-  if docker image inspect "$IDENTITY_BUSYBOX_IMAGE" >/dev/null 2>&1; then
-    return 0
-  fi
-  pulled=0
-  for attempt in 1 2 3; do
-    if [[ -n "${PLATFORM:-}" ]]; then
-      docker pull --platform "$PLATFORM" -q "$IDENTITY_BUSYBOX_IMAGE" >/dev/null 2>&1 && pulled=1
-    else
-      docker pull -q "$IDENTITY_BUSYBOX_IMAGE" >/dev/null 2>&1 && pulled=1
-    fi
-    [[ "$pulled" == "1" ]] && break
-    [[ "$attempt" -lt 3 ]] && sleep $((attempt * 5))
-  done
-  [[ "$pulled" == "1" ]] || fail "could not pull $IDENTITY_BUSYBOX_IMAGE"
-}
-
 # Static busybox on a Docker-Desktop-visible path (not $TMPDIR: a missing
 # bind-mount becomes a directory and `exec /busybox` fails).
 identity_busybox_bin() {
@@ -98,7 +80,7 @@ identity_busybox_bin() {
   fi
   rm -f "$bin"
   mkdir -p "$(dirname "$bin")"
-  ensure_identity_busybox_image
+  pull_pinned_image "$IDENTITY_BUSYBOX_IMAGE"
   if [[ -n "${PLATFORM:-}" ]]; then
     cid="$(docker create --platform "$PLATFORM" "$IDENTITY_BUSYBOX_IMAGE")"
   else
@@ -167,7 +149,7 @@ write_upstream_identity() {
   local service="$1"
   local outdir="$2"
   local ref start_user vol_path vol_stat vol_uid vol_gid vol_mode
-  local passwd_line drop_uid drop_gid drop_name
+  local passwd_line drop_uid drop_gid drop_name vol_exists exists_rc
 
   mkdir -p "$outdir"
   ref="$(pinned_upstream_ref)"
@@ -178,10 +160,13 @@ write_upstream_identity() {
   vol_path="$(cli_volume_path "$service")"
 
   vol_stat="$(run_in_pin "$ref" stat -c '%u %g %a' "$vol_path" 2>/dev/null || true)"
-  vol_exists=0
-  if run_in_pin "$ref" test -e "$vol_path" >/dev/null 2>&1; then
-    vol_exists=1
-  fi
+  exists_rc=0
+  run_in_pin "$ref" test -e "$vol_path" >/dev/null 2>&1 || exists_rc=$?
+  case "$exists_rc" in
+    0) vol_exists=1 ;;
+    1) vol_exists=0 ;;
+    *) fail "cannot test $vol_path in $ref (exit $exists_rc)" ;;
+  esac
   if [[ -n "$vol_stat" ]]; then
     vol_uid="${vol_stat%% *}"
     vol_gid="$(printf '%s' "$vol_stat" | awk '{print $2}')"

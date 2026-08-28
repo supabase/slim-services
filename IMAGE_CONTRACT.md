@@ -21,7 +21,8 @@ across versions. There is no ECR-first fallback.
 and image smokes. Never invent uid/gid/mode as a substitute for the pin.
 Storage `/mnt` is the one exception: invent `0:0:755` only when the path
 is absent and the pin starts as root. If the path exists but `stat`
-failed, fail.
+failed, fail. A `test -e` status other than 0 or 1 is a probe failure,
+not "absent".
 
 ## Generation
 

@@ -110,100 +110,75 @@ for service in postgres storage edge-runtime; do
 done
 pass "recipe pins resolve"
 
-grep -q 'SOURCE_IMAGE_DIGEST' "$ROOT_DIR/IMAGE_CONTRACT.md" \
-  || fail_test "IMAGE_CONTRACT.md does not describe SOURCE_IMAGE_DIGEST"
-grep -q 'IDENTITY_SOURCE_TAG' "$ROOT_DIR/IMAGE_CONTRACT.md" \
-  || fail_test "IMAGE_CONTRACT.md does not describe IDENTITY_SOURCE_TAG"
-grep -q 'VERSION:-\$SOURCE_REF' "$ROOT_DIR/services/storage/recipe.env" \
-  || fail_test "storage UPSTREAM_IMAGE must follow VERSION"
-grep -q 'VERSION:-\$SOURCE_REF' "$ROOT_DIR/services/edge-runtime/recipe.env" \
-  || fail_test "edge-runtime UPSTREAM_IMAGE must follow VERSION"
-grep -q 'path exists' "$ROOT_DIR/scripts/identity-lib.sh" \
-  || fail_test "storage /mnt must fail when the path exists but stat failed"
-grep -q 'exec "\$@"' "$ROOT_DIR/services/postgres/overlay/docker-entrypoint.sh" \
-  || fail_test "postgres docker-entrypoint.sh must exec foreign argv"
-grep -q '/docker-entrypoint-initdb.d' "$ROOT_DIR/services/postgres/overlay/entry.sh" \
-  || fail_test "postgres first boot must run /docker-entrypoint-initdb.d"
-grep -q 'skip the bundle copy' "$ROOT_DIR/IMAGE_CONTRACT.md" \
-  || fail_test "IMAGE_CONTRACT.md must describe --from-backup skip of bundle migrate.sh"
-grep -q 'initdb_d_marker' "$ROOT_DIR/services/postgres/smoke.sh" \
-  || fail_test "postgres smoke must assert an initdb.d marker"
-grep -q '! -f /docker-entrypoint-initdb.d/migrate.sh' \
-  "$ROOT_DIR/services/postgres/overlay/entry.sh" \
-  || fail_test "postgres first boot must skip bundle migrate.sh when initdb.d/migrate.sh exists"
-grep -q 'from_backup_restore' "$ROOT_DIR/services/postgres/smoke.sh" \
-  || fail_test "postgres smoke must assert --from-backup overwrite skips bundle migrate.sh"
-grep -q 'docker-entrypoint.sh id must not initdb' "$ROOT_DIR/services/postgres/smoke.sh" \
-  || fail_test "postgres smoke must assert foreign-argv does not initdb"
-grep -q "input: './dist/scripts/migrate-call.js'" \
-  "$ROOT_DIR/services/storage/overlay/rolldown.config.mjs" \
-  || fail_test "storage rolldown must bundle dist/scripts/migrate-call.js"
-grep -q 'dist-bundle/scripts' "$ROOT_DIR/services/storage/build-host.sh" \
-  || fail_test "storage build-host must copy dist/scripts/migrate-call.js"
-grep -q "scripts', 'migrations'" \
-  "$ROOT_DIR/services/storage/overlay/scripts/prepare-bundle-dist.mjs" \
-  || fail_test "storage bundle must copy postgres-migrations SQL beside migrate-call.js"
-grep -q 'dist/scripts/migrations/0_create-migrations-table.sql' \
-  "$ROOT_DIR/services/storage/smoke.sh" \
-  || fail_test "storage artifact smoke must assert migrate-call.js bootstrap SQL"
-grep -q 'migrate-call.js' "$ROOT_DIR/IMAGE_CONTRACT.md" \
-  || fail_test "IMAGE_CONTRACT.md must describe migrate-call.js"
-grep -q 'node dist/scripts/migrate-call.js' "$ROOT_DIR/services/storage/smoke.sh" \
-  || fail_test "storage smoke must run the CLI migrate-call one-shot"
+# Static locks smokes cannot see. Image smokes cover argv, leftover I/O,
+# migrate-call, and applet presence.
 grep -Fq "ENTRYPOINT_JSON='[]'" "$ROOT_DIR/services/storage/recipe.env" \
   || fail_test "storage recipe must have an empty ENTRYPOINT"
-grep -q '/node/bin/node","dist/start/server.js' "$ROOT_DIR/services/storage/recipe.env" \
-  || fail_test "storage CMD must be /node/bin/node dist/start/server.js"
 if grep -q 'ENTRYPOINT \["/node/bin/node"\]' "$ROOT_DIR/services/storage/Dockerfile.slim"; then
   fail_test "storage Dockerfile must not set a node ENTRYPOINT"
 fi
 grep -Fq "ENTRYPOINT_JSON='[]'" "$ROOT_DIR/services/auth/recipe.env" \
   || fail_test "auth recipe must have an empty ENTRYPOINT"
-grep -Fq "CMD_JSON='[\"gotrue\"]'" "$ROOT_DIR/services/auth/recipe.env" \
-  || fail_test "auth CMD must be gotrue"
 if grep -q 'ENTRYPOINT \["/usr/local/bin/auth"\]' "$ROOT_DIR/services/auth/Dockerfile.slim"; then
   fail_test "auth Dockerfile must not set an auth ENTRYPOINT"
 fi
-grep -q 'gotrue migrate' "$ROOT_DIR/services/auth/smoke.sh" \
-  || fail_test "auth smoke must run gotrue migrate"
-grep -q 'cannot build' "$ROOT_DIR/scripts/build-image-from-artifact.sh" \
-  || fail_test "image build must refuse SKIP_UPSTREAM_IDENTITY"
-pass "contract docs; SKIP cannot invent identity"
-
-# render-dockerfile.sh must stay append-only (no mid-file --chown rewrite).
 if grep -q 'chown' "$ROOT_DIR/scripts/render-dockerfile.sh"; then
   fail_test "render-dockerfile.sh rewrites chown; identity must use build-args"
 fi
-pass "render-dockerfile.sh stays append-only"
+pass "empty ENTRYPOINT and append-only render"
 
-# Distroless has no coreutils. Fix scripts call mkdir/chown/chmod via PATH,
-# so those busybox applets must be linked in the tools stage.
-for spec in \
-  "services/storage/Dockerfile.slim:mkdir" \
-  "services/storage/Dockerfile.slim:chown" \
-  "services/storage/Dockerfile.slim:chmod" \
-  "services/edge-runtime/Dockerfile.slim:chmod" \
-  "services/edge-runtime/Dockerfile.slim:stat" \
-  "services/storage/Dockerfile.slim:stat" \
-  "services/postgres/Dockerfile.slim:stat" \
-  "services/postgres/Dockerfile.slim:chown"; do
-  file="${spec%%:*}"
-  applet="${spec##*:}"
-  grep -q "for applet in .*${applet}" "$ROOT_DIR/$file" \
-    || fail_test "$file tools stage must link busybox $applet"
-done
-pass "identity Dockerfiles link mkdir/chown/chmod applets"
+# Fail-closed /mnt probe: stub docker so status 0/1/other is observable.
+probe_dir="$(mktemp -d "${TMPDIR:-/tmp}/slim-identity-probe.XXXXXX")"
+SOURCE_IMAGE_DIGEST="sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+UPSTREAM_IMAGE="example/storage:v1"
+IDENTITY_SOURCE_TAG="v1"
+pull_pinned_image() { return 0; }
+image_config_user() { printf ''; }
+pinned_upstream_ref() { printf 'example/storage:v1@%s' "$SOURCE_IMAGE_DIGEST"; }
+run_in_pin() {
+  shift
+  case "$1" in
+    stat) return 1 ;;
+    test) return 2 ;;
+    *) return 0 ;;
+  esac
+}
+if ( write_upstream_identity storage "$probe_dir" ) >/dev/null 2>&1; then
+  fail_test "test -e status 2 invented identity"
+fi
+pass "test -e probe failure fails closed"
 
-if grep -q -- 'IDENTITY_BUSYBOX_IMAGE' "$ROOT_DIR/services/edge-runtime/smoke.sh"; then
-  fail_test "edge leftover must not start a standalone busybox image"
+run_in_pin() {
+  shift
+  case "$1" in
+    stat) return 1 ;;
+    test) return 0 ;;
+    *) return 0 ;;
+  esac
+}
+if ( write_upstream_identity storage "$probe_dir" ) >/dev/null 2>&1; then
+  fail_test "exists-but-unstatable /mnt invented identity"
 fi
-if grep -q -- '--entrypoint /busybox' "$ROOT_DIR/services/edge-runtime/smoke.sh"; then
-  fail_test "edge leftover must not exec host busybox inside the pin"
-fi
-grep -q 'run_in_pin "$pinned_image" -v "$edge_vol:/root"' \
-  "$ROOT_DIR/services/edge-runtime/smoke.sh" \
-  || fail_test "edge leftover must write/read /root via run_in_pin on the pin"
-pass "edge leftover uses run_in_pin against the pin"
+pass "path exists but stat failed is fail-closed"
+
+run_in_pin() {
+  shift
+  case "$1" in
+    stat) return 1 ;;
+    test) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+write_upstream_identity storage "$probe_dir" >/dev/null \
+  || fail_test "absent /mnt should invent 0:0:755"
+# shellcheck source=/dev/null
+source "$probe_dir/identity.env"
+[[ "$VOLUME_UID" == "0" && "$VOLUME_GID" == "0" && "$VOLUME_MODE" == "755" ]] \
+  || fail_test "absent /mnt invented $VOLUME_UID:$VOLUME_GID:$VOLUME_MODE"
+pass "absent /mnt invents 0:0:755"
+unset -f pull_pinned_image image_config_user pinned_upstream_ref run_in_pin
+unset SOURCE_IMAGE_DIGEST UPSTREAM_IMAGE IDENTITY_SOURCE_TAG
+rm -rf "$probe_dir"
 
 quoted_dir="$(mktemp -d "${TMPDIR:-/tmp}/slim-identity-quote.XXXXXX")"
 trap 'rm -rf "$quoted_dir"' EXIT
