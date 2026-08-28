@@ -374,6 +374,41 @@ cli_wal="$(docker exec -e PGPASSWORD=postgres "$cli_container" \
   "SELECT id FROM initdb_d_marker")" == "1" ]] \
   || fail "CLI-shaped start did not run /docker-entrypoint-initdb.d"
 
+log "CLI --from-backup overwrite: initdb.d/migrate.sh must skip bundle migrate.sh"
+from_backup_vol="postgres-from-backup-$RUN_ID"
+create_volume "$from_backup_vol"
+from_backup_container="postgres-from-backup-$RUN_ID"
+from_backup_migrate="$(cat <<'EOF'
+#!/bin/sh
+set -eu
+if [ "$(psql -h /tmp -p 5432 -U supabase_admin -d postgres -v ON_ERROR_STOP=1 -qAt -c "SELECT 1 FROM pg_roles WHERE rolname = 'anon'")" = 1 ]; then
+  echo "bundle migrate.sh already created role anon" >&2
+  exit 1
+fi
+psql -h /tmp -p 5432 -U supabase_admin -d postgres -v ON_ERROR_STOP=1 -c "CREATE TABLE from_backup_restore(id int primary key); INSERT INTO from_backup_restore VALUES (1);"
+EOF
+)"
+run_container \
+  "$from_backup_container" \
+  --network "$NETWORK" \
+  -e POSTGRES_PASSWORD=postgres \
+  -v "$from_backup_vol:/var/lib/postgresql/data" \
+  --entrypoint /usr/bin/sh \
+  "$image" \
+  -c 'printf %s "$1" > /docker-entrypoint-initdb.d/migrate.sh && chmod +x /docker-entrypoint-initdb.d/migrate.sh && exec docker-entrypoint.sh postgres -D /etc/postgresql' \
+  _ \
+  "$from_backup_migrate"
+wait_for_postgres 240 "$from_backup_container" supabase_admin \
+  || fail "CLI --from-backup overwrite did not become ready"
+[[ "$(docker exec -e PGPASSWORD=postgres "$from_backup_container" \
+  psql -h 127.0.0.1 -U supabase_admin -d postgres -v ON_ERROR_STOP=1 -qAt -c \
+  "SELECT id FROM from_backup_restore")" == "1" ]] \
+  || fail "CLI --from-backup overwrite did not run initdb.d/migrate.sh"
+[[ "$(docker exec -e PGPASSWORD=postgres "$from_backup_container" \
+  psql -h 127.0.0.1 -U supabase_admin -d postgres -v ON_ERROR_STOP=1 -qAt -c \
+  "SELECT count(*) FROM pg_roles WHERE rolname = 'anon'")" == "0" ]] \
+  || fail "CLI --from-backup overwrite still ran bundle migrate.sh"
+
 log "docker-entrypoint.sh id must not initdb"
 id_vol="postgres-id-$RUN_ID"
 create_volume "$id_vol"

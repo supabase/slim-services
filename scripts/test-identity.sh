@@ -124,8 +124,15 @@ grep -q 'exec "\$@"' "$ROOT_DIR/services/postgres/overlay/docker-entrypoint.sh" 
   || fail_test "postgres docker-entrypoint.sh must exec foreign argv"
 grep -q '/docker-entrypoint-initdb.d' "$ROOT_DIR/services/postgres/overlay/entry.sh" \
   || fail_test "postgres first boot must run /docker-entrypoint-initdb.d"
+grep -q 'skip the bundle copy' "$ROOT_DIR/IMAGE_CONTRACT.md" \
+  || fail_test "IMAGE_CONTRACT.md must describe --from-backup skip of bundle migrate.sh"
 grep -q 'initdb_d_marker' "$ROOT_DIR/services/postgres/smoke.sh" \
   || fail_test "postgres smoke must assert an initdb.d marker"
+grep -q '! -f /docker-entrypoint-initdb.d/migrate.sh' \
+  "$ROOT_DIR/services/postgres/overlay/entry.sh" \
+  || fail_test "postgres first boot must skip bundle migrate.sh when initdb.d/migrate.sh exists"
+grep -q 'from_backup_restore' "$ROOT_DIR/services/postgres/smoke.sh" \
+  || fail_test "postgres smoke must assert --from-backup overwrite skips bundle migrate.sh"
 grep -q 'docker-entrypoint.sh id must not initdb' "$ROOT_DIR/services/postgres/smoke.sh" \
   || fail_test "postgres smoke must assert foreign-argv does not initdb"
 grep -q "input: './dist/scripts/migrate-call.js'" \

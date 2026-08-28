@@ -52,9 +52,8 @@ if [ ! -s "$PGDATA/PG_VERSION" ]; then
   } >> "$PGDATA/postgresql.conf"
 fi
 
-# Official docker-entrypoint: after initdb, a temp server runs
-# /docker-entrypoint-initdb.d (.sh / .sql). CLI --from-backup stages
-# migrate.sh there.
+# Official: migrate.sh lives in initdb.d. CLI --from-backup overwrites
+# that path; skip the bundle copy so restore replaces image migrations.
 initdb_d_has_files=0
 for f in /docker-entrypoint-initdb.d/*; do
   if [ -f "$f" ]; then
@@ -68,7 +67,8 @@ if [ "$first_boot" = 1 ] && { [ -f "$BUNDLE/share/supabase-cli/migrations/migrat
   "$BUNDLE/bin/pg_ctl" -D "$PGDATA" -l "$PGDATA/migrate.log" \
     -o "-c listen_addresses='' -c port=5432" -w start \
     || { cat "$PGDATA/migrate.log" >&2; exit 1; }
-  if [ -f "$BUNDLE/share/supabase-cli/migrations/migrate.sh" ]; then
+  if [ ! -f /docker-entrypoint-initdb.d/migrate.sh ] \
+      && [ -f "$BUNDLE/share/supabase-cli/migrations/migrate.sh" ]; then
     if ! ( cd "$BUNDLE/share/supabase-cli/migrations" \
         && PATH="$BUNDLE/bin:$PATH" \
           POSTGRES_HOST=/tmp \
