@@ -36,4 +36,17 @@ export default defineConfig([
       codeSplitting: false,
     },
   },
+  {
+    platform: 'node',
+    preserveEntrySignatures: false,
+    external,
+    input: './dist/scripts/migrate-call.js',
+    output: {
+      file: 'dist-bundle/scripts/migrate-call.js',
+      format: 'cjs',
+      sourcemap: false,
+      exports: 'auto',
+      codeSplitting: false,
+    },
+  },
 ])

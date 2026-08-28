@@ -23,7 +23,8 @@ ARG ARTIFACT_ROOT
 COPY --from=tools /out/ /
 RUN ["/usr/bin/busybox", "sh", "/usr/local/bin/fix-mnt-mode"]
 WORKDIR /app
-ENV NODE_ENV=production
+ENV NODE_ENV=production \
+    PATH="/node/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 COPY ${ARTIFACT_ROOT}/app/ /app/
 COPY ${ARTIFACT_ROOT}/node/ /node/
 EXPOSE 5000
@@ -32,5 +33,6 @@ EXPOSE 5000
 # so runtime port overrides stay honest.
 HEALTHCHECK --interval=5s --timeout=5s --retries=10 --start-period=10s \
   CMD ["/node/bin/node", "-e", "fetch('http://127.0.0.1:'+(process.env.SERVER_PORT||process.env.PORT||5000)+'/status').then((r)=>process.exit(r.ok?0:1),()=>process.exit(1))"]
-ENTRYPOINT ["/node/bin/node"]
-CMD ["dist/start/server.js"]
+# Empty ENTRYPOINT: CLI `["node","dist/scripts/migrate-call.js"]` must not
+# become `node node …`. Default serve uses the bundled binary by path.
+CMD ["/node/bin/node", "dist/start/server.js"]

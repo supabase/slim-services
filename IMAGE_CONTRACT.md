@@ -54,7 +54,12 @@ append-only for `runtime.env` — it does not rewrite `COPY --chown`.
   leftover initdb conf), and stays root-writable for CLI `>>` / `>` writes.
 - **storage** and **edge-runtime** stay root. Seed `/mnt` and `/root` from
   the probe. Ship `wget` (storage) and `sh` (edge-runtime) unconditionally
-  because the CLI always uses them.
+  because the CLI always uses them. Storage ships `dist/scripts/migrate-call.js`
+  (third Rolldown input). Empty `ENTRYPOINT` and
+  `CMD ["/node/bin/node","dist/start/server.js"]` so default `docker run`
+  still serves, while `docker run IMAGE node dist/scripts/migrate-call.js`
+  is the CLI one-shot (`node` is on `PATH`). A node `ENTRYPOINT` would turn
+  that argv into `node node …`.
 
 Do not extract upstream `docker-entrypoint.sh` or `gosu`. Do not root a
 stateless service that the pin does not start as root.

@@ -128,6 +128,22 @@ grep -q 'initdb_d_marker' "$ROOT_DIR/services/postgres/smoke.sh" \
   || fail_test "postgres smoke must assert an initdb.d marker"
 grep -q 'docker-entrypoint.sh id must not initdb' "$ROOT_DIR/services/postgres/smoke.sh" \
   || fail_test "postgres smoke must assert foreign-argv does not initdb"
+grep -q "input: './dist/scripts/migrate-call.js'" \
+  "$ROOT_DIR/services/storage/overlay/rolldown.config.mjs" \
+  || fail_test "storage rolldown must bundle dist/scripts/migrate-call.js"
+grep -q 'dist-bundle/scripts' "$ROOT_DIR/services/storage/build-host.sh" \
+  || fail_test "storage build-host must copy dist/scripts/migrate-call.js"
+grep -q 'migrate-call.js' "$ROOT_DIR/IMAGE_CONTRACT.md" \
+  || fail_test "IMAGE_CONTRACT.md must describe migrate-call.js"
+grep -q 'node dist/scripts/migrate-call.js' "$ROOT_DIR/services/storage/smoke.sh" \
+  || fail_test "storage smoke must run the CLI migrate-call one-shot"
+grep -Fq "ENTRYPOINT_JSON='[]'" "$ROOT_DIR/services/storage/recipe.env" \
+  || fail_test "storage recipe must have an empty ENTRYPOINT"
+grep -q '/node/bin/node","dist/start/server.js' "$ROOT_DIR/services/storage/recipe.env" \
+  || fail_test "storage CMD must be /node/bin/node dist/start/server.js"
+if grep -q 'ENTRYPOINT \["/node/bin/node"\]' "$ROOT_DIR/services/storage/Dockerfile.slim"; then
+  fail_test "storage Dockerfile must not set a node ENTRYPOINT"
+fi
 grep -q 'cannot build' "$ROOT_DIR/scripts/build-image-from-artifact.sh" \
   || fail_test "image build must refuse SKIP_UPSTREAM_IDENTITY"
 pass "contract docs; SKIP cannot invent identity"

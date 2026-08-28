@@ -79,6 +79,8 @@ if [[ -n "$artifact_rootfs" ]]; then
 
   [[ -x "$artifact_rootfs/node/bin/node" ]] \
     || fail "storage artifact does not bundle a node runtime: $artifact_rootfs/node/bin/node"
+  [[ -f "$artifact_rootfs/app/dist/scripts/migrate-call.js" ]] \
+    || fail "storage artifact is missing dist/scripts/migrate-call.js"
 
   pg_port="$(postgres_port)"
   port="$(python3 - <<'PY'
@@ -148,6 +150,29 @@ pinned_image="$PINNED_IMAGE"
 log "checking wget is on PATH (CLI healthcheck)"
 docker run --rm --entrypoint /usr/bin/wget "$image" --help >/dev/null \
   || fail "storage image is missing wget"
+
+storage_ep="$(docker inspect -f '{{json .Config.Entrypoint}}' "$image")"
+[[ "$storage_ep" == "null" || "$storage_ep" == "[]" ]] \
+  || fail "storage ENTRYPOINT is $storage_ep (expected empty)"
+storage_cmd="$(docker inspect -f '{{json .Config.Cmd}}' "$image")"
+[[ "$storage_cmd" == '["/node/bin/node","dist/start/server.js"]' ]] \
+  || fail "storage CMD is $storage_cmd (expected [/node/bin/node, dist/start/server.js])"
+
+log "CLI one-shot: node dist/scripts/migrate-call.js"
+if ! docker run --rm --network "$NETWORK" \
+  -e DATABASE_URL="postgresql://postgres:postgres@$POSTGRES_CONTAINER:5432/storage_smoke" \
+  -e AUTH_JWT_SECRET="$jwt_secret" \
+  -e PGRST_JWT_SECRET="$jwt_secret" \
+  -e STORAGE_BACKEND=file \
+  -e FILE_STORAGE_BACKEND_PATH=/mnt \
+  -e TENANT_ID=stub \
+  -e REGION=stub \
+  -e GLOBAL_S3_BUCKET=stub \
+  -w /app \
+  "$image" \
+  node dist/scripts/migrate-call.js; then
+  fail "storage migrate-call.js one-shot failed"
+fi
 
 # Run the file backend on a FRESH named volume mounted at /mnt — the exact
 # docker.io stack layout — so the round-trip below proves the seeded volume
