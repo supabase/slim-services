@@ -463,7 +463,7 @@ ver_out="$(docker run --rm \
   -v "$ver_vol:/var/lib/postgresql/data" \
   "$image" --version)" \
   || fail "docker-entrypoint.sh --version failed"
-[[ "$ver_out" == PostgreSQL* ]] || fail "docker-entrypoint.sh --version ran as '$ver_out'"
+[[ "$ver_out" == "postgres (PostgreSQL)"* ]] || fail "docker-entrypoint.sh --version ran as '$ver_out'"
 ver_pgver="$(docker run --rm -v "$ver_vol:/var/lib/postgresql/data" \
   --entrypoint /usr/bin/sh "$image" -c \
   'if [ -s /var/lib/postgresql/data/PG_VERSION ]; then echo yes; else echo no; fi')"
