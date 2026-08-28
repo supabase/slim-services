@@ -352,6 +352,7 @@ def test_repository_checks_runs_dynamic_and_external_contracts():
         "scripts/test-extract-upstream-archive.sh",
         "scripts/test-upstream-artifact.sh",
         "scripts/test-oci-mirror.sh",
+        "scripts/test-ecr-mirror.sh",
         "scripts/test-upstream-runtime.sh",
         "scripts/test-external-source-build.sh",
         "scripts/test-dockerhub-release.sh",

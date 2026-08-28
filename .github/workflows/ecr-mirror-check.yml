@@ -1,0 +1,79 @@
+name: ECR mirror check
+
+"on":
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+    inputs:
+      request:
+        description: Dispatch mirror requests for out-of-sync releases.
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ecr-mirror-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: check ECR Public mirrors
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Checkout mirror scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Check mirror dispatch configuration
+        id: config
+        shell: bash
+        env:
+          MIRROR_DISPATCH_TOKEN: ${{ secrets.CLI_MIRROR_DISPATCH_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$MIRROR_DISPATCH_TOKEN" ]]; then
+            echo "::notice::CLI_MIRROR_DISPATCH_TOKEN is not configured; skipping the ECR mirror check"
+            printf 'configured=false\n' >> "$GITHUB_OUTPUT"
+          else
+            printf 'configured=true\n' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install regctl
+        if: steps.config.outputs.configured == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          regctl_version="v0.11.5"
+          expected_sha256="c93aa7638749f5aaac1a8e01787321889c78f0101809bb2880343478d0ba0467"
+          curl -fsSL \
+            "https://github.com/regclient/regclient/releases/download/${regctl_version}/regctl-linux-amd64" \
+            -o "$RUNNER_TEMP/regctl"
+          actual_sha256="$(sha256sum "$RUNNER_TEMP/regctl" | cut -d' ' -f1)"
+          [[ "$actual_sha256" == "$expected_sha256" ]] || {
+            printf 'regctl checksum mismatch: expected %s, got %s\n' \
+              "$expected_sha256" "$actual_sha256" >&2
+            exit 1
+          }
+          chmod +x "$RUNNER_TEMP/regctl"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+      - name: Compare published releases against ECR Public
+        if: steps.config.outputs.configured == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MIRROR_DISPATCH_TOKEN: ${{ secrets.CLI_MIRROR_DISPATCH_TOKEN }}
+          REQUEST: ${{ inputs.request }}
+        run: |
+          set -euo pipefail
+          args=()
+          if [[ "$REQUEST" == "true" ]]; then
+            args+=(--request)
+          fi
+          scripts/ecr-mirror.sh sync "${args[@]}"
