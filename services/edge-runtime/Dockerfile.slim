@@ -10,7 +10,7 @@ RUN apt-get update -y && apt-get install -y --no-install-recommends busybox \
   && mkdir -p /out/usr/bin /out/usr/local/bin \
   && cp /usr/bin/busybox /out/usr/bin/busybox \
   && for applet in sh cat dirname uname; do ln -sf busybox "/out/usr/bin/${applet}"; done \
-  && printf '#!/usr/bin/busybox sh\nchmod %s /root\n' "$VOLUME_MODE" \
+  && printf 'chmod %s /root\n' "$VOLUME_MODE" \
     > /out/usr/local/bin/fix-root-mode \
   && chmod 0755 /out/usr/local/bin/fix-root-mode
 
@@ -22,6 +22,7 @@ COPY ${ARTIFACT_ROOT}/bin/ /usr/bin/
 COPY ${ARTIFACT_ROOT}/lib/ /lib/
 COPY --from=tools /out/ /
 # Distroless already ships /root; COPY cannot replace its mode. No USER
-# instruction — Config.User stays empty like the pin.
-RUN ["/usr/local/bin/fix-root-mode"]
+# instruction — Config.User stays empty like the pin. Invoke busybox
+# explicitly: distroless does not exec shebang interpreters.
+RUN ["/usr/bin/busybox", "sh", "/usr/local/bin/fix-root-mode"]
 ENTRYPOINT ["/bin/.edge-runtime-wrapped"]

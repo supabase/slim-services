@@ -14,7 +14,11 @@ fi
 if [ "${1:-}" = "postgres" ]; then
   /usr/bin/sh /usr/local/bin/entry.sh --prepare
   shift
-  exec /opt/postgres/bin/postgres "$@"
+  GETKEY_SCRIPT="/opt/postgres/share/supabase-cli/config/pgsodium_getkey.sh"
+  exec /opt/postgres/bin/postgres \
+    -c "pgsodium.getkey_script=$GETKEY_SCRIPT" \
+    -c "vault.getkey_script=$GETKEY_SCRIPT" \
+    "$@"
 fi
 
 exec /usr/bin/sh /usr/local/bin/entry.sh "$@"

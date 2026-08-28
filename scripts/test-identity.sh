@@ -35,12 +35,25 @@ fi
 pass "non-sha256 digest is rejected"
 
 SOURCE_IMAGE_DIGEST="sha256:99b1729aeb0bac314445024fc149fbd39306170b61dd50800ccf180327ab3459"
-SOURCE_REF="17.6.1.158"
+IDENTITY_SOURCE_TAG="17.6.1.158"
+SOURCE_REF="17.6.1.166"
 UPSTREAM_IMAGE="supabase/postgres:17.6.1.158"
 ref="$(pinned_upstream_ref)"
 [[ "$ref" == "supabase/postgres:17.6.1.158@sha256:99b1729aeb0bac314445024fc149fbd39306170b61dd50800ccf180327ab3459" ]] \
   || fail_test "unexpected pin ref: $ref"
-pass "pin ref is tag@digest for the recipe SOURCE_REF"
+pass "pin ref is tag@digest when the image tag matches IDENTITY_SOURCE_TAG"
+
+# Release CI sets SOURCE_REF=VERSION. The committed digest must not be
+# reused for a different tag (mock the inspect so this stays unit-local).
+resolve_image_index_digest() {
+  printf 'sha256:resolved-for-%s' "${1##*:}"
+}
+UPSTREAM_IMAGE="supabase/postgres:17.6.1.166"
+ref="$(pinned_upstream_ref)"
+[[ "$ref" == "supabase/postgres:17.6.1.166@sha256:resolved-for-17.6.1.166" ]] \
+  || fail_test "CI VERSION must resolve its own digest, got: $ref"
+pass "pin ref resolves a new digest when the image tag is not IDENTITY_SOURCE_TAG"
+unset -f resolve_image_index_digest
 
 # shellcheck source=scripts/identity-lib.sh
 source "$ROOT_DIR/scripts/identity-lib.sh"
@@ -60,8 +73,9 @@ pass "identity_service allow-list"
 
 # Recipes pin a digest for the three identity services.
 for service in postgres storage edge-runtime; do
-  unset SOURCE_IMAGE_DIGEST UPSTREAM_IMAGE SOURCE_REF VERSION
+  unset SOURCE_IMAGE_DIGEST UPSTREAM_IMAGE SOURCE_REF VERSION IDENTITY_SOURCE_TAG
   load_recipe "$service"
+  [[ -n "${IDENTITY_SOURCE_TAG:-}" ]] || fail_test "$service recipe missing IDENTITY_SOURCE_TAG"
   [[ -n "${SOURCE_IMAGE_DIGEST:-}" ]] || fail_test "$service recipe missing SOURCE_IMAGE_DIGEST"
   case "$SOURCE_IMAGE_DIGEST" in
     sha256:*) ;;
@@ -74,6 +88,8 @@ pass "recipe pins resolve"
 
 grep -q 'SOURCE_IMAGE_DIGEST' "$ROOT_DIR/IMAGE_CONTRACT.md" \
   || fail_test "IMAGE_CONTRACT.md does not describe SOURCE_IMAGE_DIGEST"
+grep -q 'IDENTITY_SOURCE_TAG' "$ROOT_DIR/IMAGE_CONTRACT.md" \
+  || fail_test "IMAGE_CONTRACT.md does not describe IDENTITY_SOURCE_TAG"
 grep -q 'cannot build' "$ROOT_DIR/scripts/build-image-from-artifact.sh" \
   || fail_test "image build must refuse SKIP_UPSTREAM_IDENTITY"
 pass "contract docs; SKIP cannot invent identity"

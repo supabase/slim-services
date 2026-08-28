@@ -201,10 +201,9 @@ resolve_image_index_digest() {
   esac
 }
 
-# Digest-pinned upstream ref. Keep the recipe tag so a release that
-# overrides VERSION/SOURCE_REF cannot silently reuse another tag's digest
-# (`docker pull tag@wrong-digest` fails closed). When VERSION is a
-# different tag than SOURCE_REF, resolve that tag's own index digest.
+# Digest-pinned upstream ref. IDENTITY_SOURCE_TAG is the tag
+# SOURCE_IMAGE_DIGEST was recorded for — not SOURCE_REF, which release
+# CI overwrites to VERSION. A different image tag gets its own digest.
 pinned_upstream_ref() {
   local image tag digest
   [[ -n "${SOURCE_IMAGE_DIGEST:-}" ]] || fail "SOURCE_IMAGE_DIGEST is required (refusing a floating tag)"
@@ -216,7 +215,7 @@ pinned_upstream_ref() {
   image="${UPSTREAM_IMAGE%%@*}"
   tag="${image##*:}"
   digest="$SOURCE_IMAGE_DIGEST"
-  if [[ -n "${SOURCE_REF:-}" && "$tag" != "$SOURCE_REF" ]]; then
+  if [[ -n "${IDENTITY_SOURCE_TAG:-}" && "$tag" != "$IDENTITY_SOURCE_TAG" ]]; then
     digest="$(resolve_image_index_digest "$image")"
   fi
   printf '%s@%s' "$image" "$digest"

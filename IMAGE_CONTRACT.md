@@ -7,12 +7,14 @@ at image-build time.
 
 ## Pin
 
-Each identity-contract service sets `SOURCE_IMAGE_DIGEST` in `recipe.env`
-to the index digest of the recipe `SOURCE_REF` tag. Introspection, image
-build, and smokes pull `tag@digest`. A missing digest or a failed pull is
-a hard error. When release CI sets `VERSION` to a different tag, that
-tag's index digest is resolved and used — the committed digest is not
-reused across versions. There is no ECR-first fallback.
+Each identity-contract service sets `SOURCE_IMAGE_DIGEST` and
+`IDENTITY_SOURCE_TAG` in `recipe.env`. The digest belongs to that tag,
+not to `SOURCE_REF` (release CI overwrites `SOURCE_REF` to `VERSION`).
+Introspection, image build, and smokes pull `tag@digest`. A missing
+digest or a failed pull is a hard error. When the image tag is not
+`IDENTITY_SOURCE_TAG`, that tag's index digest is resolved — the
+committed digest is not reused across versions. There is no ECR-first
+fallback.
 
 `SKIP_UPSTREAM_IDENTITY=1` is rejected for identity-contract image builds
 and image smokes. Never invent uid/gid/mode as a substitute for the pin.

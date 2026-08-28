@@ -37,6 +37,8 @@ RUN apt-get update -y && apt-get install -y --no-install-recommends busybox bash
        printf "include '/opt/postgres/share/supabase-cli/config/postgresql.conf.template'\n"; \
        printf "listen_addresses = '*'\n"; \
        printf "port = 5432\n"; \
+       printf "pgsodium.getkey_script = '/opt/postgres/share/supabase-cli/config/pgsodium_getkey.sh'\n"; \
+       printf "vault.getkey_script = '/opt/postgres/share/supabase-cli/config/pgsodium_getkey.sh'\n"; \
      } > /out/etc/postgresql/postgresql.conf \
   && { \
        printf 'root:x:0:0:root:/root:/sbin/nologin\n'; \
@@ -54,7 +56,7 @@ RUN apt-get update -y && apt-get install -y --no-install-recommends busybox bash
   && chown "$DROP_TO_UID:$DROP_TO_GID" /pgdata-skel/data /out/etc/postgresql /out/etc/postgresql/postgresql.conf \
   && chmod "$VOLUME_MODE" /pgdata-skel/data \
   && chmod 0755 /out/etc/postgresql /out/etc/postgresql-custom /out/docker-entrypoint-initdb.d \
-  && printf '#!/usr/bin/busybox sh\nmkdir -p /var/lib/postgresql/data /etc/postgresql /etc/postgresql-custom /docker-entrypoint-initdb.d\nchown %s:%s /var/lib/postgresql/data /etc/postgresql /etc/postgresql/postgresql.conf\nchmod %s /var/lib/postgresql/data\nchmod 0755 /etc/postgresql /etc/postgresql-custom /docker-entrypoint-initdb.d\n' \
+  && printf 'mkdir -p /var/lib/postgresql/data /etc/postgresql /etc/postgresql-custom /docker-entrypoint-initdb.d\nchown %s:%s /var/lib/postgresql/data /etc/postgresql /etc/postgresql/postgresql.conf\nchmod %s /var/lib/postgresql/data\nchmod 0755 /etc/postgresql /etc/postgresql-custom /docker-entrypoint-initdb.d\n' \
     "$DROP_TO_UID" "$DROP_TO_GID" "$VOLUME_MODE" \
     > /out/usr/local/bin/fix-pg-identity \
   && chmod 0755 /out/usr/local/bin/fix-pg-identity
@@ -69,7 +71,7 @@ COPY --from=tools --chown=${DROP_TO_UID}:${DROP_TO_GID} /pgdata-skel/ /var/lib/p
 COPY --chown=${DROP_TO_UID}:${DROP_TO_GID} ${ARTIFACT_ROOT}/ /opt/postgres/
 COPY services/postgres/overlay/entry.sh /usr/local/bin/entry.sh
 COPY services/postgres/overlay/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-RUN ["/usr/local/bin/fix-pg-identity"]
+RUN ["/usr/bin/busybox", "sh", "/usr/local/bin/fix-pg-identity"]
 # LANG/LC_ALL mirror Dockerfile-supabase so initdb's libc locale fields match
 # the docker.io image; the locale itself resolves via the system archive the
 # tools stage generated (see stage-shared-config.sh for the native fallback).

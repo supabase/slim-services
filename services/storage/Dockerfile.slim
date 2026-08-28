@@ -13,7 +13,7 @@ RUN apt-get update -y && apt-get install -y --no-install-recommends busybox \
   && mkdir -p /out/usr/bin /out/usr/local/bin \
   && cp /usr/bin/busybox /out/usr/bin/busybox \
   && for applet in sh wget; do ln -sf busybox "/out/usr/bin/${applet}"; done \
-  && printf '#!/usr/bin/busybox sh\nmkdir -p /mnt\nchown %s:%s /mnt\nchmod %s /mnt\n' \
+  && printf 'mkdir -p /mnt\nchown %s:%s /mnt\nchmod %s /mnt\n' \
     "$DROP_TO_UID" "$DROP_TO_GID" "$VOLUME_MODE" \
     > /out/usr/local/bin/fix-mnt-mode \
   && chmod 0755 /out/usr/local/bin/fix-mnt-mode
@@ -21,7 +21,7 @@ RUN apt-get update -y && apt-get install -y --no-install-recommends busybox \
 FROM ${BASE_IMAGE}
 ARG ARTIFACT_ROOT
 COPY --from=tools /out/ /
-RUN ["/usr/local/bin/fix-mnt-mode"]
+RUN ["/usr/bin/busybox", "sh", "/usr/local/bin/fix-mnt-mode"]
 WORKDIR /app
 ENV NODE_ENV=production
 COPY ${ARTIFACT_ROOT}/app/ /app/

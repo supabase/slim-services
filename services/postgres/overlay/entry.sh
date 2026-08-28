@@ -78,5 +78,10 @@ fi
 echo "Starting PostgreSQL"
 # ConfigDir is /etc/postgresql (CLI `postgres -D /etc/postgresql`). Cluster
 # files stay in PGDATA. Do not -D leftover PGDATA: that file is initdb
-# defaults on a docker.io volume.
-exec "$BUNDLE/bin/postgres" -D /etc/postgresql "$@"
+# defaults on a docker.io volume. -c getkey wins over leftover auto.conf
+# and the docker.io template path.
+GETKEY_SCRIPT="$BUNDLE/share/supabase-cli/config/pgsodium_getkey.sh"
+exec "$BUNDLE/bin/postgres" -D /etc/postgresql \
+  -c "pgsodium.getkey_script=$GETKEY_SCRIPT" \
+  -c "vault.getkey_script=$GETKEY_SCRIPT" \
+  "$@"
