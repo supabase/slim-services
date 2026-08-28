@@ -374,6 +374,7 @@ cli_wal="$(docker exec -e PGPASSWORD=postgres "$cli_container" \
   "SELECT id FROM initdb_d_marker")" == "1" ]] \
   || fail "CLI-shaped start did not run /docker-entrypoint-initdb.d"
 
+# CLI `cat >` leaves migrate.sh non-executable; entry.sh sources that path.
 log "CLI --from-backup overwrite: initdb.d/migrate.sh must skip bundle migrate.sh"
 from_backup_vol="postgres-from-backup-$RUN_ID"
 create_volume "$from_backup_vol"
@@ -395,7 +396,7 @@ run_container \
   -v "$from_backup_vol:/var/lib/postgresql/data" \
   --entrypoint /usr/bin/sh \
   "$image" \
-  -c 'printf %s "$1" > /docker-entrypoint-initdb.d/migrate.sh && chmod +x /docker-entrypoint-initdb.d/migrate.sh && exec docker-entrypoint.sh postgres -D /etc/postgresql' \
+  -c 'printf %s "$1" > /docker-entrypoint-initdb.d/migrate.sh && exec docker-entrypoint.sh postgres -D /etc/postgresql' \
   _ \
   "$from_backup_migrate"
 wait_for_postgres 240 "$from_backup_container" supabase_admin \
