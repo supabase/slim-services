@@ -107,6 +107,9 @@ for spec in \
   "services/storage/Dockerfile.slim:chown" \
   "services/storage/Dockerfile.slim:chmod" \
   "services/edge-runtime/Dockerfile.slim:chmod" \
+  "services/edge-runtime/Dockerfile.slim:stat" \
+  "services/storage/Dockerfile.slim:stat" \
+  "services/postgres/Dockerfile.slim:stat" \
   "services/postgres/Dockerfile.slim:chown"; do
   file="${spec%%:*}"
   applet="${spec##*:}"

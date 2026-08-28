@@ -120,15 +120,17 @@ run_in_pin() {
   local ref="$1"
   shift
   local args=(--rm --user 0)
-  local ep script bb
+  local ep script bb rc
   if [[ -n "${PLATFORM:-}" ]]; then
     args+=(--platform "$PLATFORM")
   fi
   script="$(printf '%q ' "$@")"
   for ep in /bin/bash /usr/bin/bash /bin/sh /usr/bin/sh; do
     if docker run "${args[@]}" --entrypoint "$ep" "$ref" -c ':' >/dev/null 2>&1; then
-      docker run "${args[@]}" --entrypoint "$ep" "$ref" -c "$script"
-      return $?
+      rc=0
+      docker run "${args[@]}" --entrypoint "$ep" "$ref" -c "$script" || rc=$?
+      # 127 = command not found in this shell (slim may lack that applet).
+      [[ "$rc" -ne 127 ]] && return "$rc"
     fi
   done
   bb="$(identity_busybox_bin)"

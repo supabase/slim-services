@@ -24,7 +24,7 @@ RUN apt-get update -y && apt-get install -y --no-install-recommends busybox bash
     /pgdata-skel/data \
   && cp /usr/lib/locale/locale-archive /out/usr/lib/locale/locale-archive \
   && cp /usr/bin/busybox /out/usr/bin/busybox \
-  && for applet in sh basename cat chmod chown cp cut date dirname env grep gunzip head id mkdir od readlink rm sed sleep su tr uname uniq wc; do \
+  && for applet in sh basename cat chmod chown cp cut date dirname env grep gunzip head id mkdir od readlink rm sed sleep stat su tr uname uniq wc; do \
        ln -sf busybox "/out/usr/bin/${applet}"; \
      done \
   && cp /bin/bash /out/usr/bin/bash \
