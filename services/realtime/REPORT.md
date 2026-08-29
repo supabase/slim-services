@@ -194,5 +194,5 @@ packaging (see NIX_PORTABLE_ARTIFACT_PLAYBOOK.md).
 ## CLI healthcheck (2026-08)
 
 The tools stage already shipped busybox; `wget` is now an applet on PATH so
-the CLI can use `wget -q --spider --header=Host:… /api/ping` instead of
-`/bin/busybox wget` or curl.
+the CLI can use `wget -q --spider --header=Host:realtime-dev /api/ping`
+(seeded tenant, not `APP_NAME`) instead of `/bin/busybox wget` or curl.

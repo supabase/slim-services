@@ -125,6 +125,10 @@ let
 
   cargoDeps = pkgs.rustPlatform.importCargoLock {
     lockFile = ../Cargo.lock;
+    # crates.io /api/v1 403s curl's default UA; static CDN is not gated.
+    extraRegistries = {
+      "https://github.com/rust-lang/crates.io-index" = "https://static.crates.io/crates";
+    };
   };
 
   # Mix writes a stable textual lockfile format. Resolve the exact Hex package
