@@ -1,43 +1,39 @@
 # syntax=docker/dockerfile:1.7
 # Derived image: the portable artifact (static bin/auth) plus the CA bundle
 # and user metadata a scratch image needs (on hosts, the system trust store
-# and passwd are assumed instead).
+# and passwd are assumed instead). Debian busybox is dynamically linked and
+# will not run on scratch. The default busybox:1.36.1 tag is also glibc;
+# busybox:1.36.1-musl is static.
 ARG BASE_IMAGE=scratch
 
+FROM busybox:1.36.1-musl AS busybox
+
 FROM alpine:3.23 AS meta
+COPY --from=busybox /bin/busybox /tmp/busybox
 RUN apk add --no-cache ca-certificates \
-  && mkdir -p /out/etc/ssl/certs /out/usr/local/bin \
+  && mkdir -p /out/bin /out/etc/ssl/certs /out/usr/local/bin \
+  && cp -L /tmp/busybox /out/bin/busybox \
+  && chmod 0755 /out/bin/busybox \
+  && ln -sf busybox /out/bin/sh \
+  && ln -sf busybox /out/bin/wget \
   && cp /etc/ssl/certs/ca-certificates.crt /out/etc/ssl/certs/ca-certificates.crt \
   && printf 'root:x:0:0:root:/root:/sbin/nologin\nsupabase:x:1000:1000:supabase:/nonexistent:/sbin/nologin\n' > /out/etc/passwd \
   && printf 'root:x:0:\nsupabase:x:1000:\n' > /out/etc/group \
   && ln -s auth /out/usr/local/bin/gotrue
 
-# Static probe for the exec-form HEALTHCHECK below: a scratch image has no
-# shell and no busybox, and gotrue has no health subcommand, so the probe is
-# its own tiny stdlib-only Go binary (cross-compiled from the build platform;
-# no emulation).
-FROM --platform=$BUILDPLATFORM golang:1.24-alpine AS probe
-ARG TARGETOS TARGETARCH
-COPY services/auth/healthcheck/ /src/
-RUN cd /src && CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH GOFLAGS=-mod=readonly \
-  go build -trimpath -buildvcs=false -ldflags '-s -w' -o /out/auth-healthcheck .
-
 FROM ${BASE_IMAGE}
 ARG ARTIFACT_ROOT
 COPY --from=meta /out/ /
-COPY --from=probe /out/auth-healthcheck /usr/local/bin/auth-healthcheck
 COPY ${ARTIFACT_ROOT}/bin/auth /usr/local/bin/auth
 USER 1000:1000
 # gotrue's built-in default port is 8081; the image contract — EXPOSE, the
 # CLI, the baked probe — is 9999, so bake the env that makes gotrue listen
-# there. GOTRUE_API_PORT and a runtime -e PORT still override, and the probe
-# resolves the port with the same GOTRUE_API_PORT → PORT precedence gotrue's
-# envconfig uses, so server and probe agree under every override.
+# there. GOTRUE_API_PORT and a runtime -e PORT still override.
 ENV PORT=9999
 EXPOSE 9999
-# Docker uses the baked probe whenever the stack omits --health-cmd, which is
-# how the CLI gets real readiness on a shell-less image.
+# CMD-SHELL wget --spider: same shape the CLI emits for docker.io (busybox
+# subset; GNU-only --no-verbose/--tries are not required).
 HEALTHCHECK --interval=5s --timeout=5s --retries=10 --start-period=10s \
-  CMD ["/usr/local/bin/auth-healthcheck"]
+  CMD wget --spider http://127.0.0.1:9999/health
 # Empty ENTRYPOINT: CLI `["gotrue","migrate"]` must not become `auth gotrue migrate`.
 CMD ["gotrue"]

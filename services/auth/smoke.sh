@@ -40,6 +40,10 @@ if [[ -n "$image" ]]; then
   [[ "$auth_cmd" == '["gotrue"]' ]] \
     || fail "auth CMD is $auth_cmd (expected [gotrue])"
 
+  log "checking sh and wget on PATH (CLI healthcheck)"
+  docker run --rm --entrypoint /bin/sh "$image" -c 'command -v sh && command -v wget' >/dev/null \
+    || fail "auth image is missing sh or wget"
+
   log "checking gotrue executable"
   docker run --rm "$image" gotrue version >/dev/null \
     || fail "gotrue version failed (empty ENTRYPOINT + gotrue symlink)"
@@ -82,6 +86,11 @@ if [[ -n "$image" ]]; then
   if ! wait_for_http_code "http://127.0.0.1:$port/health" "200" 120 "" "$container"; then
     container_logs "$container"
     fail "auth /health did not return 200"
+  fi
+  log "CLI health-cmd: wget --no-verbose --tries=1 --spider"
+  if ! docker exec "$container" wget --no-verbose --tries=1 --spider http://127.0.0.1:9999/health; then
+    container_logs "$container"
+    fail "auth wget health-cmd failed"
   fi
   log "waiting for the baked HEALTHCHECK to report healthy"
   if ! wait_for_container_healthy "$container" 60; then

@@ -81,6 +81,10 @@ fi
 
 ensure_image "$image"
 
+log "checking wget is on PATH (CLI healthcheck)"
+docker run --rm --entrypoint /usr/bin/wget "$image" --help >/dev/null \
+  || fail "pooler image is missing wget"
+
 container="pooler-smoke-$RUN_ID"
 run_container \
   "$container" \
@@ -97,6 +101,11 @@ log "smoke testing pooler on port $port"
 if ! wait_for_http_code "http://127.0.0.1:$port/api/health" "204" 180 "$token" "$container"; then
   container_logs "$container"
   fail "pooler /api/health did not return 204"
+fi
+log "CLI health-cmd: wget --spider /api/health"
+if ! docker exec "$container" wget -q --spider http://127.0.0.1:4000/api/health; then
+  container_logs "$container"
+  fail "pooler wget --spider /api/health failed"
 fi
 record_runtime_metrics "$container"
 log "pooler smoke passed"

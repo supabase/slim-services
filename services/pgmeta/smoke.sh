@@ -73,6 +73,21 @@ fi
 
 ensure_image "$image"
 
+pgmeta_ep="$(docker inspect -f '{{json .Config.Entrypoint}}' "$image")"
+[[ "$pgmeta_ep" == "null" || "$pgmeta_ep" == "[]" ]] \
+  || fail "pgmeta ENTRYPOINT is $pgmeta_ep (expected empty)"
+pgmeta_cmd="$(docker inspect -f '{{json .Config.Cmd}}' "$image")"
+[[ "$pgmeta_cmd" == '["node","dist/server/server.js"]' ]] \
+  || fail "pgmeta CMD is $pgmeta_cmd (expected [node, dist/server/server.js])"
+
+log "checking sh and node on PATH (CLI healthcheck)"
+docker run --rm --entrypoint /usr/bin/sh "$image" -c 'command -v sh && command -v node && command -v wget' >/dev/null \
+  || fail "pgmeta image is missing sh, node, or wget"
+
+log "CLI gen types argv: node -e (must not become node node …)"
+docker run --rm "$image" node -e 'process.exit(0)' \
+  || fail "pgmeta node -e failed (empty ENTRYPOINT + node on PATH)"
+
 container="pgmeta-smoke-$RUN_ID"
 run_container \
   "$container" \
@@ -91,6 +106,11 @@ log "smoke testing pgmeta on port $port"
 if ! wait_for_http_code "http://127.0.0.1:$port/health" "200" 120 "" "$container"; then
   container_logs "$container"
   fail "pgmeta /health did not return 200"
+fi
+log "CLI health-cmd: node --eval fetch /health"
+if ! docker exec "$container" node --eval="fetch('http://127.0.0.1:8080/health').then((r) => {if (!r.ok) throw new Error(r.status)})"; then
+  container_logs "$container"
+  fail "pgmeta node --eval health-cmd failed"
 fi
 log "waiting for the baked HEALTHCHECK to report healthy"
 if ! wait_for_container_healthy "$container" 60; then

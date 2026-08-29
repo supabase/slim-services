@@ -234,8 +234,7 @@ wait_for_http_code() {
 }
 
 # Wait for Docker itself to report the container healthy via the image's
-# baked HEALTHCHECK — the readiness contract stacks rely on when they omit
-# --health-cmd. Fails immediately if the image bakes no HEALTHCHECK at all.
+# baked HEALTHCHECK. Fails immediately if the image bakes no HEALTHCHECK.
 wait_for_container_healthy() {
   local container="$1"
   local timeout="${2:-120}"

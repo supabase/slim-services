@@ -151,3 +151,9 @@ openssl/libstdc++/ncurses itself instead of leaning on distroless-cc, the
 cost of one rootfs serving native and Docker), and the archive runs as a
 bare host process on a store-less Debian. disksup disabled via `vm.args`
 (see realtime's note).
+
+## CLI healthcheck (2026-08)
+
+The tools stage already shipped busybox; `wget` is now an applet on PATH so
+the CLI can use `wget -q --spider /api/health` instead of `/bin/busybox wget`
+or curl.

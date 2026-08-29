@@ -119,22 +119,18 @@ for the service.
 `build-host.sh` now builds the Linux artifacts too (Go cross-compiles from
 any host), so every target shares the `bin/auth` layout, and
 `Dockerfile.slim` derives the scratch image from the artifact (an alpine
-stage supplies the CA bundle, passwd/group, and the `gotrue` symlink).
+stage supplies the CA bundle, passwd/group, the `gotrue` symlink, and
+static busybox `sh`/`wget`).
 The docker-source builder is gone. linux-arm64
 verified: derived image smoke green (`/health` 200, RSS 8.0 MiB, 11.4 MiB
 gzip ≈ before); linux-amd64 artifact builds a static x86-64 ELF.
 
 ## Image HEALTHCHECK (2026-08)
 
-The scratch image cannot run CMD-SHELL healthchecks, so slim `supabase
-start` reported auth ready on `Running` (supabase/slim-services#280). The image
-now bakes an exec-form `HEALTHCHECK` backed by `bin/auth-healthcheck`, a
-static stdlib-only Go probe (`services/auth/healthcheck/`, cross-compiled in
-a Dockerfile stage from the build platform): gotrue has no health
-subcommand, and the image has no shell to fetch `/health` otherwise. The
-probe resolves the port with gotrue's own `GOTRUE_API_PORT` → `PORT`
-precedence, falling back to the image's baked `ENV PORT=9999` (gotrue's
-built-in default is 8081, so the image bakes the port its EXPOSE and the
-CLI already assume). The image smoke runs without injecting a port env and
-waits for `docker inspect` to report `healthy`, pinning the baked-port
-contract.
+Scratch has no libc, so the image copies static busybox (`busybox:1.36.1-musl`)
+as `/bin/sh` and `/bin/wget`. The default `busybox:1.36.1` tag is glibc and
+cannot exec on scratch. The baked `HEALTHCHECK` is `wget --spider`
+against `/health` on the baked `ENV PORT=9999` — the busybox-safe subset of
+the CLI docker.io wget probe. The image smoke runs without injecting a port
+env, execs that wget line, and waits for `docker inspect` to report
+`healthy`.

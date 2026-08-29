@@ -190,3 +190,9 @@ archive runs as a bare host process on a store-less Debian (healthcheck 200).
 Found in the process: nixpkgs compiles an absolute Nix-store bash path into
 OTP's `disksup.beam` — disksup is disabled via `vm.args` in the portable
 packaging (see NIX_PORTABLE_ARTIFACT_PLAYBOOK.md).
+
+## CLI healthcheck (2026-08)
+
+The tools stage already shipped busybox; `wget` is now an applet on PATH so
+the CLI can use `wget -q --spider --header=Host:… /api/ping` instead of
+`/bin/busybox wget` or curl.

@@ -104,7 +104,7 @@ ensure_image "$image"
 log "checking realtime derived-image entry wiring"
 docker run --rm --entrypoint /usr/bin/sh "$image" -c '
   set -eu
-  for bin in sh tini; do
+  for bin in sh tini wget; do
     test -x "/usr/bin/${bin}"
   done
   test -x /app/bin/realtime
@@ -142,6 +142,11 @@ log "smoke testing realtime on port $port"
 if ! wait_for_http_code "http://127.0.0.1:$port/healthcheck" "200" 180 "" "$container"; then
   container_logs "$container"
   fail "realtime /healthcheck did not return 200"
+fi
+log "CLI health-cmd: wget --spider /api/ping"
+if ! docker exec "$container" wget -q --spider --header=Host:realtime-smoke http://127.0.0.1:4000/api/ping; then
+  container_logs "$container"
+  fail "realtime wget --spider /api/ping failed"
 fi
 if ! docker exec "$container" /app/bin/realtime eval \
   'if Code.ensure_loaded?(Lumis), do: true = Lumis.available_languages() != []'; then
