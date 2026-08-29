@@ -71,8 +71,10 @@ class UpstreamArtifactTest(unittest.TestCase):
             }
         )
         self.artifact_dir = ROOT_DIR / "artifacts" / "mailpit" / "v1.30.2" / "linux-amd64"
+        self.linux_arm64_artifact_dir = ROOT_DIR / "artifacts" / "mailpit" / "v1.30.2" / "linux-arm64"
         self.darwin_artifact_dir = ROOT_DIR / "artifacts" / "mailpit" / "v1.30.2" / "darwin-arm64"
         self.addCleanup(shutil.rmtree, self.artifact_dir, ignore_errors=True)
+        self.addCleanup(shutil.rmtree, self.linux_arm64_artifact_dir, ignore_errors=True)
         self.addCleanup(shutil.rmtree, self.darwin_artifact_dir, ignore_errors=True)
 
     def write_policy(self, digest: str):
@@ -113,6 +115,15 @@ class UpstreamArtifactTest(unittest.TestCase):
             text=True,
             capture_output=True,
         )
+
+    def artifact_dir_for(self, target_os, arch):
+        return ROOT_DIR / "artifacts" / "mailpit" / "v1.30.2" / f"{target_os}-{arch}"
+
+    def manifest_for_target(self, target_os, arch, **env_overrides):
+        result = self.run_build(TARGET_OS=target_os, ARCH=arch, **env_overrides)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        manifest_path = self.artifact_dir_for(target_os, arch) / "manifest.json"
+        return json.loads(manifest_path.read_text(encoding="utf-8"))
 
     def vector_recipe_libc(self, target_os, arch):
         env = os.environ.copy()
@@ -180,6 +191,18 @@ class UpstreamArtifactTest(unittest.TestCase):
 
         manifest = json.loads((self.darwin_artifact_dir / "manifest.json").read_text(encoding="utf-8"))
         self.assertIsNone(manifest["libc"])
+
+    def test_runtime_metadata_matches_target(self):
+        expected = (
+            ("linux", "amd64", "glibc", "glibc", {}),
+            ("linux", "arm64", "glibc", "glibc", {}),
+            ("darwin", "arm64", None, None, {"RUNTIME_REQUIRES": "glibc"}),
+        )
+        for target_os, arch, runtime_requires, libc, env_overrides in expected:
+            with self.subTest(target=f"{target_os}-{arch}"):
+                manifest = self.manifest_for_target(target_os, arch, **env_overrides)
+                self.assertEqual(manifest["runtime_requires"], runtime_requires)
+                self.assertEqual(manifest["libc"], libc)
 
     def test_vector_recipe_only_overrides_libc_for_linux(self):
         self.assertEqual(self.vector_recipe_libc("linux", "amd64"), "musl")
