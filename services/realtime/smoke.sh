@@ -143,9 +143,21 @@ if ! wait_for_http_code "http://127.0.0.1:$port/healthcheck" "200" 180 "" "$cont
   container_logs "$container"
   fail "realtime /healthcheck did not return 200"
 fi
-# CLI probes /api/ping with Host: TenantId (default realtime-dev), which
-# SEED_SELF_HOST creates. APP_NAME is not a tenant — that Host 401s.
+# CLI probes 127.0.0.1:4000 /api/ping with Host: TenantId (realtime-dev).
+# Host-mapped /healthcheck can succeed before loopback accepts.
 log "CLI health-cmd: wget --spider /api/ping"
+ready=0
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+  if docker exec "$container" wget -q --spider http://127.0.0.1:4000/healthcheck; then
+    ready=1
+    break
+  fi
+  sleep 1
+done
+[[ "$ready" == 1 ]] || {
+  container_logs "$container"
+  fail "realtime loopback /healthcheck never accepted"
+}
 if ! docker exec "$container" wget -q --spider --header=Host:realtime-dev http://127.0.0.1:4000/api/ping; then
   container_logs "$container"
   fail "realtime wget --spider /api/ping failed"

@@ -98,12 +98,24 @@ let
       && !(lib.hasPrefix "docs" rel);
   };
 
-  cargoDeps = pkgs.rustPlatform.importCargoLock {
+  # crates.io /api/v1 403s curl's default UA. Remap the fetch URL only —
+  # extraRegistries writes a second crates-io source and cargo rejects it.
+  importCargoLock = pkgs.rustPlatform.importCargoLock.override {
+    fetchurl = args:
+      let
+        url = args.url or "";
+        api = "https://crates.io/api/v1/crates/";
+      in
+      pkgs.fetchurl (
+        args
+        // lib.optionalAttrs (lib.hasPrefix api url) {
+          url = "https://static.crates.io/crates/" + lib.removePrefix api url;
+        }
+      );
+  };
+
+  cargoDeps = importCargoLock {
     lockFile = ../native/Cargo.lock;
-    # crates.io /api/v1 403s curl's default UA; static CDN is not gated.
-    extraRegistries = {
-      "https://github.com/rust-lang/crates.io-index" = "https://static.crates.io/crates";
-    };
   };
 
   mixDeps = fetchMixDeps {
