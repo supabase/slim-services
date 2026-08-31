@@ -62,14 +62,11 @@
       orioledbExtensions = orioleFilteredExtensions ++ [ ../ext/orioledb.nix ];
       dbExtensions17 = orioleFilteredExtensions;
 
-      # CLI extensions - minimal set for Supabase CLI with migration support
-      # slim-services overlay (HOST_NATIVE_PLAN.md): the portable artifact
-      # ships the FULL PG17 extension set — everything the upstream Docker
-      # image supports (ourExtensions minus timescaledb/plv8, which do not
-      # support PG17). Extensions on disk cost nothing at runtime: only the
-      # minimal shared_preload_libraries set is enabled by default, so the
-      # low-footprint profile is unaffected.
-      cliExtensions = dbExtensions17;
+      # CLI extensions follow the matching upstream Dockerfile image set:
+      # PG15 retains timescaledb/plv8 from ourExtensions, while PG17 uses the
+      # filtered set because those extensions do not support PG17.
+      cliExtensionsForVersion = version:
+        if version == "17" then dbExtensions17 else ourExtensions;
 
       getPostgresqlPackage =
         version: latestOnly:
@@ -122,7 +119,7 @@
           postgresql = getPostgresqlPackage version latestOnly;
           extensionsToUse =
             if variant == "cli" then
-              cliExtensions
+              cliExtensionsForVersion version
             else if (builtins.elem version [ "orioledb-17" ]) then
               orioledbExtensions
             else if (builtins.elem version [ "17" ]) then
@@ -141,8 +138,57 @@
                 repo = "pg_plan_filter";
               }
             );
-          extCallPackage = pkgs.lib.callPackageWith (
+          # Nixpkgs' pinned fetchCrate still targets crates.io's API endpoint,
+          # which now rejects these archive downloads. Keep this override
+          # local to extension evaluation so unrelated packages retain their
+          # normal registry configuration. The explicit registryDl argument,
+          # when supplied by a caller, remains authoritative.
+          packageScope =
+            let
+              staticCrateRegistry = "https://static.crates.io/crates";
+              fetchCrate =
+                args:
+                pkgs.fetchCrate (
+                  args
+                  // lib.optionalAttrs (!(args ? registryDl)) {
+                    registryDl = staticCrateRegistry;
+                  }
+                );
+              makeRustPlatform =
+                platformArgs:
+                let
+                  baseRustPlatform = pkgs.makeRustPlatform platformArgs;
+                  importCargoLock = baseRustPlatform.importCargoLock.override {
+                    fetchurl =
+                      args:
+                      let
+                        obsoleteRegistryPrefix = "https://crates.io/api/v1/crates/";
+                        url = args.url or "";
+                        rewrittenUrl =
+                          if lib.hasPrefix obsoleteRegistryPrefix url then
+                            staticCrateRegistry + "/" + lib.removePrefix obsoleteRegistryPrefix url
+                          else
+                            url;
+                      in
+                      pkgs.fetchurl (args // { url = rewrittenUrl; });
+                  };
+                in
+                baseRustPlatform
+                // {
+                  inherit importCargoLock;
+                  buildRustPackage = baseRustPlatform.buildRustPackage.override {
+                    inherit importCargoLock;
+                  };
+                };
+            in
             pkgs
+            // {
+              inherit fetchCrate makeRustPlatform;
+              callPackage = lib.callPackageWith packageScope;
+              callPackages = lib.callPackagesWith packageScope;
+            };
+          extCallPackage = lib.callPackageWith (
+            packageScope
             // {
               inherit postgresql latestOnly;
               fetchFromGitHub = extensionFetchFromGitHub;
@@ -249,8 +295,13 @@
         psql_orioledb-17_slim = makePostgres "orioledb-17" { latestOnly = true; };
       };
 
-      # CLI packages - minimal PostgreSQL + supautils only for Supabase CLI
+      # CLI packages - latest-only PostgreSQL plus the full extension set used
+      # by the corresponding upstream Docker image.
       cliPackages = {
+        psql_15_cli = makePostgres "15" {
+          variant = "cli";
+          latestOnly = true;
+        };
         psql_17_cli = makePostgres "17" {
           variant = "cli";
           # slim-services overlay: ship only the LATEST version of each
@@ -262,13 +313,23 @@
         };
       };
 
+      # PG15 portable output is owned by this overlay. The pinned source's
+      # default module still exports the repo-owned, Nix-built PG17 portable
+      # artifact through its historical `psql_17_cli` call.
+      portablePackages = {
+        psql_15_cli_portable = pkgs.callPackage ./postgres-portable.nix {
+          psql_cli = cliPackages.psql_15_cli;
+          postgres_major = "15";
+        };
+      };
+
       binPackages = lib.mapAttrs' (name: value: {
         name = "${name}/bin";
         value = value.bin;
       }) (basePackages // slimPackages // cliPackages);
     in
     {
-      packages = binPackages;
+      packages = binPackages // portablePackages;
       legacyPackages = basePackages // slimPackages // cliPackages;
     };
 }

@@ -377,6 +377,48 @@ class ReleasePollerTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("source_ref_tag_pattern", result.stderr)
 
+    def test_validation_rejects_release_line_outside_service_pattern(self):
+        config = json.loads(self.config.read_text(encoding="utf-8"))
+        config["services"]["realtime"].update(
+            {"release_source": "dockerhub", "image_repository": "supabase/realtime"}
+        )
+        config["services"]["realtime"]["release_lines"] = [
+            {"tag_pattern": r"^x[0-9]+$", "release_floor": "x1"}
+        ]
+        self.config.write_text(json.dumps(config), encoding="utf-8")
+
+        result = subprocess.run(
+            [str(POLLER), "--validate-config"],
+            text=True,
+            capture_output=True,
+            env={**os.environ, "SERVICE_RELEASE_CONFIG": str(self.config)},
+            check=False,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("service tag_pattern", result.stderr)
+
+    def test_validation_rejects_release_lines_for_github_services(self):
+        config = json.loads(self.config.read_text(encoding="utf-8"))
+        config["services"]["realtime"]["release_lines"] = [
+            {
+                "tag_pattern": r"^v[0-9]+\.[0-9]+\.[0-9]+$",
+                "release_floor": "v2.128.0",
+            }
+        ]
+        self.config.write_text(json.dumps(config), encoding="utf-8")
+
+        result = subprocess.run(
+            [str(POLLER), "--validate-config"],
+            text=True,
+            capture_output=True,
+            env={**os.environ, "SERVICE_RELEASE_CONFIG": str(self.config)},
+            check=False,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Docker Hub", result.stderr)
+
     def test_postgres_discovers_only_published_docker_tags(self):
         production_config = json.loads(
             (ROOT / ".github" / "service-release-sources.json").read_text(
@@ -397,16 +439,19 @@ class ReleasePollerTest(unittest.TestCase):
             "17.10.1.001\n17.6.1.15799999\n17.6.1.159\n",
             encoding="utf-8",
         )
-        self.published.write_text("postgres-17.6.1.159\n", encoding="utf-8")
+        self.published.write_text(
+            "postgres-15.14.1.159\npostgres-17.6.1.159\n", encoding="utf-8"
+        )
 
         class DockerHubHandler(http.server.BaseHTTPRequestHandler):
             def do_GET(self):
                 body = json.dumps(
                     {
-                        "count": 2,
+                        "count": 3,
                         "next": None,
                         "previous": None,
                         "results": [
+                            {"name": "15.14.1.159"},
                             {"name": "17.6.1.159"},
                             {"name": "17.6.1.777"},
                         ],
@@ -442,6 +487,138 @@ class ReleasePollerTest(unittest.TestCase):
                 "--ref main -f service=postgres -f version=17.6.1.777 -f force=false"
             ],
         )
+
+    def test_postgres_reconciles_both_major_lines_from_floor_in_version_order(self):
+        production_config = json.loads(
+            (ROOT / ".github" / "service-release-sources.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.config.write_text(
+            json.dumps(
+                {
+                    "services": {
+                        "postgres": production_config["services"]["postgres"]
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        # The server deliberately includes an architecture/suffixed tag and
+        # pre-floor PG15/PG17 tags. Only canonical tags at or above each
+        # line's floor are eligible; already-published tags are skipped.
+        class DockerHubHandler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                body = json.dumps(
+                    {
+                        "count": 10,
+                        "next": None,
+                        "previous": None,
+                        "results": [
+                            {"name": "17.6.1.160"},
+                            {"name": "15.14.1.161"},
+                            {"name": "15.14.1.159-arm64"},
+                            {"name": "15.14.1.158"},
+                            {"name": "17.6.1.158"},
+                            {"name": "17.4.1.004"},
+                            {"name": "17.6.1.159"},
+                            {"name": "15.14.1.160"},
+                            {"name": "15.14.1.159"},
+                            {"name": "17.6.1.161"},
+                        ],
+                    }
+                ).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *_args):
+                pass
+
+        self.published.write_text(
+            "postgres-15.14.1.159\npostgres-17.6.1.159\n", encoding="utf-8"
+        )
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), DockerHubHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            result = self.run_poller(
+                service="postgres",
+                max_dispatches_per_service="3",
+                docker_hub_api_base=f"http://127.0.0.1:{server.server_port}/v2",
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join()
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            self.trace.read_text(encoding="utf-8").splitlines(),
+            [
+                "workflow run service-release.yml --repo supabase/slim-services "
+                "--ref main -f service=postgres -f version=15.14.1.160 -f force=false",
+                "workflow run service-release.yml --repo supabase/slim-services "
+                "--ref main -f service=postgres -f version=15.14.1.161 -f force=false",
+                "workflow run service-release.yml --repo supabase/slim-services "
+                "--ref main -f service=postgres -f version=17.6.1.160 -f force=false",
+            ],
+        )
+
+    def test_postgres_reconciliation_rejects_overlapping_release_lines(self):
+        production_config = json.loads(
+            (ROOT / ".github" / "service-release-sources.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        config = production_config["services"]["postgres"]
+        config["release_lines"][1] = {
+            "tag_pattern": r"^15\.[0-9]+\.[0-9]+\.[0-9]{3}$",
+            "release_floor": "15.14.1.160",
+        }
+        self.config.write_text(json.dumps({"services": {"postgres": config}}), encoding="utf-8")
+        self.published.write_text("postgres-15.14.1.159\n", encoding="utf-8")
+
+        class DockerHubHandler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                body = json.dumps(
+                    {
+                        "count": 2,
+                        "next": None,
+                        "previous": None,
+                        "results": [
+                            {"name": "15.14.1.159"},
+                            {"name": "15.14.1.160"},
+                        ],
+                    }
+                ).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *_args):
+                pass
+
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), DockerHubHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            result = self.run_poller(
+                service="postgres",
+                docker_hub_api_base=f"http://127.0.0.1:{server.server_port}/v2",
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join()
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(self.trace.exists())
+        self.assertIn("matched 2 release lines", result.stderr)
 
 
 if __name__ == "__main__":

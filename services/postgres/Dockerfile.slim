@@ -3,6 +3,9 @@
 # USER is unset (root), matching docker.io. entry.sh / docker-entrypoint.sh
 # drop to the probed uid before postgres execs.
 #
+# The artifact ships the full extension set for its selected PostgreSQL major
+# (installed; preload behavior follows the matching upstream image's shared
+# configuration).
 # DROP_TO_* / VOLUME_MODE are generated from the digest-pinned upstream
 # image (scripts/introspect-upstream-identity.sh). Do not hardcode them.
 ARG BASE_IMAGE=gcr.io/distroless/base-debian13
