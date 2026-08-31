@@ -25,25 +25,15 @@ EOF
 mode="$1"
 rootfs="$2"
 [[ -d "$rootfs" ]] || fail "rootfs directory not found: $rootfs"
+require_cmd python3
 
-# Symlinks must stay relative on every platform: an absolute target (a Nix
-# store leak, or any host path) breaks the moment the artifact is extracted
-# somewhere else. Relative links are also what the dedup pass in portable
-# packaging emits, so this doubles as its regression check.
-bad_symlinks="$(
-  find "$rootfs" -type l 2>/dev/null \
-    | while IFS= read -r link_path; do
-        target="$(readlink "$link_path")"
-        # No case statement here: the pattern-closing paren inside a command
-        # substitution is a parse error on macOS bash 3.2.
-        if [[ "$target" == /* ]]; then
-          printf '%s -> %s\n' "$link_path" "$target"
-        fi
-      done
-)"
-if [[ -n "$bad_symlinks" ]]; then
-  printf '%s\n' "$bad_symlinks" >&2
-  fail "artifact contains absolute symlinks (not relocatable)"
+# Every emitted symlink must resolve with real filesystem semantics to an
+# existing path inside the artifact root. This catches absolute build-host
+# leaks as well as dangling or escaping relative pnpm links.
+symlink_errors=""
+if ! symlink_errors="$(python3 "$ROOT_DIR/scripts/validate-artifact-symlinks.py" "$rootfs" 2>&1)"; then
+  printf '%s\n' "$symlink_errors" >&2
+  fail "artifact contains invalid symlinks"
 fi
 
 case "$mode" in

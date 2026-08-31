@@ -176,6 +176,11 @@ else
 fi
 
 "$ROOT_DIR/scripts/prune-runtime-tree.sh" "$rootfs"
+if [[ "$service" == "studio" ]]; then
+  # Studio's host build assembles a Next/TanStack runtime tree; validate the
+  # post-prune tree as the exact input that will be archived below.
+  "$ROOT_DIR/services/studio/validate-artifact.sh" "$rootfs"
+fi
 "$ROOT_DIR/scripts/generate-artifact-sbom.sh" \
   "$rootfs" "$sbom" "$service" "$VERSION" \
   "$(artifact_platform_dir "$TARGET_OS" "$ARCH")"
@@ -246,6 +251,12 @@ with open("$manifest", "w", encoding="utf-8") as fh:
     json.dump(manifest, fh, indent=2)
     fh.write("\\n")
 PY
+
+if [[ "$service" == "studio" ]]; then
+  # Re-check the published command paths against the generated manifest after
+  # the manifest itself has been written, before reporting a successful build.
+  "$ROOT_DIR/services/studio/validate-artifact.sh" "$rootfs" "$manifest"
+fi
 
 "$ROOT_DIR/scripts/measure-artifact.sh" "$rootfs" ${archive:+"$archive"}
 log "source artifact ready: $artifact_dir"

@@ -356,6 +356,7 @@ def test_repository_checks_runs_dynamic_and_external_contracts():
         "scripts/test-external-source-build.sh",
         "scripts/test-dockerhub-release.sh",
         "scripts/test-portable-audit.sh",
+        "scripts/test-studio-artifact.sh",
         "scripts/test-license-compliance.sh",
         "scripts/test-poll-service-releases.sh",
         "scripts/test-identity.sh",

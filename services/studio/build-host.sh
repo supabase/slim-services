@@ -109,6 +109,8 @@ if [[ "$studio_framework" == "next" ]]; then
   studio_phase_complete
 
   studio_phase_start "assemble Next.js runtime tree"
+  "$ROOT_DIR/services/studio/normalize-next-standalone.sh" \
+    apps/studio/.next/standalone "$build_dir/node_modules/.pnpm"
   cp -R apps/studio/.next/standalone/. "$ROOTFS/app/"
   mkdir -p "$ROOTFS/app/apps/studio/.next"
   cp -R apps/studio/.next/static "$ROOTFS/app/apps/studio/.next/static"
@@ -192,5 +194,9 @@ exec "$NODE_BIN" apps/studio/docker-entrypoint.mjs \
   "$NODE_BIN" apps/studio/server.js "$@"
 WRAPPER
 chmod 0755 "$ROOTFS/bin/studio"
+studio_phase_complete
+
+studio_phase_start "validate assembled Studio artifact"
+"$ROOT_DIR/services/studio/validate-artifact.sh" "$ROOTFS"
 studio_phase_complete
 log "Studio host build completed ($((SECONDS - studio_build_started_at))s total)"

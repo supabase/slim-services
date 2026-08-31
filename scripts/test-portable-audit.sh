@@ -8,10 +8,13 @@ import os
 import pathlib
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
+sys.dont_write_bytecode = True
 ROOT_DIR = pathlib.Path(os.sys.argv[1])
 os.sys.argv[1:] = []
 AUDIT = ROOT_DIR / "scripts" / "audit-portable-artifact.sh"
@@ -146,6 +149,78 @@ class PortableAuditTest(unittest.TestCase):
         result = self.run_audit(bundled=False)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("ldd audit failed", result.stderr)
+
+    def test_dangling_symlink_is_rejected(self):
+        (self.rootfs / "bin" / "broken").symlink_to("missing")
+        result = self.run_audit()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("dangling symlink", result.stderr)
+
+    def test_symlink_resolving_outside_root_is_rejected(self):
+        (self.temp / "outside").write_text("outside", encoding="utf-8")
+        (self.rootfs / "bin" / "escape").symlink_to("../../outside")
+        result = self.run_audit()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("outside artifact root", result.stderr)
+
+    def test_absolute_symlink_is_rejected(self):
+        (self.rootfs / "bin" / "absolute").symlink_to("/etc/passwd")
+        result = self.run_audit()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("absolute symlink", result.stderr)
+
+    def test_symlink_with_non_directory_trailing_slash_is_rejected(self):
+        (self.rootfs / "bin" / "regular").write_text("fixture", encoding="utf-8")
+        (self.rootfs / "bin" / "malformed").symlink_to("regular/")
+        result = self.run_audit()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("cannot resolve", result.stderr)
+
+    def test_symlink_with_non_directory_component_is_rejected(self):
+        (self.rootfs / "bin" / "regular").write_text("fixture", encoding="utf-8")
+        for index, target in enumerate(("regular/.", "regular/..", "regular/../other", "regular//.")):
+            (self.rootfs / "bin" / f"malformed-{index}").symlink_to(target)
+        result = self.run_audit()
+        self.assertNotEqual(result.returncode, 0)
+        for index in range(4):
+            self.assertIn(f"malformed-{index}", result.stderr)
+        self.assertIn("cannot resolve", result.stderr)
+
+    def test_empty_symlink_target_is_rejected(self):
+        empty = self.rootfs / "bin" / "empty"
+        try:
+            os.symlink("", empty)
+        except (OSError, ValueError) as error:
+            self.skipTest(f"platform refuses empty symlink target: {error}")
+        result = self.run_audit()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("empty symlink target", result.stderr)
+
+    def test_symlink_cycle_is_rejected(self):
+        (self.rootfs / "bin" / "cycle-a").symlink_to("cycle-b")
+        (self.rootfs / "bin" / "cycle-b").symlink_to("cycle-a")
+        result = self.run_audit()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("cannot resolve", result.stderr)
+
+    def test_tree_scan_errors_are_reported(self):
+        module_path = ROOT_DIR / "scripts" / "validate-artifact-symlinks.py"
+        spec = __import__("importlib.util").util.spec_from_file_location(
+            "validate_artifact_symlinks", module_path
+        )
+        module = __import__("importlib.util").util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        def failing_walk(root, topdown=True, followlinks=False, onerror=None):
+            if onerror is None:
+                raise AssertionError("validator did not install a scan error handler")
+            onerror(OSError("fixture scan failure"))
+            return []
+
+        with mock.patch.object(module.os, "walk", failing_walk):
+            failures = module.validate(self.rootfs)
+        self.assertEqual(len(failures), 1)
+        self.assertIn("cannot scan directory", failures[0])
 
 
 if __name__ == "__main__":
