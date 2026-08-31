@@ -261,7 +261,7 @@ parity_psql() {
 }
 
 parity_capture() {
-  local side="$1" host="$2" db
+  local side="$1" host="$2" db hba_order_column
   # \restrict/\unrestrict carry a random per-dump nonce; SCRAM hashes carry
   # a random per-initdb salt. Neither encodes real state — mask them.
   docker exec -e PGPASSWORD=postgres "$container" \
@@ -289,7 +289,13 @@ parity_capture() {
   # Socket-local rules are excluded: distroless ships no OS user database,
   # so the slim image trusts the in-container socket where docker.io uses
   # peer. Host rules are what the CLI and other stack services depend on.
-  parity_psql "$host" "SELECT type || '|' || coalesce(array_to_string(database, ','), '') || '|' || coalesce(array_to_string(user_name, ','), '') || '|' || coalesce(address, '') || '|' || coalesce(netmask, '') || '|' || coalesce(auth_method, '') FROM pg_hba_file_rules WHERE type <> 'local' ORDER BY rule_number" \
+  hba_order_column="$(parity_psql "$host" "SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_catalog.pg_attribute WHERE attrelid = 'pg_catalog.pg_hba_file_rules'::regclass AND attname = 'rule_number' AND NOT attisdropped) THEN 'rule_number' WHEN EXISTS (SELECT 1 FROM pg_catalog.pg_attribute WHERE attrelid = 'pg_catalog.pg_hba_file_rules'::regclass AND attname = 'line_number' AND NOT attisdropped) THEN 'line_number' ELSE '' END")" \
+    || fail "parity capture failed: $side could not inspect pg_hba_file_rules columns"
+  case "$hba_order_column" in
+    rule_number|line_number) ;;
+    *) fail "parity capture failed: $side pg_hba_file_rules exposes neither rule_number nor line_number" ;;
+  esac
+  parity_psql "$host" "SELECT type || '|' || coalesce(array_to_string(database, ','), '') || '|' || coalesce(array_to_string(user_name, ','), '') || '|' || coalesce(address, '') || '|' || coalesce(netmask, '') || '|' || coalesce(auth_method, '') FROM pg_hba_file_rules WHERE type <> 'local' ORDER BY ${hba_order_column}" \
     >"$parity_dir/$side.hba.txt" \
     || fail "parity capture failed: $side pg_hba rules"
 }
