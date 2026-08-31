@@ -88,12 +88,11 @@ from this release-backed snapshot until the first native Studio release
 publishes its measured manifests.
 
 Postgres is native-first like everything else: the image is derived from the
-portable artifact, which ships every extension the upstream PG17 image
-supports (timescaledb/plv8 are PG17-incompatible upstream). Extensions are
-installed but not enabled — only the minimal `shared_preload_libraries` set
-is on by default, so the footprint numbers are unaffected; the few
-preload-gated extensions (pgaudit, pg_stat_monitor, pg_tle) take a config
-opt-in.
+portable artifact, which ships the extension set supported by the matching
+upstream image for its selected major (PG15 includes TimescaleDB/plv8; PG17
+omits those incompatible extensions). Configuration and preload behavior
+follow that matching upstream image; all supported extensions are installed,
+with only the image's configured `shared_preload_libraries` enabled by default.
 
 ### Host-Native Artifacts
 
