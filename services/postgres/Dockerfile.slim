@@ -4,8 +4,8 @@
 # drop to the probed uid before postgres execs.
 #
 # The artifact ships the full extension set for its selected PostgreSQL major
-# (installed, not enabled: only the minimal shared_preload_libraries set is on
-# by default, so the low-footprint profile is unaffected).
+# (installed; preload behavior follows the matching upstream image's shared
+# configuration).
 # DROP_TO_* / VOLUME_MODE are generated from the digest-pinned upstream
 # image (scripts/introspect-upstream-identity.sh). Do not hardcode them.
 ARG BASE_IMAGE=gcr.io/distroless/base-debian13

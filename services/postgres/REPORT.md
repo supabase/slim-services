@@ -15,13 +15,13 @@ including the extension set shipped by that major's upstream Dockerfile.
   requested Docker Hub tag; no upstream portable package is consumed.
 - PG15 keeps the full `ourExtensions` set (including TimescaleDB and plv8).
   PG17 uses the matching filtered set because those two extensions are not
-  compatible with that major. Extensions are installed but not enabled by
-  default beyond the required preload set.
+  compatible with that major. Extensions are installed; preload behavior
+  follows the matching upstream image configuration.
 - Portable packaging uses latest-only extension outputs and bundles the
   minimal glibc locale archive on Linux; copied libraries are patched to
   relative paths so the rootfs remains relocatable.
-- Local-dev config overlay at `/etc/postgresql-custom/conf.d/99-local-dev.conf`
-  (loaded through the stock `include_dir`), all values overridable via
+- Local-dev settings from `nix/packages/local-dev.conf` are appended to the
+  bundled `postgresql.conf.template`; all values remain overridable via
   `postgres -c`:
   `shared_buffers=32MB`, `effective_cache_size=128MB`,
   `maintenance_work_mem=32MB`, `max_connections=100`, `max_wal_size=128MB`,
@@ -30,7 +30,8 @@ including the extension set shipped by that major's upstream Dockerfile.
   requires it).
 - The derived image provides a small busybox/bash tools stage, the bundle at
   `/opt/postgres`, and the repo-owned entrypoint that performs initdb,
-  migrations, and Docker networking setup as uid 65532.
+  migrations, and Docker networking setup using the UID/GID generated from
+  the digest-pinned upstream identity.
 
 ## What still works (smoke-verified)
 
@@ -130,15 +131,10 @@ target — an accepted divergence from upstream supabase/postgres bundling:
 
 - The artifact and image ship the **full extension set for the selected major**
   — everything the matching upstream image supports. PG15 includes
-  TimescaleDB/plv8; PG17 omits them because they are incompatible. Installed is
-  not enabled: only the minimal
-  `shared_preload_libraries` set (pg_stat_statements, pg_cron, pg_net,
-  pgsodium, supabase_vault, supautils; plus TimescaleDB on PG15) is on by
-  default, so the measured
-  footprint is unchanged; pgaudit/pg_stat_monitor/pg_tle need a preload
-  opt-in to CREATE. Disk grows accordingly (~30 -> ~250-300 MiB archive
-  expected). (Preload set superseded by the shared-recipe section below:
-  the bundle now ships the docker.io set.)
+  TimescaleDB/plv8; PG17 omits them because they are incompatible. Extensions
+  are installed, and the bundle follows the matching upstream image's
+  `shared_preload_libraries` configuration. Disk grows accordingly (~30 ->
+  ~250-300 MiB archive expected).
 - `Dockerfile.artifact` is a nixos/nix flake builder producing the same
   portable rootfs as darwin (upstream's binary cache is enabled by explicit
   `--extra-substituters`/`--extra-trusted-public-keys` flags, mirroring
