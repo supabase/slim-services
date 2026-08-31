@@ -67,3 +67,10 @@ smoke with host Node hidden, and archive/checksum generation.
 | macOS floor | `11.3` |
 | Idle host-process RSS | `284.8 MiB` |
 | Idle CPU | `0.17%` |
+
+## Image HEALTHCHECK (2026-08)
+
+Busybox `sh`/`wget` plus `PATH` including `/node/bin` so the CLI's
+CMD-SHELL `node --eval="fetch(.../api/platform/profile)"` runs. The baked
+`HEALTHCHECK` is that same command (60s start period). The image smoke
+execs it and waits for `docker inspect` to report `healthy`.

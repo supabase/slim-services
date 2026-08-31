@@ -8,6 +8,28 @@
 # and starts the server.
 set -eu
 
+DROP_TO_NAME="${DROP_TO_NAME:-root}"
+
+# /run is often tmpfs; create the docker.io socket dir before drop.
+if [ "$(id -u)" = "0" ]; then
+  mkdir -p /run/postgresql
+  chown "${DROP_TO_UID:-0}:${DROP_TO_GID:-0}" /run/postgresql
+  chmod 2775 /run/postgresql
+fi
+
+# Image USER is unset (root), matching docker.io. Postgres refuses euid 0.
+# busybox su -c puts the first operand in $0; a dummy keeps "$@" intact.
+if [ "$(id -u)" = "0" ] && [ "$DROP_TO_NAME" != "root" ]; then
+  exec /usr/bin/busybox su -s /usr/bin/sh "$DROP_TO_NAME" -c \
+    'exec /usr/bin/sh /usr/local/bin/entry.sh "$@"' -- x "$@"
+fi
+
+prepare_only=0
+if [ "${1:-}" = "--prepare" ]; then
+  prepare_only=1
+  shift
+fi
+
 BUNDLE=/opt/postgres
 export PGDATA="${PGDATA:-/var/lib/postgresql/data}"
 export POSTGRES_USER="${POSTGRES_USER:-supabase_admin}"
@@ -25,42 +47,109 @@ if [ ! -s "$PGDATA/PG_VERSION" ]; then
   # argument; after -D it is parsed as a GUC assignment and FATALs).
   bash "$BUNDLE/share/supabase-cli/bin/supabase-postgres-init.sh" -C max_connections >/dev/null
 
-  # The CLI config template targets a loopback dev server (port 54322,
-  # listen 127.0.0.1, wal_level=replica); append the docker/network settings
-  # and the low-footprint local-dev profile. Later values win in
-  # postgresql.conf.
+  # The bundle's config is the docker.io recipe plus the local-dev divergence
+  # file, which targets a loopback dev server (port 54322, listen 127.0.0.1)
+  # for the native runtime; append only the docker overrides. Later values
+  # win in postgresql.conf. Network auth (scram) and wal_level=logical come
+  # from the shared recipe itself.
   {
     echo ""
     echo "# --- slim-services derived image: docker wiring ---"
     echo "listen_addresses = '*'"
     echo "port = 5432"
-    echo "wal_level = logical"
-    echo ""
-    echo "# --- slim-services low-footprint local-dev profile ---"
-    cat /usr/local/share/postgres/99-local-dev.conf
   } >> "$PGDATA/postgresql.conf"
-  # The template only allows loopback; containers connect over the network.
-  echo "host all all all scram-sha-256" >> "$PGDATA/pg_hba.conf"
 fi
 
-if [ "$first_boot" = 1 ] && [ -f "$BUNDLE/share/supabase-cli/migrations/migrate.sh" ]; then
+# CLI --from-backup writes initdb.d/migrate.sh. A real dump has no
+# CREATE ROLE and assumes extensions exist — run bundle migrate first.
+initdb_d_has_files=0
+for f in /docker-entrypoint-initdb.d/*; do
+  if [ -f "$f" ]; then
+    initdb_d_has_files=1
+    break
+  fi
+done
+
+restore_schema_sql() {
+  # Root truncated this inode and left the contents in /tmp (see docker-entrypoint.sh).
+  if [ -s /tmp/slim-schema.sql ]; then
+    cat /tmp/slim-schema.sql > /etc/postgresql.schema.sql
+    rm -f /tmp/slim-schema.sql
+  fi
+}
+
+fail_first_boot() {
+  restore_schema_sql
+  cat "$PGDATA/migrate.log" >&2
+  "$BUNDLE/bin/pg_ctl" -D "$PGDATA" -m fast -w stop || true
+  exit 1
+}
+
+if [ "$first_boot" = 1 ] && { [ -f "$BUNDLE/share/supabase-cli/migrations/migrate.sh" ] || [ "$initdb_d_has_files" = 1 ]; }; then
   echo "Running supabase migrations"
   "$BUNDLE/bin/pg_ctl" -D "$PGDATA" -l "$PGDATA/migrate.log" \
     -o "-c listen_addresses='' -c port=5432" -w start \
     || { cat "$PGDATA/migrate.log" >&2; exit 1; }
-  if ! ( cd "$BUNDLE/share/supabase-cli/migrations" \
-      && PATH="$BUNDLE/bin:$PATH" \
-        POSTGRES_HOST=/tmp \
-        POSTGRES_PORT=5432 \
-        POSTGRES_DB="$POSTGRES_DB" \
-        POSTGRES_PASSWORD="$POSTGRES_PASSWORD" \
-        sh ./migrate.sh ); then
-    cat "$PGDATA/migrate.log" >&2
-    "$BUNDLE/bin/pg_ctl" -D "$PGDATA" -m fast -w stop || true
-    exit 1
+  if [ -f "$BUNDLE/share/supabase-cli/migrations/migrate.sh" ]; then
+    if ! ( cd "$BUNDLE/share/supabase-cli/migrations" \
+        && PATH="$BUNDLE/bin:$PATH" \
+          POSTGRES_HOST=/tmp \
+          POSTGRES_PORT=5432 \
+          POSTGRES_DB="$POSTGRES_DB" \
+          POSTGRES_PASSWORD="$POSTGRES_PASSWORD" \
+          sh ./migrate.sh ); then
+      fail_first_boot
+    fi
+  fi
+  restore_schema_sql
+  if [ "$initdb_d_has_files" = 1 ]; then
+    export PATH="$BUNDLE/bin:$PATH"
+    export POSTGRES_HOST=/tmp POSTGRES_PORT=5432
+    export POSTGRES_DB POSTGRES_PASSWORD
+    export PGHOST=/tmp PGPORT=5432 PGDATABASE="$POSTGRES_DB" PGPASSWORD="$POSTGRES_PASSWORD"
+    for f in /docker-entrypoint-initdb.d/*; do
+      [ -f "$f" ] || continue
+      case "$f" in
+        *.sh)
+          set +e
+          if [ -x "$f" ]; then
+            echo "running $f"
+            "$f"
+          else
+            echo "sourcing $f"
+            # shellcheck disable=SC1090
+            . "$f"
+          fi
+          init_rc=$?
+          set -e
+          [ "$init_rc" -eq 0 ] || fail_first_boot
+          ;;
+        *.sql)
+          echo "running $f"
+          "$BUNDLE/bin/psql" -h /tmp -p 5432 -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
+            -v ON_ERROR_STOP=1 --no-password --no-psqlrc -f "$f" \
+            || fail_first_boot
+          ;;
+        *)
+          echo "ignoring $f"
+          ;;
+      esac
+    done
   fi
   "$BUNDLE/bin/pg_ctl" -D "$PGDATA" -m fast -w stop
 fi
 
+if [ "$prepare_only" = 1 ]; then
+  exit 0
+fi
+
 echo "Starting PostgreSQL"
-exec "$BUNDLE/bin/postgres" -D "$PGDATA" "$@"
+# ConfigDir is /etc/postgresql (CLI `postgres -D /etc/postgresql`). Cluster
+# files stay in PGDATA. Do not -D leftover PGDATA: that file is initdb
+# defaults on a docker.io volume. -c getkey wins over leftover auto.conf
+# and the docker.io template path.
+GETKEY_SCRIPT="$BUNDLE/share/supabase-cli/config/pgsodium_getkey.sh"
+exec "$BUNDLE/bin/postgres" -D /etc/postgresql \
+  -c "pgsodium.getkey_script=$GETKEY_SCRIPT" \
+  -c "vault.getkey_script=$GETKEY_SCRIPT" \
+  "$@"

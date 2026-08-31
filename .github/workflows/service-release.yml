@@ -80,7 +80,7 @@ jobs:
 
       - name: Set up Docker Buildx for image release validation
         if: inputs.service == 'studio'
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
 
       - name: Read external release requirements
         id: external
@@ -428,7 +428,7 @@ jobs:
 
       - name: Set up Docker Buildx
         if: matrix.target_os == 'linux' && needs.plan.outputs.image_release == 'derived' && (needs.plan.outputs.artifact_source == 'source' || (needs.plan.outputs.external == 'true' && needs.plan.outputs.artifact_source == 'external-source'))
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
 
       - name: Set up Go
         if: inputs.service == 'auth' && needs.plan.outputs.artifact_source == 'source'
@@ -564,7 +564,7 @@ jobs:
 
       - name: Set up Docker Buildx
         if: needs.plan.outputs.image_release == 'derived'
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
 
       - name: Checkout mirror helper
         if: needs.plan.outputs.image_release == 'mirror'

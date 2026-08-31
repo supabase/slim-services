@@ -1,12 +1,31 @@
 # syntax=docker/dockerfile:1.7
 ARG BASE_IMAGE=gcr.io/distroless/base-debian13:nonroot
+
+FROM debian:trixie-slim AS tools
+RUN apt-get update -y && apt-get install -y --no-install-recommends busybox \
+  && mkdir -p /out/usr/bin \
+  && cp /usr/bin/busybox /out/usr/bin/busybox \
+  && for applet in sh wget; do ln -sf busybox "/out/usr/bin/${applet}"; done
+
 FROM ${BASE_IMAGE}
 ARG ARTIFACT_ROOT
 WORKDIR /app
-ENV NODE_ENV=production
-ENV PORT=3000
+ENV NODE_ENV=production \
+    PORT=3000 \
+    PATH="/node/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+COPY --from=tools /out/ /
 COPY ${ARTIFACT_ROOT}/app/ /app/
 COPY ${ARTIFACT_ROOT}/node/ /node/
 EXPOSE 3000
+# Next's standalone server.js binds to $HOSTNAME, and Docker injects the
+# container ID as HOSTNAME, so without this the server listens only on the
+# container IP and loopback probes (the HEALTHCHECK below, docker.io-style
+# localhost checks) get connection refused. Bake the canonical Next.js
+# Docker bind; a runtime -e HOSTNAME still overrides it.
+ENV HOSTNAME=0.0.0.0
+# CMD-SHELL: same node --eval the CLI emits. Needs sh (busybox) and node on PATH.
+# Studio is the slowest boot in the stack — generous start period.
+HEALTHCHECK --interval=5s --timeout=10s --retries=10 --start-period=60s \
+  CMD node --eval="fetch('http://127.0.0.1:3000/api/platform/profile').then((r) => {if (!r.ok) throw new Error(r.status)})"
 ENTRYPOINT ["/node/bin/node", "/app/apps/studio/docker-entrypoint.mjs"]
 CMD ["/node/bin/node", "apps/studio/server.js"]

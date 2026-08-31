@@ -24,7 +24,7 @@ including the extension set shipped by that major's upstream Dockerfile.
   (loaded through the stock `include_dir`), all values overridable via
   `postgres -c`:
   `shared_buffers=32MB`, `effective_cache_size=128MB`,
-  `maintenance_work_mem=32MB`, `max_connections=50`, `max_wal_size=128MB`,
+  `maintenance_work_mem=32MB`, `max_connections=100`, `max_wal_size=128MB`,
   `jit=off`, `autovacuum_naptime=60s`, `bgwriter_delay=2000ms`,
   `wal_writer_delay=2000ms`. `wal_level=logical` is left untouched (realtime
   requires it).
@@ -137,25 +137,26 @@ target — an accepted divergence from upstream supabase/postgres bundling:
   default, so the measured
   footprint is unchanged; pgaudit/pg_stat_monitor/pg_tle need a preload
   opt-in to CREATE. Disk grows accordingly (~30 -> ~250-300 MiB archive
-  expected).
+  expected). (Preload set superseded by the shared-recipe section below:
+  the bundle now ships the docker.io set.)
 - `Dockerfile.artifact` is a nixos/nix flake builder producing the same
-  portable rootfs as darwin (`--accept-flake-config` uses upstream's binary
-  cache).
-- `Dockerfile.slim` derives the image: distroless `base-debian13:nonroot` +
-  busybox/bash tools stage + the bundle at `/opt/postgres` + repo-owned
-  `entry.sh`. First boot delegates to the bundle's own
-  `supabase-postgres-init.sh` (initdb, CLI config templates with pgsodium
-  getkey wired, password), then appends the docker network settings
-  (`listen_addresses='*'`, port 5432, `wal_level=logical`, a network
-  scram pg_hba rule) and the low-footprint profile, runs the bundled
-  supabase migrations against a temporary socket-only server, and starts
-  postgres — all as uid 65532 (no gosu/root phase, unlike the upstream
-  image).
-- The image smoke checks the broad preload-free set (including
-  postgis/pgroonga/wrappers and, on PG15, TimescaleDB/plv8), a pgsodium/vault
-  round-trip through the getkey wiring, and a pgvector nearest-neighbour
-  query; the host smoke creates the same subset minus the getkey-dependent
-  pair.
+  portable rootfs as darwin (upstream's binary cache is enabled by explicit
+  `--extra-substituters`/`--extra-trusted-public-keys` flags, mirroring
+  `recipe.env` — the pinned flake has no `nixConfig`, so
+  `--accept-flake-config` alone never enabled it); the old docker-image
+  prune (`prune.sh`, `slim-entrypoint.sh`) is gone.
+- `Dockerfile.slim` derives the image: distroless `base-debian13` (root,
+  empty Config.User) + busybox/bash tools stage + the bundle at
+  `/opt/postgres` + repo-owned `entry.sh` / `docker-entrypoint.sh`. Start
+  user and drop-to uid are generated from the digest-pinned docker.io
+  image (IMAGE_CONTRACT.md). First boot delegates to the bundle's own
+  `supabase-postgres-init.sh`, then appends the docker network settings
+  and starts postgres after dropping to the probed uid.
+- The image smoke checks the broad preload-free set (29 creates including
+  postgis/pgroonga/wrappers and, on PG15, TimescaleDB/plv8; PG17 omits those
+  incompatible extensions to match its upstream image), a pgsodium/vault round-trip through the
+  getkey wiring, and a pgvector nearest-neighbour query; the host smoke
+  creates the same subset minus the getkey-dependent pair.
 
 Verification happens in CI (`service-artifacts.yml`) per the directive —
 no local build for this step; the portable artifact underneath is the one
@@ -193,3 +194,97 @@ first boot (`supabase_privileged_role` is created by the bundled
 migrations); the missing `/etc/postgresql-custom/extension-custom-scripts`
 path is tolerated by supautils. Drop the append once the upstream template
 carries the block itself.
+
+### Shared config recipe with the docker.io image (2026-08)
+
+The supautils-allowlist fix above closed one drift gap; a follow-up parity
+audit against the docker.io image (now built from `Dockerfile-supabase`, not
+the legacy `Dockerfile-17`) found the rest: missing extension custom scripts
+(no after-create grants for pg_cron/vault/pgmq…), no `conf.d`
+(`pg_net.username`), a stricter pg_hba, `max_wal_senders = 0`, a fraction of
+the `shared_preload_libraries` set (pgaudit/pg_tle uncreatable), and libc-C
+initdb instead of ICU en_US.UTF-8. The root cause was architectural: the
+bundle's config was hand-written in `nix/packages/cli-config/` while the
+docker.io image copies `ansible/files/` verbatim.
+
+The overlay's `configBundle` now consumes the SAME files the docker.io image
+is built from: `postgresql.conf.j2`, `pg_hba.conf.j2`, `pg_ident.conf.j2`,
+`supautils.conf.j2`, `conf.d/`, `postgresql-stdout-log.conf`,
+`custom_walg.conf`, `custom_read_replica.conf`, and
+`postgresql_extension_custom_scripts/`, with (a) the exact edits
+`Dockerfile-supabase` applies (enable supautils/wal-g includes,
+session-preload supautils, PG17 timescaledb/plv8/db_user_namespace strips)
+and (b) mechanical relocation only — absolute `/etc` include targets become
+PGDATA-relative names staged at first boot by `stage-shared-config.sh`
+(sourced from the init script, patched at build with anchored,
+asserted seds), and the file-location GUCs are commented out to follow
+`postgres -D $PGDATA`. initdb runs with the docker.io image's exact flags
+(`--allow-group-access --locale-provider=icu --encoding=UTF-8
+--icu-locale=en_US.UTF-8`). The libc `lc_*` side cannot use nix glibc's
+`LOCALE_ARCHIVE` mechanism — the portable binaries are relinked to the
+SYSTEM glibc, which ignores it (first CI run failed exactly there) — so the
+slim image generates a system locale archive with the base image's own
+Debian `localedef` and sets `LANG`/`LC_ALL` like Dockerfile-supabase, while
+`stage-shared-config.sh` probes with the real `postgres -C` binary and
+appends an `lc_* = 'C'` fallback on hosts that cannot resolve the locale
+(database collation stays ICU-provider either way).
+
+`nix/packages/local-dev.conf` is the single, complete list of deliberate
+divergences (loopback/54322 native contract, `/tmp` socket, low-footprint
+profile); `entry.sh` shrinks to the two docker overrides (listen/port).
+pg_hba carries one adaptation: `peer map=supabase_map` becomes `trust` —
+the map assumes the docker.io image's OS users, and it resolves them to
+full role access anyway, so single-OS-user environments get the same
+effective posture. Trade-offs accepted for parity: the full docker.io
+preload set replaces the minimal one (a few MB RSS), and fresh databases are
+ICU en_US.UTF-8 like production instead of libc C. The image smoke verifies
+the recipe live (conf.d, replication slots, loopback trust, ICU provider,
+custom-script grants via non-superuser creates of pg_cron/vault, pgaudit +
+pg_tle creates); the host smoke asserts the shipped files. Drop the overlay
+once upstream's `cli-config` assembles from `ansible/files/` itself.
+
+## CLI Image-Gap Closure (2026-08)
+
+Dogfooding the slim stack in supabase/cli surfaced gaps vs the docker.io
+image (supabase/slim-services#280):
+
+- `pg_dumpall` joins the portable artifact's binary set and `uniq` the
+  image's busybox applets: `db dump --role-only` pipes
+  `pg_dumpall | ... | uniq` inside the container and was broken on slim.
+  Both smokes now exercise the role-only path (the image smoke runs the
+  pipeline in-container).
+- Local-dev `max_connections` raised 50 → 100 (docker.io parity):
+  supavisor's default meta pool alone is 25, and the halved budget forced
+  the CLI to carry a slim-only `DB_POOL_SIZE=5`. Unused slots cost a few KB
+  of shared memory each; the low-footprint profile keeps every other value.
+  The image smoke asserts the new value.
+
+## Differential docker.io parity smoke (2026-08)
+
+The image smoke previously pinned individual recipe expectations
+(`pg_net.username`, `max_wal_senders`, locale, …). Those pins encode the
+recipe of ONE upstream version and break on force-rebuilds of older tags:
+17.6.1.106 has no `conf.d/pg_net.conf` upstream, so its docker.io image
+does not set `pg_net.username` either and the hardcoded check could never
+pass there — despite the slim image being in perfect parity with its own
+upstream version.
+
+The smoke now boots the digest-pinned docker.io image (no ECR-first
+fallback) next to the slim container and requires the
+two servers to be identical: full `pg_settings`, `pg_dumpall --globals-only`
+(roles and attributes), the schema of `postgres` and `template1`,
+`pg_available_extensions`, database encodings/locales, and the host
+`pg_hba_file_rules`. Both sides are captured with the slim image's own
+client binaries so client-version skew cannot leak into the diff, and the
+phase runs before any mutating check.
+
+Intentional divergences are one explicit allowlist in the smoke: the
+local-dev profile GUCs (`local-dev.conf`), bundle/layout paths, and buffers
+postgres derives from `shared_buffers`. Socket-local pg_hba rules are also
+excluded (distroless has no OS user database for peer auth; host rules must
+match). Everything else must equal the upstream image of the same version,
+so version-specific recipe content (conf.d, supautils allowlist, hba, ICU
+initdb, migrations) is compared against the right baseline automatically.
+The subsumed hardcoded checks are gone; behavioral contracts (role-only
+dump pipeline, non-superuser CREATE EXTENSION, replication slot,
+passwordless loopback) stay.

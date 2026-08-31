@@ -53,6 +53,25 @@ if [[ -f "$(service_dir "$service")/runtime.env" ]]; then
 fi
 dockerfile_content="$("$ROOT_DIR/scripts/render-dockerfile.sh" "$service")"
 
+identity_build_args=()
+if identity_service "$service"; then
+  # shellcheck source=scripts/identity-lib.sh
+  source "$ROOT_DIR/scripts/identity-lib.sh"
+  identity_dir="$(mktemp -d "${TMPDIR:-/tmp}/slim-identity-build.XXXXXX")"
+  if [[ "${SKIP_UPSTREAM_IDENTITY:-}" == "1" ]]; then
+    fail "SKIP_UPSTREAM_IDENTITY=1 cannot build $service (that would invent uid/gid/mode). Unset it; SOURCE_IMAGE_DIGEST is required"
+  fi
+  write_upstream_identity "$service" "$identity_dir"
+  # shellcheck source=/dev/null
+  source "$identity_dir/identity.env"
+  identity_build_args=(
+    --build-arg "DROP_TO_UID=$DROP_TO_UID"
+    --build-arg "DROP_TO_GID=$DROP_TO_GID"
+    --build-arg "DROP_TO_NAME=$DROP_TO_NAME"
+    --build-arg "VOLUME_MODE=$VOLUME_MODE"
+  )
+fi
+
 log "building $tag from $rel_rootfs on $BASE_IMAGE for $PLATFORM"
 docker_builder="${DOCKER_BUILDER:-$(docker context show 2>/dev/null || echo default)}"
 output_args=()
@@ -71,10 +90,15 @@ printf '%s\n' "$dockerfile_content" | docker buildx build \
   -f - \
   --build-arg "ARTIFACT_ROOT=$rel_rootfs" \
   --build-arg "BASE_IMAGE=$BASE_IMAGE" \
+  ${identity_build_args[@]+"${identity_build_args[@]}"} \
   -t "$tag" \
   "${label_args[@]}" \
   "${output_args[@]}" \
   "$ROOT_DIR"
+
+if [[ -n "${identity_dir:-}" ]]; then
+  rm -rf "$identity_dir"
+fi
 
 if [[ "${DOCKER_PUSH:-0}" == "1" && "${DOCKER_LOAD:-0}" != "1" ]]; then
   "$ROOT_DIR/scripts/measure-artifact.sh" "$artifact_rootfs"

@@ -19,8 +19,11 @@ the upstream-selected Node runtime, and emits a relocatable launcher.
   process and through the derived Linux image.
 
 The final image uses `gcr.io/distroless/base-debian13:nonroot`, copies the
-artifact's `app/` and `node/` trees, and starts `/node/bin/node` directly.
-There is no second Node runtime inherited from the base image.
+artifact's `app/` and `node/` trees, ships busybox `sh`/`wget`, and puts
+`/node/bin` on `PATH`. Empty `ENTRYPOINT` and `CMD ["node","dist/server/server.js"]`
+so `docker run IMAGE node dist/server/server.js` is the CLI gen-types one-shot
+(`node node …` if ENTRYPOINT were still node). There is no second Node runtime
+inherited from the base image.
 
 Historical Rolldown and Sentryless variants were not adopted and their
 Dockerfile/overlay implementation has been removed. PgMeta intentionally keeps
@@ -29,3 +32,10 @@ justify a permanent alternate packaging path.
 
 Current published measurements are generated from release manifests in the
 README results tables.
+
+## Image HEALTHCHECK (2026-08)
+
+Busybox `sh`/`wget` plus `PATH` including `/node/bin` so the CLI's
+CMD-SHELL `node --eval="fetch(.../health)"` runs. The baked `HEALTHCHECK`
+is that same command. The image smoke execs it and waits for `docker
+inspect` to report `healthy`.

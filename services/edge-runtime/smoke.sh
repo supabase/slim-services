@@ -12,6 +12,7 @@ cleanup_edge_smoke() {
     wait "$edge_runtime_pid" >/dev/null 2>&1 || true
   fi
   rm -f "${edge_runtime_log:-}"
+  rm -rf "${identity_dir:-}"
   cleanup_smoke
 }
 trap cleanup_edge_smoke EXIT
@@ -76,6 +77,61 @@ if [[ -n "$image" ]]; then
 
   # ${arr[@]+...} keeps the empty-array expansion safe under `set -u` on
   # bash 3.2 (macOS /bin/bash), where a plain "${arr[@]}" errors.
+  # shellcheck source=scripts/identity-lib.sh
+  source "$ROOT_DIR/scripts/identity-lib.sh"
+  load_recipe edge-runtime
+  identity_dir="$(mktemp -d "${TMPDIR:-/tmp}/edge-runtime-identity.XXXXXX")"
+  if [[ "${SKIP_UPSTREAM_IDENTITY:-}" == "1" ]]; then
+    fail "edge-runtime image smoke requires the digest-pinned upstream identity (unset SKIP_UPSTREAM_IDENTITY)"
+  fi
+  write_upstream_identity edge-runtime "$identity_dir"
+  assert_slim_matches_identity "$image" "$identity_dir/identity.env"
+  # shellcheck source=/dev/null
+  source "$identity_dir/identity.env"
+  pinned_image="$PINNED_IMAGE"
+
+  log "checking sh + CLI applets"
+  layout="$(docker run --rm ${docker_platform_args[@]+"${docker_platform_args[@]}"} \
+    --entrypoint sh "$image" -c \
+    'busybox stat -c "%a %u" /root; busybox test -x /usr/bin/sh && busybox test -x /usr/bin/cat && busybox test -x /usr/bin/dirname && busybox test -x /usr/bin/uname && echo ok')" \
+    || fail "layout probe failed"
+  expected_layout="${VOLUME_MODE} ${VOLUME_UID}"$'\nok'
+  [[ "$layout" == "$expected_layout" ]] \
+    || fail "expected /root ${VOLUME_MODE}:${VOLUME_UID} and sh+cat+dirname+uname; got: $layout"
+
+  log "checking CLI-shaped sh -c heredoc as the pin start user"
+  # Same shape as CLI `legacyBuildEdgeRuntimeEntrypoint`:
+  # `cat <<'SENTINEL' > file && exec edge-runtime …`.
+  heredoc_body="$(docker run --rm ${docker_platform_args[@]+"${docker_platform_args[@]}"} \
+    --entrypoint sh "$image" -c \
+    "cat <<'S' > /tmp/p && exec edge-runtime --help
+hello
+S
+")" || fail "sh -c heredoc+exec edge-runtime failed"
+  [[ "$heredoc_body" == *"Usage:"* ]] || fail "heredoc+exec edge-runtime --help: $heredoc_body"
+
+  log "leftover volume: /root both directions"
+  edge_vol="edge-runtime-leftover-$RUN_ID"
+  create_volume "$edge_vol"
+  run_in_pin "$pinned_image" -v "$edge_vol:/root" -- \
+    sh -c 'echo leftover-from-dockerio > /root/leftover.txt' \
+    || fail "upstream could not write leftover /root"
+  leftover_body="$(docker run --rm ${docker_platform_args[@]+"${docker_platform_args[@]}"} \
+    -v "$edge_vol:/root" --entrypoint sh "$image" \
+    -c 'cat /root/leftover.txt')" \
+    || fail "slim could not read docker.io leftover /root"
+  [[ "$leftover_body" == "leftover-from-dockerio" ]] \
+    || fail "slim leftover /root mismatch: $leftover_body"
+  docker run --rm ${docker_platform_args[@]+"${docker_platform_args[@]}"} \
+    -v "$edge_vol:/root" --entrypoint sh "$image" \
+    -c 'echo leftover-from-slim > /root/leftover-slim.txt' \
+    || fail "slim could not write leftover /root"
+  leftover_body="$(run_in_pin "$pinned_image" -v "$edge_vol:/root" -- \
+    cat /root/leftover-slim.txt)" \
+    || fail "docker.io could not read slim leftover /root"
+  [[ "$leftover_body" == "leftover-from-slim" ]] \
+    || fail "docker.io leftover /root mismatch: $leftover_body"
+
   log "smoke testing edge-runtime image: --help"
   docker run --rm ${docker_platform_args[@]+"${docker_platform_args[@]}"} "$image" --help >/dev/null
 

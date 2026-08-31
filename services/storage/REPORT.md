@@ -2,7 +2,7 @@
 
 Self-contained report for the Storage API Linux ARM64 slim-image work.
 
-Last updated: 2026-04-28
+Last updated: 2026-08-27
 
 ## Summary
 
@@ -27,9 +27,10 @@ telemetry/pprof because the extra gain was too small.
 ## Build Contract
 
 - Current backend: source submodule build.
-- Source ref: `v1.55.3`.
-- Upstream image: `supabase/storage-api:v1.55.3`.
-- Runtime base: `gcr.io/distroless/base-debian13:nonroot` plus the artifact's
+- Source ref: `v1.62.6`.
+- Upstream image: `supabase/storage-api:v1.62.6`.
+- Runtime base: `gcr.io/distroless/base-debian13` (root, empty Config.User)
+  plus the artifact's
   upstream-selected bundled Node runtime.
 - Smoke test: `/status` returns `200`.
 - `sources/storage` is read-only; bundling changes live in overlay files.
@@ -152,3 +153,18 @@ runs on), and `Dockerfile.slim` derives the image from the artifact's `app/`
 and `node/` trees on the generic distroless base (the `bin/storage` wrapper is
 host-only). First Linux verification happens in CI
 (`service-artifacts.yml`), by design.
+
+## Image identity (docker.io interchange)
+
+Start user and `/mnt` owner/mode are generated from the digest-pinned
+`supabase/storage-api` image (IMAGE_CONTRACT.md). The image stays root,
+ships `wget` for the CLI healthcheck, and pairwise smokes cover leftover
+`/mnt` volumes plus an imgproxy-pin sidecar read.
+- `IMAGE_TRANSFORMATION_ENABLED=false` is no longer baked in `runtime.env`:
+  storage-api prefers that key over the legacy `ENABLE_IMAGE_TRANSFORMATION`
+  the CLI sets, so the image-level `false` silently disabled imgproxy even
+  when the stack enabled it. docker.io bakes no default either.
+- Exec-form `HEALTHCHECK` (bundled node `fetch` of `/status`): Docker uses
+  it when the stack omits `--health-cmd`, giving the CLI real readiness on a
+  distroless image. The smoke waits for `docker inspect` to report
+  `healthy`, not just a 200.

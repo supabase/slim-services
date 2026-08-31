@@ -27,9 +27,11 @@ setting dynamic-library environment variables directly in image metadata.
 ## Build Contract
 
 - Current backend: Nix.
-- Source ref: `v1.73.15`.
-- Upstream image: `supabase/edge-runtime:v1.73.15`.
-- Runtime base: `gcr.io/distroless/base-debian13:nonroot`.
+- Source ref: `v1.74.2`.
+- Upstream image: `supabase/edge-runtime:v1.74.2`.
+- Runtime base: `gcr.io/distroless/base-debian13` (root, empty Config.User).
+  Start user and `/root` mode are generated from the digest-pinned upstream
+  image (IMAGE_CONTRACT.md).
 - Smoke test: `edge-runtime --help`, then start a tiny local `Deno.serve`
   fixture and request it over HTTP.
 - The smoke script supports both Docker images via `IMAGE=...` and extracted
@@ -52,8 +54,7 @@ setting dynamic-library environment variables directly in image metadata.
   enters through `bin/.edge-runtime-wrapped` to avoid a shell dependency.
 - Copied artifact `bin/` into `/usr/bin/` in the final image because Debian 13
   Distroless uses a merged `/usr` layout where `/bin` is a symlink.
-- Kept the final runtime base at
-  `gcr.io/distroless/base-debian13:nonroot`.
+- Kept the final runtime base at `gcr.io/distroless/base-debian13` (root).
 
 ## Why This Works
 

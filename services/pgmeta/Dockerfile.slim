@@ -1,14 +1,26 @@
 # syntax=docker/dockerfile:1.7
 # Derived image: distroless base + the portable artifact's app/ tree and its
-# bundled Node runtime (bin/pgmeta host wrapper is unused in Docker — the
-# entrypoint execs the bundled node directly).
+# bundled Node runtime (bin/pgmeta host wrapper is unused in Docker).
 ARG BASE_IMAGE=gcr.io/distroless/base-debian13:nonroot
+
+FROM debian:trixie-slim AS tools
+RUN apt-get update -y && apt-get install -y --no-install-recommends busybox \
+  && mkdir -p /out/usr/bin \
+  && cp /usr/bin/busybox /out/usr/bin/busybox \
+  && for applet in sh wget; do ln -sf busybox "/out/usr/bin/${applet}"; done
+
 FROM ${BASE_IMAGE}
 ARG ARTIFACT_ROOT
 WORKDIR /usr/src/app
-ENV PG_META_PORT=8080
+ENV PG_META_PORT=8080 \
+    PATH="/node/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+COPY --from=tools /out/ /
 COPY ${ARTIFACT_ROOT}/app/ /usr/src/app/
 COPY ${ARTIFACT_ROOT}/node/ /node/
 EXPOSE 8080
-ENTRYPOINT ["/node/bin/node"]
-CMD ["dist/server/server.js"]
+# CMD-SHELL: same node --eval the CLI emits. Needs sh (busybox) and node on PATH.
+HEALTHCHECK --interval=5s --timeout=5s --retries=10 --start-period=10s \
+  CMD node --eval="fetch('http://127.0.0.1:8080/health').then((r) => {if (!r.ok) throw new Error(r.status)})"
+# Empty ENTRYPOINT: CLI `["node","dist/server/server.js"]` must not become
+# `node node …`. Default serve uses node from PATH.
+CMD ["node", "dist/server/server.js"]

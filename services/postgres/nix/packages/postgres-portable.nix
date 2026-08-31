@@ -16,14 +16,21 @@ let
     name: name != "recurseForDerivations" && !(lib.hasSuffix "-pkgs" name)
   ) (builtins.attrNames selectedCli.exts);
 
-  # slim-services overlay: upstream's CLI config template preloads supautils
-  # but never configures it, so supautils.privileged_extensions is empty and
-  # `CREATE EXTENSION pg_net` fails for the non-superuser postgres role on
-  # every fresh database — including the shadow databases the CLI's
-  # `db diff`/`db pull` spin up. Append the supautils settings the docker.io
-  # image ships, read from the same source checkout being built so the two
-  # cannot drift. Drop this once the upstream template carries the block.
+  # slim-services overlay — shared config recipe. Upstream's hand-written CLI
+  # template (nix/packages/cli-config/) drifted from the docker.io image's
+  # real configuration (ansible/files/), which produced a stream of parity
+  # bugs (empty supautils allowlist, missing extension custom scripts,
+  # missing conf.d, no replication slots, libc-C collation…). Instead of
+  # patching each gap, the bundle now consumes the SAME files the docker.io
+  # image is built from, with the SAME edits Dockerfile-supabase applies,
+  # so the two cannot drift; nix/packages/local-dev.conf is the single,
+  # complete list of deliberate divergences. Drop this once upstream's
+  # cli-config assembles from ansible/files/ itself.
+  ansibleConfig = ../../ansible/files/postgresql_config;
   supautilsConf = ../../ansible/files/postgresql_config/supautils.conf.j2;
+  extensionCustomScripts = ../../ansible/files/postgresql_extension_custom_scripts;
+  localDevConf = ./local-dev.conf;
+  stageSharedConfig = ./stage-shared-config.sh;
 
   receipt = writeTextFile {
     name = "cli-receipt";
@@ -64,43 +71,148 @@ let
     src = configDir;
     dontPatchShebangs = true;
     installPhase = ''
-      mkdir -p $out/share/supabase-cli/config
+      mkdir -p $out/share/supabase-cli/config/conf.d
       mkdir -p $out/share/supabase-cli/bin
-      cp postgresql.conf.template $out/share/supabase-cli/config/
-      # TimescaleDB is part of the PG15 upstream image contract and must be
-      # preloaded before CREATE EXTENSION. PG17 keeps the upstream template
-      # unchanged because TimescaleDB is incompatible with that major.
-      if [ "${postgres_major}" = "15" ]; then
-        sed -i "s/^shared_preload_libraries = '\([^']*\)'/shared_preload_libraries = '\1, timescaledb'/" \
-          $out/share/supabase-cli/config/postgresql.conf.template
+      mkdir -p $out/share/supabase-cli/extension-custom-scripts
+      cfg=$out/share/supabase-cli/config
+
+      # These .j2 files are plain postgresql.conf syntax today (the docker.io
+      # Dockerfile also consumes them raw); refuse actual Jinja templating.
+      for j2 in ${ansibleConfig}/postgresql.conf.j2 \
+                ${ansibleConfig}/pg_hba.conf.j2 \
+                ${ansibleConfig}/pg_ident.conf.j2 \
+                ${supautilsConf}; do
+        if grep -q '{{\|{%' "$j2"; then
+          echo "$j2 contains Jinja templating; cannot consume verbatim" >&2
+          exit 1
+        fi
+      done
+
+      # postgresql.conf: the docker.io config, with (a) the exact edits
+      # Dockerfile-supabase's "Configure PostgreSQL settings" and PG17 steps
+      # apply, and (b) mechanical relocation only — absolute /etc include
+      # targets become PGDATA-relative names (stage-shared-config.sh stages
+      # the siblings), and the file-location GUCs are commented out so they
+      # follow `postgres -D $PGDATA`. Nothing here changes a VALUE.
+      conf=$cfg/postgresql.conf.template
+      install -m 0644 ${ansibleConfig}/postgresql.conf.j2 $conf
+      sed -i \
+        -e "s|^#session_preload_libraries = .*|session_preload_libraries = 'supautils'|" \
+        -e "s|#include = '/etc/postgresql-custom/supautils.conf'|include = 'supautils.conf'|" \
+        -e "s|#include = '/etc/postgresql-custom/wal-g.conf'|include = 'wal-g.conf'|" \
+        -e "s|include = '/etc/postgresql-custom/read-replica.conf'|include = 'read-replica.conf'|" \
+        -e "s|include = '/etc/postgresql/logging.conf'|include = 'logging.conf'|" \
+        -e "s|include_dir = '/etc/postgresql-custom/conf.d'|include_dir = 'conf.d'|" \
+        -e "s|^data_directory = |#data_directory = |" \
+        -e "s|^hba_file = |#hba_file = |" \
+        -e "s|^ident_file = |#ident_file = |" \
+        -e "s/db_user_namespace = off/#db_user_namespace = off/g" \
+        $conf
+      # Dockerfile-17 removes extensions incompatible with that major. PG15
+      # retains the source tree's TimescaleDB/plv8 preload values.
+      if [ "${postgres_major}" = "17" ]; then
+        sed -i -e "s/ timescaledb,//g" -e "s/ plv8,//g" $conf
       fi
-      # slim-services overlay: the .j2 file is plain postgresql.conf syntax
-      # today; refuse to bake actual Jinja templating into a live config.
-      if grep -q '{{\|{%' ${supautilsConf}; then
-        echo "supautils.conf.j2 contains Jinja templating; cannot append verbatim" >&2
+      for want in \
+        "^session_preload_libraries = 'supautils'" \
+        "^include = 'supautils.conf'" \
+        "^include = 'wal-g.conf'" \
+        "^include = 'read-replica.conf'" \
+        "^include = 'logging.conf'" \
+        "^include_dir = 'conf.d'" \
+        "^#data_directory = " \
+        "^#hba_file = " \
+        "^#ident_file = " \
+        "^#db_user_namespace = "; do
+        grep -q "$want" $conf || {
+          echo "shared-recipe anchor missing after edits: $want" >&2
+          exit 1
+        }
+      done
+      if [ "${postgres_major}" = "15" ]; then
+        grep "^shared_preload_libraries" $conf | grep -q timescaledb || {
+          echo "PG15 source config lost TimescaleDB preload" >&2
+          exit 1
+        }
+      elif grep "^shared_preload_libraries" $conf | grep -q "timescaledb\|plv8"; then
+        echo "PG17-incompatible extension left in shared_preload_libraries" >&2
         exit 1
       fi
-      {
-        echo ""
-        echo "# Supautils settings shared with the docker.io image (appended at"
-        echo "# build from ansible/files/postgresql_config/supautils.conf.j2)."
-        echo "# Later values win: these override the minimal reserved_roles/"
-        echo "# reserved_memberships defaults above."
-        # Upstream's Dockerfile-17 strips the PG17-incompatible extensions;
-        # PG15 retains the values from the source tree unchanged.
-        ${
-          if postgres_major == "17" then
-            "sed 's/ timescaledb,//g; s/ plv8,//g' ${supautilsConf}"
-          else
-            "cat ${supautilsConf}"
-        }
-      } >> $out/share/supabase-cli/config/postgresql.conf.template
-      cp pg_hba.conf.template $out/share/supabase-cli/config/
-      cp pg_ident.conf.template $out/share/supabase-cli/config/
-      cp pgsodium_getkey.sh $out/share/supabase-cli/config/
+      grep "^shared_preload_libraries" $conf | grep -q "pgaudit" || {
+        echo "expected the full docker.io shared_preload_libraries set" >&2
+        exit 1
+      }
+
+      # The single divergence file — the complete slim-vs-docker.io delta.
+      { echo ""; cat ${localDevConf}; } >> $conf
+
+      # Include siblings, staged into PGDATA at first boot by
+      # stage-shared-config.sh (sourced from the init script, see below).
+      install -m 0644 ${ansibleConfig}/postgresql-stdout-log.conf $cfg/logging.conf
+      install -m 0644 ${ansibleConfig}/custom_walg.conf $cfg/wal-g.conf
+      install -m 0644 ${ansibleConfig}/custom_read_replica.conf $cfg/read-replica.conf
+      install -m 0644 ${ansibleConfig}/conf.d/*.conf $cfg/conf.d/
+      # Dockerfile-17 strips TimescaleDB/plv8 from supautils.conf; PG15 keeps
+      # the exact source-tree values.
+      if [ "${postgres_major}" = "17" ]; then
+        sed 's/ timescaledb,//g; s/ plv8,//g' ${supautilsConf} > $cfg/supautils.conf
+      else
+        cp ${supautilsConf} $cfg/supautils.conf
+      fi
+      grep -q "^supautils.privileged_extensions = " $cfg/supautils.conf || {
+        echo "supautils.conf lost its allowlist" >&2
+        exit 1
+      }
+
+      # pg_hba/pg_ident: docker.io's files; the ONE divergence is
+      # `peer map=supabase_map` -> `trust`, because the map assumes the
+      # docker.io image's OS users (postgres/root/ubuntu) and neither the
+      # distroless image (uid 65532) nor a host runtime has them — the map
+      # resolves those users to full role access anyway, so local trust is
+      # the same effective posture.
+      install -m 0644 ${ansibleConfig}/pg_hba.conf.j2 $cfg/pg_hba.conf.template
+      sed -i "s|peer map=supabase_map|trust|" $cfg/pg_hba.conf.template
+      if grep -q "supabase_map" $cfg/pg_hba.conf.template; then
+        echo "unexpected supabase_map reference left in pg_hba" >&2
+        exit 1
+      fi
+      install -m 0644 ${ansibleConfig}/pg_ident.conf.j2 $cfg/pg_ident.conf.template
+
+      # The extension custom scripts (before/after CREATE EXTENSION grant and
+      # ownership hooks) — the docker.io image ships these at
+      # /etc/postgresql-custom/extension-custom-scripts.
+      cp -R ${extensionCustomScripts}/. $out/share/supabase-cli/extension-custom-scripts/
+
+      cp pgsodium_getkey.sh $cfg/
+      install -m 0644 ${stageSharedConfig} $out/share/supabase-cli/bin/stage-shared-config.sh
       cp supabase-postgres-init.sh $out/share/supabase-cli/bin/
-      chmod +x $out/share/supabase-cli/config/pgsodium_getkey.sh
+      chmod +x $cfg/pgsodium_getkey.sh
       chmod +x $out/share/supabase-cli/bin/supabase-postgres-init.sh
+
+      # Patch the init script (two anchored edits; each asserted below):
+      #  1. source stage-shared-config.sh after the config templates are
+      #     copied into PGDATA;
+      #  2. initdb with the docker.io image's locale flags
+      #     (POSTGRES_INITDB_ARGS there: --allow-group-access
+      #     --locale-provider=icu --encoding=UTF-8 --icu-locale=en_US.UTF-8).
+      #     The libc lc_* side resolves through the SYSTEM glibc (the
+      #     portable binaries never run under nix glibc, so LOCALE_ARCHIVE
+      #     does not apply): the slim image ships a system locale archive,
+      #     and stage-shared-config.sh probes and falls back to 'C' on
+      #     hosts without the locale.
+      init=$out/share/supabase-cli/bin/supabase-postgres-init.sh
+      sed -i \
+        -e '/pg_ident.conf.template/a\	. "$BUNDLE_DIR/share/supabase-cli/bin/stage-shared-config.sh"' \
+        -e 's|--encoding=UTF8 \\|--encoding=UTF-8 \\|' \
+        -e 's|--locale=C \\|--locale-provider=icu --icu-locale=en_US.UTF-8 --allow-group-access \\|' \
+        $init
+      for want in "stage-shared-config.sh" "icu-locale=en_US.UTF-8"; do
+        grep -q "$want" $init || {
+          echo "init-script patch anchor missing: $want" >&2
+          exit 1
+        }
+      done
+      bash -n $init
     '';
   };
 in
@@ -116,7 +228,7 @@ stdenv.mkDerivation {
     mkdir -p $out/bin $out/lib $out/share
 
     # List of PostgreSQL binaries to include in the Supabase CLI bundle
-    binaries="postgres pg_config pg_ctl initdb psql pg_dump pg_restore createdb dropdb pg_isready"
+    binaries="postgres pg_config pg_ctl initdb psql pg_dump pg_dumpall pg_restore createdb dropdb pg_isready"
 
     # Helper function to check if a library should be excluded (system libraries)
     should_exclude_library() {
@@ -295,11 +407,11 @@ stdenv.mkDerivation {
       cp -rL ${selectedCli.bin}/share/* $out/share/ 2>/dev/null || true
     fi
 
-    # Add config templates and initialization script
-    mkdir -p $out/share/supabase-cli/config
-    mkdir -p $out/share/supabase-cli/bin
-    cp ${configBundle}/share/supabase-cli/config/* $out/share/supabase-cli/config/
-    cp ${configBundle}/share/supabase-cli/bin/* $out/share/supabase-cli/bin/
+    # Add the CLI config bundle wholesale (config/ including conf.d, bin/,
+    # extension-custom-scripts/) — a flat `cp dir/*` omits the directories
+    # the shared recipe added.
+    mkdir -p $out/share/supabase-cli
+    cp -R ${configBundle}/share/supabase-cli/. $out/share/supabase-cli/
 
     # Add migration files
     cp -r ${migrationBundle}/share/supabase-cli/migrations $out/share/supabase-cli/
@@ -531,6 +643,16 @@ stdenv.mkDerivation {
       # full copy — postgis ships ~130 identical 8-MiB upgrade scripts, and
       # every extension exists as both name.so and name-<version>.so. Replace
       # identical siblings with relative symlinks (same directory only).
+      # The name.so/name-<version>.so pair MUST collapse to one inode, not
+      # just for disk: shared_preload_libraries loads the unversioned name
+      # while the extension's module_pathname loads the versioned one, and
+      # postgres keys loaded libraries by path string — with one inode,
+      # dlopen returns the same handle and the second _PG_init self-guards
+      # (the docker.io layout); with two real files the library initializes
+      # twice and dies with "attempt to redefine parameter" the moment an
+      # extension is both preloaded and created (seen live with
+      # plpgsql_check under the shared-recipe preload set). So dedup every
+      # identical file, not only the >1M ones.
       # Runs LAST so it can never hand a symlink to the patchelf or
       # install_name_tool loops above (mutating a canonical file once per
       # alias name corrupts it). lib/ is deduped on Linux only: ELF sonames
@@ -555,7 +677,7 @@ stdenv.mkDerivation {
             else
               seen_hash[$h]="$f"
             fi
-          done < <(find . -maxdepth 1 -type f -size +1M | LC_ALL=C sort)
+          done < <(find . -maxdepth 1 -type f | LC_ALL=C sort)
         )
       done
     '';

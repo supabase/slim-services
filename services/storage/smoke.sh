@@ -79,6 +79,10 @@ if [[ -n "$artifact_rootfs" ]]; then
 
   [[ -x "$artifact_rootfs/node/bin/node" ]] \
     || fail "storage artifact does not bundle a node runtime: $artifact_rootfs/node/bin/node"
+  [[ -f "$artifact_rootfs/app/dist/scripts/migrate-call.js" ]] \
+    || fail "storage artifact is missing dist/scripts/migrate-call.js"
+  [[ -f "$artifact_rootfs/app/dist/scripts/migrations/0_create-migrations-table.sql" ]] \
+    || fail "storage artifact is missing dist/scripts/migrations bootstrap SQL"
 
   pg_port="$(postgres_port)"
   port="$(python3 - <<'PY'
@@ -123,16 +127,73 @@ fi
 
 ensure_image "$image"
 
+# shellcheck source=scripts/identity-lib.sh
+source "$ROOT_DIR/scripts/identity-lib.sh"
+load_recipe storage
+identity_dir="$(mktemp -d "${TMPDIR:-/tmp}/storage-identity.XXXXXX")"
+volume=""
+cleanup_storage_image_smoke() {
+  rm -rf "${identity_dir:-}"
+  cleanup_smoke
+  if [[ -n "${volume:-}" ]]; then
+    docker volume rm -f "$volume" >/dev/null 2>&1 || true
+  fi
+}
+trap cleanup_storage_image_smoke EXIT
+if [[ "${SKIP_UPSTREAM_IDENTITY:-}" == "1" ]]; then
+  fail "storage image smoke requires the digest-pinned upstream identity (unset SKIP_UPSTREAM_IDENTITY)"
+fi
+write_upstream_identity storage "$identity_dir"
+assert_slim_matches_identity "$image" "$identity_dir/identity.env"
+# shellcheck source=/dev/null
+source "$identity_dir/identity.env"
+pinned_image="$PINNED_IMAGE"
+
+log "checking wget is on PATH (CLI healthcheck)"
+docker run --rm --entrypoint /usr/bin/wget "$image" --help >/dev/null \
+  || fail "storage image is missing wget"
+
+storage_ep="$(docker inspect -f '{{json .Config.Entrypoint}}' "$image")"
+[[ "$storage_ep" == "null" || "$storage_ep" == "[]" ]] \
+  || fail "storage ENTRYPOINT is $storage_ep (expected empty)"
+storage_cmd="$(docker inspect -f '{{json .Config.Cmd}}' "$image")"
+[[ "$storage_cmd" == '["/node/bin/node","dist/start/server.js"]' ]] \
+  || fail "storage CMD is $storage_cmd (expected [/node/bin/node, dist/start/server.js])"
+
+log "CLI one-shot: node dist/scripts/migrate-call.js"
+if ! docker run --rm --network "$NETWORK" \
+  -e DATABASE_URL="postgresql://postgres:postgres@$POSTGRES_CONTAINER:5432/storage_smoke" \
+  -e AUTH_JWT_SECRET="$jwt_secret" \
+  -e PGRST_JWT_SECRET="$jwt_secret" \
+  -e STORAGE_BACKEND=file \
+  -e FILE_STORAGE_BACKEND_PATH=/mnt \
+  -e TENANT_ID=stub \
+  -e REGION=stub \
+  -e GLOBAL_S3_BUCKET=stub \
+  -w /app \
+  "$image" \
+  node dist/scripts/migrate-call.js; then
+  fail "storage migrate-call.js one-shot failed"
+fi
+
+# Run the file backend on a FRESH named volume mounted at /mnt — the exact
+# docker.io stack layout — so the round-trip below proves the seeded volume
+# root is writable, not just the container filesystem.
+# Do not create_volume first: Docker seeds a new named volume from the
+# image /mnt only on first mount.
+volume="storage-smoke-vol-$RUN_ID"
+
 container="storage-smoke-$RUN_ID"
 run_container \
   "$container" \
   --network "$NETWORK" \
   -p 127.0.0.1::5000 \
+  -v "$volume:/mnt" \
   -e DATABASE_URL="postgresql://postgres:postgres@$POSTGRES_CONTAINER:5432/storage_smoke" \
   -e AUTH_JWT_SECRET="$jwt_secret" \
   -e PGRST_JWT_SECRET="$jwt_secret" \
   -e STORAGE_BACKEND=file \
-  -e FILE_STORAGE_BACKEND_PATH=/tmp/storage \
+  -e FILE_STORAGE_BACKEND_PATH=/mnt \
   "$image"
 port="$(host_port "$container" 5000)"
 
@@ -142,6 +203,12 @@ if ! wait_for_http_code "http://127.0.0.1:$port/status" "200" 120 "" "$container
   fail "storage /status did not return 200"
 fi
 
+log "waiting for the baked HEALTHCHECK to report healthy"
+if ! wait_for_container_healthy "$container" 60; then
+  container_logs "$container"
+  fail "storage container did not become healthy via the image HEALTHCHECK"
+fi
+
 log "smoke testing storage object round-trip"
 print_storage_container_logs() {
   container_logs "$container"
@@ -149,4 +216,121 @@ print_storage_container_logs() {
 storage_object_roundtrip "$port" print_storage_container_logs
 
 record_runtime_metrics "$container"
+
+log "leftover volume: docker.io -> slim"
+vol_up="storage-leftover-up-$RUN_ID"
+create_volume "$vol_up"
+storage_leftover_up="storage-leftover-up-$RUN_ID"
+run_container \
+  "$storage_leftover_up" \
+  --network "$NETWORK" \
+  -p 127.0.0.1::5000 \
+  -v "$vol_up:/mnt" \
+  -e DATABASE_URL="postgresql://postgres:postgres@$POSTGRES_CONTAINER:5432/storage_smoke" \
+  -e AUTH_JWT_SECRET="$jwt_secret" \
+  -e PGRST_JWT_SECRET="$jwt_secret" \
+  -e STORAGE_BACKEND=file \
+  -e FILE_STORAGE_BACKEND_PATH=/mnt \
+  "$pinned_image"
+up_port="$(host_port "$storage_leftover_up" 5000)"
+if ! wait_for_http_code "http://127.0.0.1:$up_port/status" "200" 120 "" "$storage_leftover_up"; then
+  container_logs "$storage_leftover_up"
+  fail "upstream leftover storage /status did not return 200"
+fi
+leftover_jwt="$(make_role_jwt "$jwt_secret" service_role)"
+curl -fsS -X POST \
+  -H "Authorization: Bearer $leftover_jwt" \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"leftover-up"}' \
+  "http://127.0.0.1:$up_port/bucket" >/dev/null \
+  || { container_logs "$storage_leftover_up"; fail "leftover-up bucket create failed"; }
+curl -fsS -X POST \
+  -H "Authorization: Bearer $leftover_jwt" \
+  -H 'Content-Type: text/plain' \
+  --data-binary 'leftover-from-dockerio' \
+  "http://127.0.0.1:$up_port/object/leftover-up/hello.txt" >/dev/null \
+  || { container_logs "$storage_leftover_up"; fail "leftover-up upload failed"; }
+docker rm -f "$storage_leftover_up" >/dev/null
+storage_leftover_slim="storage-leftover-slim-$RUN_ID"
+run_container \
+  "$storage_leftover_slim" \
+  --network "$NETWORK" \
+  -p 127.0.0.1::5000 \
+  -v "$vol_up:/mnt" \
+  -e DATABASE_URL="postgresql://postgres:postgres@$POSTGRES_CONTAINER:5432/storage_smoke" \
+  -e AUTH_JWT_SECRET="$jwt_secret" \
+  -e PGRST_JWT_SECRET="$jwt_secret" \
+  -e STORAGE_BACKEND=file \
+  -e FILE_STORAGE_BACKEND_PATH=/mnt \
+  "$image"
+slim_port="$(host_port "$storage_leftover_slim" 5000)"
+if ! wait_for_http_code "http://127.0.0.1:$slim_port/status" "200" 120 "" "$storage_leftover_slim"; then
+  container_logs "$storage_leftover_slim"
+  fail "slim could not serve a docker.io leftover /mnt"
+fi
+body="$(curl -fsS -H "Authorization: Bearer $leftover_jwt" \
+  "http://127.0.0.1:$slim_port/object/leftover-up/hello.txt")"
+[[ "$body" == "leftover-from-dockerio" ]] || fail "slim leftover download mismatch: $body"
+
+log "imgproxy-pin sidecar can read leftover /mnt objects"
+imgproxy_sidecar_uid() {
+  local ref="${IMGPROXY_UPSTREAM_IMAGE:-ghcr.io/imgproxy/imgproxy:v3.8.0@sha256:75fcf5f5a72bc4bce354d1b5dfb4636a2e6979f0ce68cdacc51ed1bce2ab494e}"
+  local user
+  if ! docker image inspect "$ref" >/dev/null 2>&1; then
+    pull_pinned_image "$ref"
+  fi
+  user="$(image_config_user "$ref")"
+  if [[ -z "$user" || "$user" == "root" ]]; then
+    printf '0'
+    return 0
+  fi
+  if [[ "$user" =~ ^[0-9]+$ ]]; then
+    printf '%s' "$user"
+    return 0
+  fi
+  run_in_pin "$ref" id -u "$user"
+}
+sidecar_uid="$(imgproxy_sidecar_uid)"
+object_path="$(docker run --rm -v "$vol_up:/mnt:ro" --entrypoint /node/bin/node "$image" -e '
+const fs = require("node:fs");
+function walk(dir) {
+  for (const name of fs.readdirSync(dir)) {
+    const path = dir + "/" + name;
+    if (fs.statSync(path).isDirectory()) walk(path);
+    else { console.log(path); process.exit(0); }
+  }
+}
+walk("/mnt");
+process.exit(1);
+')"
+[[ -n "$object_path" ]] || fail "no leftover object on /mnt for sidecar read"
+sidecar_body="$(docker run --rm --user "$sidecar_uid" -v "$vol_up:/mnt:ro" \
+  --entrypoint /node/bin/node "$image" -e \
+  'console.log(require("node:fs").readFileSync(process.argv[1], "utf8"))' \
+  "$object_path")" \
+  || fail "imgproxy uid $sidecar_uid could not read $object_path"
+[[ -n "$sidecar_body" ]] || fail "imgproxy sidecar read empty object"
+
+log "leftover volume: slim -> docker.io"
+docker rm -f "$container" >/dev/null
+run_container \
+  "storage-leftover-up2-$RUN_ID" \
+  --network "$NETWORK" \
+  -p 127.0.0.1::5000 \
+  -v "$volume:/mnt" \
+  -e DATABASE_URL="postgresql://postgres:postgres@$POSTGRES_CONTAINER:5432/storage_smoke" \
+  -e AUTH_JWT_SECRET="$jwt_secret" \
+  -e PGRST_JWT_SECRET="$jwt_secret" \
+  -e STORAGE_BACKEND=file \
+  -e FILE_STORAGE_BACKEND_PATH=/mnt \
+  "$pinned_image"
+up2_port="$(host_port "storage-leftover-up2-$RUN_ID" 5000)"
+if ! wait_for_http_code "http://127.0.0.1:$up2_port/status" "200" 120 "" "storage-leftover-up2-$RUN_ID"; then
+  container_logs "storage-leftover-up2-$RUN_ID"
+  fail "docker.io could not serve a slim leftover /mnt"
+fi
+body="$(curl -fsS -H "Authorization: Bearer $(make_role_jwt "$jwt_secret" service_role)" \
+  "http://127.0.0.1:$up2_port/object/smoke-bucket/hello.txt")"
+[[ "$body" == "hello-slim" ]] || fail "docker.io leftover download mismatch: $body"
+
 log "storage smoke passed"

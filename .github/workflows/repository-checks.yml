@@ -48,6 +48,7 @@ jobs:
           scripts/test-dockerhub-release.sh
           scripts/test-poll-service-releases.sh
           scripts/test-portable-audit.sh
+          scripts/test-identity.sh
 
       - name: Test artifact contracts
         run: |

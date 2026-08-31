@@ -9,6 +9,7 @@ RUN_ID="${RUN_ID:-$(date +%s)-$$}"
 NETWORK="${NETWORK:-slim-smoke-$RUN_ID}"
 POSTGRES_CONTAINER="${POSTGRES_CONTAINER:-slim-smoke-postgres-$RUN_ID}"
 created_containers=()
+created_volumes=()
 host_service_pids=()
 network_created=0
 host_pg_dir=""
@@ -30,6 +31,9 @@ cleanup_smoke() {
   fi
   for container in "${created_containers[@]:-}"; do
     docker rm -f "$container" >/dev/null 2>&1 || true
+  done
+  for volume in "${created_volumes[@]:-}"; do
+    docker volume rm -f "$volume" >/dev/null 2>&1 || true
   done
   if [[ "${network_created:-0}" == "1" ]]; then
     docker network rm "$NETWORK" >/dev/null 2>&1 || true
@@ -55,6 +59,12 @@ run_container() {
   shift
   docker run -d --name "$name" "$@" >/dev/null
   created_containers+=("$name")
+}
+
+create_volume() {
+  local name="$1"
+  docker volume create "$name" >/dev/null
+  created_volumes+=("$name")
 }
 
 container_logs() {
@@ -216,6 +226,28 @@ wait_for_http_code() {
       http_code="$(curl -sS -o /dev/null -w '%{http_code}' "$url" || true)"
     fi
     [[ "$http_code" == "$expected" ]] && return 0
+    if (( "$(date +%s)" - start >= timeout )); then
+      return 1
+    fi
+    sleep 2
+  done
+}
+
+# Wait for Docker itself to report the container healthy via the image's
+# baked HEALTHCHECK. Fails immediately if the image bakes no HEALTHCHECK.
+wait_for_container_healthy() {
+  local container="$1"
+  local timeout="${2:-120}"
+  local start status
+  start="$(date +%s)"
+  while true; do
+    status="$(docker inspect \
+      -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' \
+      "$container" 2>/dev/null || printf missing)"
+    case "$status" in
+      healthy) return 0 ;;
+      none | missing) return 1 ;;
+    esac
     if (( "$(date +%s)" - start >= timeout )); then
       return 1
     fi
