@@ -138,8 +138,56 @@
                 repo = "pg_plan_filter";
               }
             );
-          extCallPackage = pkgs.lib.callPackageWith (
+          # Nixpkgs' pinned fetchCrate still targets crates.io's API endpoint,
+          # which now rejects these archive downloads. Keep this override
+          # local to extension evaluation so unrelated packages retain their
+          # normal registry configuration. The explicit registryDl argument,
+          # when supplied by a caller, remains authoritative.
+          packageScope =
+            let
+              staticCrateRegistry = "https://static.crates.io/crates";
+              fetchCrate =
+                args:
+                pkgs.fetchCrate (
+                  args
+                  // lib.optionalAttrs (!(args ? registryDl)) {
+                    registryDl = staticCrateRegistry;
+                  }
+                );
+              makeRustPlatform =
+                platformArgs:
+                let
+                  baseRustPlatform = pkgs.makeRustPlatform platformArgs;
+                  importCargoLock =
+                    lockArgs:
+                    # importCargoLock has its own registry map rather than
+                    # calling fetchCrate, so redirect crates.io here too.
+                    baseRustPlatform.importCargoLock (
+                      lockArgs
+                      // {
+                        extraRegistries = {
+                          "https://github.com/rust-lang/crates.io-index" = staticCrateRegistry;
+                        }
+                        // (lockArgs.extraRegistries or { });
+                      }
+                    );
+                in
+                baseRustPlatform
+                // {
+                  inherit importCargoLock;
+                  buildRustPackage = baseRustPlatform.buildRustPackage.override {
+                    inherit importCargoLock;
+                  };
+                };
+            in
             pkgs
+            // {
+              inherit fetchCrate makeRustPlatform;
+              callPackage = lib.callPackageWith packageScope;
+              callPackages = lib.callPackagesWith packageScope;
+            };
+          extCallPackage = lib.callPackageWith (
+            packageScope
             // {
               inherit postgresql latestOnly;
               fetchFromGitHub = extensionFetchFromGitHub;
