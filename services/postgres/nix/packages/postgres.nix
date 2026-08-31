@@ -158,19 +158,20 @@
                 platformArgs:
                 let
                   baseRustPlatform = pkgs.makeRustPlatform platformArgs;
-                  importCargoLock =
-                    lockArgs:
-                    # importCargoLock has its own registry map rather than
-                    # calling fetchCrate, so redirect crates.io here too.
-                    baseRustPlatform.importCargoLock (
-                      lockArgs
-                      // {
-                        extraRegistries = {
-                          "https://github.com/rust-lang/crates.io-index" = staticCrateRegistry;
-                        }
-                        // (lockArgs.extraRegistries or { });
-                      }
-                    );
+                  importCargoLock = baseRustPlatform.importCargoLock.override {
+                    fetchurl =
+                      args:
+                      let
+                        obsoleteRegistryPrefix = "https://crates.io/api/v1/crates/";
+                        url = args.url or "";
+                        rewrittenUrl =
+                          if lib.hasPrefix obsoleteRegistryPrefix url then
+                            staticCrateRegistry + "/" + lib.removePrefix obsoleteRegistryPrefix url
+                          else
+                            url;
+                      in
+                      pkgs.fetchurl (args // { url = rewrittenUrl; });
+                  };
                 in
                 baseRustPlatform
                 // {
