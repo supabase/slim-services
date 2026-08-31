@@ -88,6 +88,16 @@ log "checking wget is on PATH (CLI healthcheck)"
 docker run --rm --entrypoint /usr/bin/wget "$image" --help >/dev/null \
   || fail "analytics image is missing wget"
 
+# The CLI drives this image and docker.io supabase/logflare with one spec:
+# `sh -c` from the image WORKDIR, writing a run.sh there and calling
+# ./logflare, with gcloud.json bound into that same cwd.
+log "checking the CLI cwd contract (WORKDIR, ./logflare, writable cwd)"
+workdir="$(docker image inspect --format '{{.Config.WorkingDir}}' "$image")"
+[[ "$workdir" == "/opt/app/rel/logflare/bin" ]] \
+  || fail "analytics WORKDIR is $workdir, expected /opt/app/rel/logflare/bin"
+docker run --rm --entrypoint sh "$image" -c 'test -x ./logflare && : > run.sh' \
+  || fail "analytics WORKDIR lacks an executable ./logflare or is not writable"
+
 container="analytics-smoke-$RUN_ID"
 run_container \
   "$container" \

@@ -8,7 +8,7 @@ set -eu
 export ERL_CRASH_DUMP="${ERL_CRASH_DUMP:-/tmp/erl_crash.dump}"
 
 echo "Running migrations"
-/app/bin/logflare eval Logflare.Release.migrate
+/opt/app/rel/logflare/bin/logflare eval Logflare.Release.migrate
 
 echo "Starting Logflare"
-exec /app/bin/logflare start --sname logflare
+exec /opt/app/rel/logflare/bin/logflare start --sname logflare
