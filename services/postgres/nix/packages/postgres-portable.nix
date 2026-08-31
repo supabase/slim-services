@@ -3,10 +3,18 @@
   stdenv,
   writeTextFile,
   patchelf,
-  psql_17_cli,
+  psql_cli ? null,
+  psql_17_cli ? null,
+  postgres_major ? "17",
 }:
+assert psql_cli != null || psql_17_cli != null;
 let
   configDir = ./cli-config;
+  selectedCli = if psql_cli != null then psql_cli else psql_17_cli;
+
+  extensionNames = builtins.filter (
+    name: name != "recurseForDerivations" && !(lib.hasSuffix "-pkgs" name)
+  ) (builtins.attrNames selectedCli.exts);
 
   # slim-services overlay: upstream's CLI config template preloads supautils
   # but never configures it, so supautils.privileged_extensions is empty and
@@ -22,39 +30,10 @@ let
     destination = "/receipt.json";
     text = builtins.toJSON {
       variant = "cli";
-      psql-version = psql_17_cli.bin.version;
-      # slim-services overlay: the full PG17 extension set (see postgres.nix).
-      extensions = [
-        "rum"
-        "pgroonga"
-        "index_advisor"
-        "wal2json"
-        "pgmq"
-        "pg_repack"
-        "safeupdate"
-        "plpgsql_check"
-        "pgjwt"
-        "pgaudit"
-        "postgis"
-        "pgrouting"
-        "pgtap"
-        "pg_cron"
-        "http"
-        "plan_filter"
-        "pg_net"
-        "pg_hashids"
-        "pgsodium"
-        "pg_graphql"
-        "pg_stat_monitor"
-        "pg_jsonschema"
-        "pg_partman"
-        "vector"
-        "supabase_vault"
-        "hypopg"
-        "pg_tle"
-        "wrappers"
-        "supautils"
-      ];
+      psql-version = selectedCli.bin.version;
+      # Keep receipt-version=1's consumed list-of-strings schema; names are
+      # derived from the selected major's package rather than hardcoded.
+      extensions = extensionNames;
       receipt-version = "1";
     };
   };
@@ -88,6 +67,13 @@ let
       mkdir -p $out/share/supabase-cli/config
       mkdir -p $out/share/supabase-cli/bin
       cp postgresql.conf.template $out/share/supabase-cli/config/
+      # TimescaleDB is part of the PG15 upstream image contract and must be
+      # preloaded before CREATE EXTENSION. PG17 keeps the upstream template
+      # unchanged because TimescaleDB is incompatible with that major.
+      if [ "${postgres_major}" = "15" ]; then
+        sed -i "s/^shared_preload_libraries = '\([^']*\)'/shared_preload_libraries = '\1, timescaledb'/" \
+          $out/share/supabase-cli/config/postgresql.conf.template
+      fi
       # slim-services overlay: the .j2 file is plain postgresql.conf syntax
       # today; refuse to bake actual Jinja templating into a live config.
       if grep -q '{{\|{%' ${supautilsConf}; then
@@ -100,9 +86,14 @@ let
         echo "# build from ansible/files/postgresql_config/supautils.conf.j2)."
         echo "# Later values win: these override the minimal reserved_roles/"
         echo "# reserved_memberships defaults above."
-        # Upstream's Dockerfile-17 strips the PG17-incompatible extensions
-        # from the effective config the same way.
-        sed 's/ timescaledb,//g; s/ plv8,//g' ${supautilsConf}
+        # Upstream's Dockerfile-17 strips the PG17-incompatible extensions;
+        # PG15 retains the values from the source tree unchanged.
+        ${
+          if postgres_major == "17" then
+            "sed 's/ timescaledb,//g; s/ plv8,//g' ${supautilsConf}"
+          else
+            "cat ${supautilsConf}"
+        }
       } >> $out/share/supabase-cli/config/postgresql.conf.template
       cp pg_hba.conf.template $out/share/supabase-cli/config/
       cp pg_ident.conf.template $out/share/supabase-cli/config/
@@ -114,8 +105,8 @@ let
   };
 in
 stdenv.mkDerivation {
-  name = "psql_17_cli_portable";
-  version = psql_17_cli.bin.version;
+  name = "psql_${postgres_major}_cli_portable";
+  version = selectedCli.bin.version;
 
   dontUnpack = true;
   dontPatchShebangs = true;
@@ -199,8 +190,8 @@ stdenv.mkDerivation {
 
     # Copy binaries (resolve all wrappers to get actual binaries)
     for bin in $binaries; do
-      if [ -f ${psql_17_cli.bin}/bin/$bin ] || [ -L ${psql_17_cli.bin}/bin/$bin ]; then
-        actual_binary=$(resolve_binary ${psql_17_cli.bin}/bin/$bin)
+      if [ -f ${selectedCli.bin}/bin/$bin ] || [ -L ${selectedCli.bin}/bin/$bin ]; then
+        actual_binary=$(resolve_binary ${selectedCli.bin}/bin/$bin)
         if [ -n "$actual_binary" ] && [ -f "$actual_binary" ]; then
           cp "$actual_binary" $out/bin/.$bin-wrapped 2>/dev/null || true
         fi
@@ -208,8 +199,8 @@ stdenv.mkDerivation {
     done
 
     # Copy all shared libraries from PostgreSQL
-    if [ -d ${psql_17_cli.bin}/lib ]; then
-      cp -rL ${psql_17_cli.bin}/lib/* $out/lib/ 2>/dev/null || true
+    if [ -d ${selectedCli.bin}/lib ]; then
+      cp -rL ${selectedCli.bin}/lib/* $out/lib/ 2>/dev/null || true
     fi
 
     # Copy all runtime dependencies (shared libraries) from binaries
@@ -300,8 +291,8 @@ stdenv.mkDerivation {
     fi
 
     # Copy share directory
-    if [ -d ${psql_17_cli.bin}/share ]; then
-      cp -rL ${psql_17_cli.bin}/share/* $out/share/ 2>/dev/null || true
+    if [ -d ${selectedCli.bin}/share ]; then
+      cp -rL ${selectedCli.bin}/share/* $out/share/ 2>/dev/null || true
     fi
 
     # Add config templates and initialization script

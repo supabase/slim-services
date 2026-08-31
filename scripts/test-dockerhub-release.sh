@@ -169,4 +169,48 @@ postgres_recipe_image="$(
   exit 1
 }
 
+for major in 15 17; do
+  recipe_attr="$(
+    VERSION="${major}.14.1.159" \
+    SOURCE_REF="$source_commit" \
+    bash -c '
+      set -euo pipefail
+      source services/postgres/recipe.env
+      printf "%s\n" "$NIX_ATTR"
+    '
+  )"
+  [[ "$recipe_attr" == "psql_${major}_cli_portable" ]] || {
+    printf 'Postgres %s recipe selected the wrong portable Nix attribute: %s\n' \
+      "$major" "$recipe_attr" >&2
+    exit 1
+  }
+done
+
+default_recipe_attr="$(
+  env -u VERSION SOURCE_REF="$source_commit" bash -c '
+    set -euo pipefail
+    source services/postgres/recipe.env
+    printf "%s\n" "$NIX_ATTR"
+  '
+)"
+[[ "$default_recipe_attr" == "psql_17_cli_portable" ]] || {
+  printf 'Postgres recipe parsed SOURCE_REF as a version when VERSION was unset: %s\n' \
+    "$default_recipe_attr" >&2
+  exit 1
+}
+
+unsupported_log="$temp_dir/unsupported-major.log"
+if VERSION=16.14.1.159 SOURCE_REF="$source_commit" bash -c '
+  set -euo pipefail
+  source services/postgres/recipe.env
+' >"$unsupported_log" 2>&1; then
+  printf 'Postgres recipe accepted unsupported major 16\n' >&2
+  exit 1
+fi
+grep -F 'unsupported Postgres major' "$unsupported_log" >/dev/null || {
+  printf 'unsupported Postgres major failed for the wrong reason\n' >&2
+  cat "$unsupported_log" >&2
+  exit 1
+}
+
 printf 'Docker Hub release integration tests passed\n'

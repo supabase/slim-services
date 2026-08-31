@@ -15,10 +15,25 @@ if [[ -z "$image" && -z "$artifact_rootfs" ]]; then
 fi
 
 if [[ -n "$artifact_rootfs" ]]; then
-  # Host-process smoke for the portable postgres (upstream's
-  # psql_17_cli_portable + pgvector via the slim-services overlay): initdb,
-  # pg_ctl start, extension round-trip — no Docker anywhere.
+  # Host-process smoke for the selected-major portable postgres bundle:
+  # initdb, pg_ctl start, extension round-trip — no Docker anywhere.
   require_cmd python3
+
+  receipt="$artifact_rootfs/cli-receipt.json"
+  [[ -f "$receipt" ]] || fail "portable postgres receipt missing: cli-receipt.json"
+  postgres_major="$(python3 - "$receipt" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as stream:
+    version = json.load(stream)["psql-version"]
+print(version.split(".", 1)[0])
+PY
+  )"
+  case "$postgres_major" in
+    15|17) ;;
+    *) fail "unsupported PostgreSQL major in portable receipt: $postgres_major" ;;
+  esac
 
   pg_data_dir=""
   cleanup_postgres_smoke() {
@@ -51,9 +66,14 @@ PY
 
   log "starting postgres host process on port $port"
   # pg_cron/pg_net/pg_stat_statements need preloading (the CLI applies its
-  # own config template with the same preload set).
+  # own config template with the same preload set). TimescaleDB additionally
+  # requires preload on PG15, matching the upstream Dockerfile-15 contract.
+  shared_preload="pg_stat_statements,pg_cron,pg_net"
+  if [[ "$postgres_major" == "15" ]]; then
+    shared_preload="$shared_preload,timescaledb"
+  fi
   "$artifact_rootfs/bin/pg_ctl" -D "$pg_data_dir/data" -l "$pg_data_dir/postgres.log" \
-    -o "-p $port -c listen_addresses=127.0.0.1 -k $pg_data_dir -c shared_preload_libraries=pg_stat_statements,pg_cron,pg_net -c cron.database_name=postgres" \
+    -o "-p $port -c listen_addresses=127.0.0.1 -k $pg_data_dir -c shared_preload_libraries=$shared_preload -c cron.database_name=postgres" \
     start >/dev/null \
     || { cat "$pg_data_dir/postgres.log" >&2; fail "pg_ctl start failed"; }
   postgres_pid="$(head -1 "$pg_data_dir/data/postmaster.pid")"
@@ -85,14 +105,30 @@ PY
     || fail "postgresql.conf.template is missing pg_net in supautils.privileged_extensions"
   grep -q "^supautils\.privileged_extensions_superuser = 'supabase_admin'" "$template" \
     || fail "postgresql.conf.template is missing supautils.privileged_extensions_superuser"
+  preload_line="$(grep '^shared_preload_libraries' "$template" || true)"
+  if [[ "$postgres_major" == "15" ]]; then
+    [[ "$preload_line" == *timescaledb* ]] \
+      || fail "PG15 postgresql.conf.template is missing TimescaleDB preload"
+  else
+    [[ "$preload_line" != *timescaledb* ]] \
+      || fail "PG17 postgresql.conf.template unexpectedly preloads TimescaleDB"
+  fi
 
-  # The artifact ships the full PG17 extension set; create the preload-free
-  # subset here. pgsodium/supabase_vault additionally need the pgsodium
+  # The artifact ships the full extension set for its selected major; create
+  # the preload-free subset here. pgsodium/supabase_vault additionally need the pgsodium
   # getkey script from the CLI config bundle (exercised by the image smoke,
   # whose entrypoint wires it); pgaudit/pg_stat_monitor/pg_tle need a
   # shared_preload_libraries opt-in.
   log "creating the portable extension set (preload-free subset)"
-  for ext in pgcrypto pgjwt pg_stat_statements vector pg_net pg_cron hypopg index_advisor pg_jsonschema pg_hashids http rum pgtap pgmq pg_partman pg_repack plpgsql_check postgis pgrouting pgroonga wrappers; do
+  extensions=(
+    pgcrypto pgjwt pg_stat_statements vector pg_net pg_cron hypopg index_advisor
+    pg_jsonschema pg_hashids http rum pgtap pgmq pg_partman pg_repack
+    plpgsql_check postgis pgrouting pgroonga wrappers
+  )
+  if [[ "$postgres_major" == "15" ]]; then
+    extensions+=(timescaledb plv8)
+  fi
+  for ext in "${extensions[@]}"; do
     psql_host "CREATE EXTENSION IF NOT EXISTS $ext CASCADE" >/dev/null \
       || { cat "$pg_data_dir/postgres.log" >&2; fail "CREATE EXTENSION $ext failed"; }
   done
@@ -161,10 +197,10 @@ log "creating pg_net as the non-superuser postgres role (CLI shadow-db path)"
 psql_postgres "CREATE EXTENSION pg_net" >/dev/null \
   || { container_logs "$container"; fail "CREATE EXTENSION pg_net as postgres failed"; }
 
-# The derived image ships the full PG17 extension set (everything the
-# upstream image supports; timescaledb/plv8 do not support PG17), installed
-# but NOT enabled — only the minimal shared_preload_libraries set is on by
-# default, keeping the low-footprint profile. This list creates everything
+# The derived image ships the full extension set for its selected major
+# (everything the matching upstream image supports), installed but NOT
+# enabled — only the minimal shared_preload_libraries set is on by default
+# (plus timescaledb on PG15), keeping the low-footprint profile. This list creates everything
 # that works without extra preloads; pgaudit/pg_stat_monitor/pg_tle require
 # a shared_preload_libraries opt-in (config change + restart) and
 # supautils/safeupdate/plan_filter/wal2json are preload-only or plugin
@@ -202,6 +238,12 @@ extensions=(
   pgroonga
   wrappers
 )
+postgres_major="$(psql_admin "SHOW server_version" | cut -d. -f1)"
+case "$postgres_major" in
+  15) extensions+=(timescaledb plv8) ;;
+  17) ;;
+  *) fail "unsupported PostgreSQL major reported by server: $postgres_major" ;;
+esac
 for ext in "${extensions[@]}"; do
   psql_admin "CREATE EXTENSION IF NOT EXISTS $ext CASCADE" >/dev/null \
     || { container_logs "$container"; fail "CREATE EXTENSION $ext failed"; }

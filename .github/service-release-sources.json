@@ -61,8 +61,17 @@
       "repository": "supabase/postgres",
       "release_source": "dockerhub",
       "image_repository": "supabase/postgres",
-      "tag_pattern": "^17\\.[0-9]+\\.[0-9]+\\.[0-9]{3}$",
-      "release_floor": "17.6.1.159",
+      "tag_pattern": "^(15|17)\\.[0-9]+\\.[0-9]+\\.[0-9]{3}$",
+      "release_lines": [
+        {
+          "tag_pattern": "^15\\.[0-9]+\\.[0-9]+\\.[0-9]{3}$",
+          "release_floor": "15.14.1.159"
+        },
+        {
+          "tag_pattern": "^17\\.[0-9]+\\.[0-9]+\\.[0-9]{3}$",
+          "release_floor": "17.6.1.159"
+        }
+      ],
       "poll": true
     },
     "mailpit": {

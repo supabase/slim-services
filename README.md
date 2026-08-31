@@ -341,22 +341,22 @@ gh workflow run service-release.yml \
 
 `.github/workflows/poll-service-releases.yml` polls stable upstream releases
 and Docker Hub tags hourly and dispatches independent service-release runs for
-the oldest eligible version tag that does not yet have a corresponding GitHub
-release here. Each polled service declares a `release_floor` at the first
-version published by this repository; the poller reconciles every matching
-stable upstream release from that adoption boundary onward. It dispatches at
-most three versions per service per poll while keeping no more than twelve
-release workflows active across the repository. Active versions and versions
-attempted unsuccessfully within the previous six hours are skipped without
-blocking later missing versions. The cooldown starts from GitHub's final
-workflow update; a successful workflow whose release is not visible gets a
-ten-minute publication grace instead. Failures therefore remain retryable
-without creating gaps or unbounded hourly fan-out. All configured polled
-services are enabled. PostgreSQL release eligibility comes from published
-`supabase/postgres` Docker Hub tags, and each native source checkout is pinned
-to the one Git commit recorded by that image's provenance. Its policy accepts
-only plain `17.x.x.NNN` releases with a three-digit AMI suffix; PostgreSQL 15,
-OrioleDB, architecture-specific, and other suffixed release tags are ignored.
+missing eligible version tags, oldest first. Each polled service declares a
+`release_floor` at the first version published by this repository; the poller
+reconciles every matching stable upstream release from that adoption boundary
+onward. It dispatches at most three versions per service per poll while keeping
+no more than twelve release workflows active across the repository. Active
+versions and versions attempted unsuccessfully within the previous six hours
+are skipped without blocking later missing versions. The cooldown starts from
+GitHub's final workflow update; a successful workflow whose release is not
+visible gets a ten-minute publication grace instead. Failures therefore remain
+retryable without creating gaps or unbounded hourly fan-out. All configured
+polled services are enabled. PostgreSQL release eligibility comes from
+published `supabase/postgres` Docker Hub tags, and each native source checkout
+is pinned to the one Git commit recorded by that image's provenance. Its policy
+accepts only plain `15.x.x.NNN` and `17.x.x.NNN` releases, with independent
+floors of `15.14.1.159` and `17.6.1.159`; OrioleDB, architecture-specific, and
+other suffixed release tags are ignored.
 
 Mailpit and Vector are the non-polled upstream-archive services. Imgproxy is a
 non-polled source-built Nix/external-source service. Their release workflows

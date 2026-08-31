@@ -66,13 +66,50 @@ for service, config in services.items():
     if not isinstance(config.get("poll"), bool):
         raise SystemExit(f"poll must be a boolean for {service}")
     release_floor = config.get("release_floor")
-    if config.get("poll") is True and not config.get("external_release_descriptor"):
+    release_source = config.get("release_source", "github")
+    release_lines = config.get("release_lines")
+    if (
+        config.get("poll") is True
+        and not config.get("external_release_descriptor")
+        and release_lines is None
+    ):
         if not isinstance(release_floor, str) or not re.fullmatch(tag_pattern, release_floor):
             raise SystemExit(
                 f"release_floor must match tag_pattern for polled service {service}: "
                 f"{release_floor}"
             )
-    release_source = config.get("release_source", "github")
+    if release_lines is not None:
+        if release_source != "dockerhub":
+            raise SystemExit(
+                f"release_lines requires Docker Hub releases for {service}"
+            )
+        if not isinstance(release_lines, list) or not release_lines:
+            raise SystemExit(f"release_lines must be a non-empty list for {service}")
+        for index, line in enumerate(release_lines):
+            if not isinstance(line, dict):
+                raise SystemExit(f"release_lines[{index}] must be an object for {service}")
+            line_pattern = line.get("tag_pattern", "")
+            if not isinstance(line_pattern, str):
+                raise SystemExit(f"release_lines[{index}].tag_pattern must be a string for {service}")
+            try:
+                re.compile(line_pattern)
+            except re.error as error:
+                raise SystemExit(
+                    f"invalid release_lines[{index}].tag_pattern for {service}: {error}"
+                ) from error
+            if not line_pattern.startswith("^") or not line_pattern.endswith("$"):
+                raise SystemExit(
+                    f"release_lines[{index}].tag_pattern must be anchored for {service}: {line_pattern}"
+                )
+            line_floor = line.get("release_floor")
+            if not isinstance(line_floor, str) or not re.fullmatch(line_pattern, line_floor):
+                raise SystemExit(
+                    f"release_lines[{index}].release_floor must match its tag_pattern for {service}: {line_floor}"
+                )
+            if not re.fullmatch(tag_pattern, line_floor):
+                raise SystemExit(
+                    f"release_lines[{index}].release_floor must match the service tag_pattern for {service}: {line_floor}"
+                )
     if release_source not in {"github", "dockerhub"}:
         raise SystemExit(f"unsupported release source for {service}: {release_source}")
     artifact_source = config.get("artifact_source", "source")
@@ -148,9 +185,10 @@ for service, config in services.items():
             service,
             config["repository"],
             config["tag_pattern"],
-            config["release_floor"],
+            config.get("release_floor", "-"),
             config.get("release_source", "github"),
             config.get("image_repository", "-"),
+            json.dumps(config.get("release_lines", []), separators=(",", ":")),
             sep="\t",
         )
 PY
@@ -182,7 +220,7 @@ print(
 PY
 )"
 
-while IFS=$'\t' read -r service upstream_repository tag_pattern release_floor release_source upstream_image_repository; do
+while IFS=$'\t' read -r service upstream_repository tag_pattern release_floor release_source upstream_image_repository release_lines_json; do
   service_dispatch_count=0
   versions=""
   if [[ "$release_source" == "dockerhub" ]]; then
@@ -190,6 +228,7 @@ while IFS=$'\t' read -r service upstream_repository tag_pattern release_floor re
       "$upstream_image_repository" \
       "$tag_pattern" \
       "$release_floor" \
+      "$release_lines_json" \
       "$DOCKER_HUB_API_BASE" <<'PY'
 import json
 import re
@@ -197,8 +236,9 @@ import sys
 import urllib.parse
 import urllib.request
 
-repository, pattern_raw, release_floor, docker_hub_api_base = sys.argv[1:]
+repository, pattern_raw, release_floor, release_lines_raw, docker_hub_api_base = sys.argv[1:]
 pattern = re.compile(pattern_raw)
+release_lines = json.loads(release_lines_raw) if release_lines_raw else []
 
 def version_key(value):
     return tuple(
@@ -221,12 +261,36 @@ for _ in range(10):
     url = page.get("next")
     if not url:
         break
-if release_floor not in candidates:
-    raise SystemExit(1)
-floor_key = version_key(release_floor)
+if release_lines:
+    line_patterns = [
+        (re.compile(line["tag_pattern"]), line["release_floor"])
+        for line in release_lines
+    ]
+    eligible = set()
+    for candidate in candidates:
+        matching = [
+            line_floor
+            for line_pattern, line_floor in line_patterns
+            if line_pattern.fullmatch(candidate)
+        ]
+        if len(matching) != 1:
+            raise SystemExit(
+                f"candidate {candidate} matched {len(matching)} release lines; expected exactly one"
+            )
+        if version_key(candidate) >= version_key(matching[0]):
+            eligible.add(candidate)
+    for line in release_lines:
+        line_floor = line["release_floor"]
+        if line_floor not in candidates:
+            raise SystemExit(1)
+else:
+    if release_floor not in candidates:
+        raise SystemExit(1)
+    floor_key = version_key(release_floor)
+    eligible = {candidate for candidate in candidates if version_key(candidate) >= floor_key}
 print(
     *sorted(
-        {candidate for candidate in candidates if version_key(candidate) >= floor_key},
+        eligible,
         key=version_key,
     ),
     sep="\n",
@@ -268,9 +332,10 @@ candidates = {
 if release_floor not in candidates:
     raise SystemExit(1)
 floor_key = version_key(release_floor)
+eligible = {candidate for candidate in candidates if version_key(candidate) >= floor_key}
 print(
     *sorted(
-        (candidate for candidate in candidates if version_key(candidate) >= floor_key),
+        eligible,
         key=version_key,
     ),
     sep="\n",
