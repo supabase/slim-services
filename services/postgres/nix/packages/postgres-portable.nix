@@ -258,12 +258,13 @@ stdenv.mkDerivation {
       echo "$result"
     }
 
-    # Helper function to get the library file pattern based on platform
-    get_lib_pattern() {
+    # Helper function to list library files based on platform. Darwin
+    # extensions are Mach-O .so files as well as .dylib files.
+    find_library_files() {
       if [ "$(uname)" = "Darwin" ]; then
-        echo "*.dylib*"
+        find "$out/lib" -type f \( -name "*.dylib*" -o -name "*.so*" \)
       else
-        echo "*.so*"
+        find "$out/lib" -type f -name "*.so*"
       fi
     }
 
@@ -336,11 +337,10 @@ stdenv.mkDerivation {
 
     # Second pass: recursively check libraries for their dependencies (e.g., libicuuc -> libicudata -> libcharset)
     # Run multiple iterations until no new libraries are found
-    lib_pattern=$(get_lib_pattern)
     for iteration in {1..5}; do
-      before_count=$(ls $out/lib/$lib_pattern 2>/dev/null | wc -l || echo "0")
-      # Use find instead of glob to avoid bash errors when pattern doesn't match
-      libs=$(find $out/lib -name "$lib_pattern" -type f 2>/dev/null || true)
+      before_count=$(find_library_files 2>/dev/null | wc -l || echo "0")
+      # Use find instead of globs to avoid bash errors when a pattern does not match.
+      libs=$(find_library_files 2>/dev/null || true)
       if [ -n "$libs" ]; then
         echo "$libs" | while read lib; do
           if [ -f "$lib" ]; then
@@ -363,7 +363,7 @@ stdenv.mkDerivation {
           fi
         done
       fi
-      after_count=$(ls $out/lib/$lib_pattern 2>/dev/null | wc -l || echo "0")
+      after_count=$(find_library_files 2>/dev/null | wc -l || echo "0")
       if [ "$before_count" -eq "$after_count" ]; then
         echo "No new dependencies found after $iteration iterations"
         break
@@ -570,8 +570,10 @@ stdenv.mkDerivation {
         fi
       done
 
-      # Patch dylibs to use @rpath for their dependencies
-      for lib in $out/lib/*.dylib*; do
+      # Patch Mach-O libraries to use @rpath for their dependencies. Darwin
+      # extension modules use the .so suffix, while system libraries use
+      # .dylib, so process both.
+      for lib in $out/lib/*.dylib* $out/lib/*.so*; do
         if [ -f "$lib" ] && file "$lib" | grep -q "Mach-O"; then
           # First, fix the library's own ID to use @rpath
           libname=$(basename "$lib")
@@ -619,10 +621,10 @@ stdenv.mkDerivation {
       # (e.g. the ICU dylibs), which fails the portable audit. Delete Nix
       # store rpaths and re-sign — but ONLY on files actually mutated: the
       # sandbox codesign shim produces invalid signatures on some special
-      # dylibs (reexport stubs like libiconv.dylib), which macOS then
+      # Mach-O libraries (reexport stubs like libiconv.dylib), which macOS then
       # SIGKILLs at load. scripts/audit-portable-artifact.sh verifies every
       # signature with the host codesign afterwards.
-      for macho in $out/bin/.*-wrapped $out/lib/*.dylib*; do
+      for macho in $out/bin/.*-wrapped $out/lib/*.dylib* $out/lib/*.so*; do
         [ -f "$macho" ] || continue
         [ -L "$macho" ] && continue
         file "$macho" | grep -q "Mach-O" || continue
