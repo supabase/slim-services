@@ -58,6 +58,7 @@ jobs:
           scripts/test-extract-upstream-archive.sh
           scripts/test-upstream-artifact.sh
           scripts/test-oci-mirror.sh
+          scripts/test-ecr-mirror.sh
           scripts/test-upstream-runtime.sh
           scripts/test-studio-artifact.sh
           scripts/test-beam-release-env.sh

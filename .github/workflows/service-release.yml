@@ -738,12 +738,83 @@ jobs:
           retention-days: 7
           path: mirror-provenance.json
 
+  mirror-ecr:
+    name: mirror ${{ inputs.service }} image to ECR Public
+    needs:
+      - plan
+      - publish-image
+    if: needs.plan.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    outputs:
+      mirrored: ${{ steps.mirror.outputs.mirrored || 'false' }}
+    steps:
+      - name: Checkout mirror scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Check mirror dispatch configuration
+        id: config
+        shell: bash
+        env:
+          MIRROR_DISPATCH_TOKEN: ${{ secrets.CLI_MIRROR_DISPATCH_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$MIRROR_DISPATCH_TOKEN" ]]; then
+            echo "::notice::CLI_MIRROR_DISPATCH_TOKEN is not configured; skipping the ECR Public mirror"
+            printf 'configured=false\n' >> "$GITHUB_OUTPUT"
+          else
+            printf 'configured=true\n' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download published image metadata
+        if: steps.config.outputs.configured == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: published-image-${{ inputs.service }}-${{ inputs.version }}
+
+      - name: Install regctl
+        if: steps.config.outputs.configured == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          regctl_version="v0.11.5"
+          expected_sha256="c93aa7638749f5aaac1a8e01787321889c78f0101809bb2880343478d0ba0467"
+          curl -fsSL \
+            "https://github.com/regclient/regclient/releases/download/${regctl_version}/regctl-linux-amd64" \
+            -o "$RUNNER_TEMP/regctl"
+          actual_sha256="$(sha256sum "$RUNNER_TEMP/regctl" | cut -d' ' -f1)"
+          [[ "$actual_sha256" == "$expected_sha256" ]] || {
+            printf 'regctl checksum mismatch: expected %s, got %s\n' \
+              "$expected_sha256" "$actual_sha256" >&2
+            exit 1
+          }
+          chmod +x "$RUNNER_TEMP/regctl"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+      - name: Request and verify ECR Public mirror
+        id: mirror
+        if: steps.config.outputs.configured == 'true'
+        shell: bash
+        env:
+          MIRROR_DISPATCH_TOKEN: ${{ secrets.CLI_MIRROR_DISPATCH_TOKEN }}
+          SERVICE: ${{ inputs.service }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          digest="$(python3 -c 'import json; print(json.load(open("published-image.json"))["digest"])')"
+          scripts/ecr-mirror.sh request "$SERVICE" "$VERSION" "$digest"
+          printf 'mirrored=true\n' >> "$GITHUB_OUTPUT"
+
   publish-release:
     name: publish ${{ inputs.service }} release
     needs:
       - plan
       - build
       - publish-image
+      - mirror-ecr
     if: needs.plan.outputs.publish == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -799,6 +870,7 @@ jobs:
         shell: bash
         env:
           IMAGE_RELEASE: ${{ needs.plan.outputs.image_release }}
+          MIRRORED: ${{ needs.mirror-ecr.outputs.mirrored }}
           SERVICE: ${{ inputs.service }}
           VERSION: ${{ inputs.version }}
         run: |
@@ -855,6 +927,22 @@ jobs:
 
           Verify a downloaded archive with the attached \`SHA256SUMS\` file.
           EOF
+
+          if [[ "${MIRRORED:-}" == "true" ]]; then
+            ecr_image="$(
+              scripts/ecr-mirror.sh payload "$SERVICE" "$VERSION" "$digest" \
+                | python3 -c 'import json,sys; print(json.load(sys.stdin)["client_payload"]["destination"])'
+            )"
+            ecr_image="${ecr_image%%:*}"
+            cat >> release-notes.md <<EOF
+
+          AWS ECR Public mirror (same digests):
+
+          \`$ecr_image:$VERSION\`
+
+          \`$ecr_image@$digest\`
+          EOF
+          fi
 
           if [[ "$IMAGE_RELEASE" == "mirror" ]]; then
             python3 - "release-assets/$SERVICE-$VERSION.oci-provenance.json" "$image" >> release-notes.md <<'PY'
