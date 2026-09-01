@@ -391,18 +391,58 @@ smoke_beam_release_distribution() {
     smoke_env+=("$pair")
   done
 
-  local expression='IO.write(System.get_env("RELEASE_DISTRIBUTION"))'
-  local default_distribution override_distribution
-  if ! default_distribution="$(env -u RELEASE_DISTRIBUTION "${smoke_env[@]}" "$launcher" eval "$expression")"; then
+  local marker='__slim_beam_release_distribution__='
+  local expression="IO.puts(\"${marker}\" <> System.get_env(\"RELEASE_DISTRIBUTION\"))"
+  local default_output override_output default_distribution override_distribution
+  if ! default_output="$(
+    env -u RELEASE_DISTRIBUTION \
+      ${smoke_env[@]+"${smoke_env[@]}"} \
+      "$launcher" eval "$expression"
+  )"; then
     fail "BEAM release distribution smoke failed with caller variable unset"
+  fi
+  if ! default_distribution="$(
+    printf '%s\n' "$default_output" |
+      awk -v marker="$marker" '
+        BEGIN { found = 0 }
+        index($0, marker) == 1 {
+          found++
+          value = substr($0, length(marker) + 1)
+        }
+        END {
+          if (found != 1) exit 1
+          print value
+        }
+      '
+  )"; then
+    fail "BEAM release distribution marker missing or duplicated with caller variable unset"
   fi
   [[ "$default_distribution" == name ]] || {
     fail "BEAM release default distribution was '$default_distribution', expected name"
   }
 
-  if ! override_distribution="$(env -u RELEASE_DISTRIBUTION "${smoke_env[@]}" \
-    RELEASE_DISTRIBUTION=none "$launcher" eval "$expression")"; then
+  if ! override_output="$(
+    env -u RELEASE_DISTRIBUTION \
+      ${smoke_env[@]+"${smoke_env[@]}"} \
+      RELEASE_DISTRIBUTION=none "$launcher" eval "$expression"
+  )"; then
     fail "BEAM release distribution smoke failed with caller override"
+  fi
+  if ! override_distribution="$(
+    printf '%s\n' "$override_output" |
+      awk -v marker="$marker" '
+        BEGIN { found = 0 }
+        index($0, marker) == 1 {
+          found++
+          value = substr($0, length(marker) + 1)
+        }
+        END {
+          if (found != 1) exit 1
+          print value
+        }
+      '
+  )"; then
+    fail "BEAM release distribution marker missing or duplicated with caller override"
   fi
   [[ "$override_distribution" == none ]] || {
     fail "BEAM release override distribution was '$override_distribution', expected none"

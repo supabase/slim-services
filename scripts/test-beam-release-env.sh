@@ -26,7 +26,13 @@ release_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$release_root/releases/demo/env.sh"
 [[ "${1:-}" == eval ]] || exit 2
 [[ "${SMOKE_MARKER:-}" == present ]] || exit 3
-printf '%s\n' "$RELEASE_DISTRIBUTION"
+printf '%s\n' 'release runtime noise'
+case "${SMOKE_OUTPUT_MODE:-normal}" in
+  missing) exit 0 ;;
+  wrong) printf '__slim_beam_release_distribution__=wrong\n' ;;
+  normal) printf '__slim_beam_release_distribution__=%s\n' "$RELEASE_DISTRIBUTION" ;;
+  *) exit 4 ;;
+esac
 EOF
 chmod 0755 "$launcher"
 
@@ -43,5 +49,16 @@ export RELEASE_DISTRIBUTION="${RELEASE_DISTRIBUTION:-name}"
 EOF
 smoke_beam_release_distribution "$launcher" \
   SMOKE_MARKER=present RELEASE_DISTRIBUTION=caller
+
+if (smoke_beam_release_distribution "$launcher" \
+  SMOKE_MARKER=present SMOKE_OUTPUT_MODE=missing >/dev/null 2>&1); then
+  echo "distribution smoke unexpectedly accepted a missing marker" >&2
+  exit 1
+fi
+if (smoke_beam_release_distribution "$launcher" \
+  SMOKE_MARKER=present SMOKE_OUTPUT_MODE=wrong >/dev/null 2>&1); then
+  echo "distribution smoke unexpectedly accepted a wrong marker value" >&2
+  exit 1
+fi
 
 echo "beam release env behavior tests passed"
