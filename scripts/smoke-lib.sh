@@ -375,6 +375,23 @@ start_host_service() {
   host_service_pids+=("$host_service_pid")
 }
 
+_smoke_beam_release_distribution_value() {
+  local output="$1"
+  local marker="$2"
+  printf '%s\n' "$output" |
+    awk -v marker="$marker" '
+      BEGIN { found = 0 }
+      index($0, marker) == 1 {
+        found++
+        value = substr($0, length(marker) + 1)
+      }
+      END {
+        if (found != 1) exit 1
+        print value
+      }
+    '
+}
+
 # Prove that a built BEAM release launcher preserves its named distribution
 # default while honoring an explicit caller override. The launcher sources the
 # release's built env.sh before evaluating the expression.
@@ -401,20 +418,7 @@ smoke_beam_release_distribution() {
   )"; then
     fail "BEAM release distribution smoke failed with caller variable unset"
   fi
-  if ! default_distribution="$(
-    printf '%s\n' "$default_output" |
-      awk -v marker="$marker" '
-        BEGIN { found = 0 }
-        index($0, marker) == 1 {
-          found++
-          value = substr($0, length(marker) + 1)
-        }
-        END {
-          if (found != 1) exit 1
-          print value
-        }
-      '
-  )"; then
+  if ! default_distribution="$(_smoke_beam_release_distribution_value "$default_output" "$marker")"; then
     fail "BEAM release distribution marker missing or duplicated with caller variable unset"
   fi
   [[ "$default_distribution" == name ]] || {
@@ -428,20 +432,7 @@ smoke_beam_release_distribution() {
   )"; then
     fail "BEAM release distribution smoke failed with caller override"
   fi
-  if ! override_distribution="$(
-    printf '%s\n' "$override_output" |
-      awk -v marker="$marker" '
-        BEGIN { found = 0 }
-        index($0, marker) == 1 {
-          found++
-          value = substr($0, length(marker) + 1)
-        }
-        END {
-          if (found != 1) exit 1
-          print value
-        }
-      '
-  )"; then
+  if ! override_distribution="$(_smoke_beam_release_distribution_value "$override_output" "$marker")"; then
     fail "BEAM release distribution marker missing or duplicated with caller override"
   fi
   [[ "$override_distribution" == none ]] || {

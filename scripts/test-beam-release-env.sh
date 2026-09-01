@@ -30,6 +30,10 @@ printf '%s\n' 'release runtime noise'
 case "${SMOKE_OUTPUT_MODE:-normal}" in
   missing) exit 0 ;;
   wrong) printf '__slim_beam_release_distribution__=wrong\n' ;;
+  duplicate)
+    printf '__slim_beam_release_distribution__=%s\n' "$RELEASE_DISTRIBUTION"
+    printf '__slim_beam_release_distribution__=%s\n' "$RELEASE_DISTRIBUTION"
+    ;;
   normal) printf '__slim_beam_release_distribution__=%s\n' "$RELEASE_DISTRIBUTION" ;;
   *) exit 4 ;;
 esac
@@ -58,6 +62,11 @@ fi
 if (smoke_beam_release_distribution "$launcher" \
   SMOKE_MARKER=present SMOKE_OUTPUT_MODE=wrong >/dev/null 2>&1); then
   echo "distribution smoke unexpectedly accepted a wrong marker value" >&2
+  exit 1
+fi
+if (smoke_beam_release_distribution "$launcher" \
+  SMOKE_MARKER=present SMOKE_OUTPUT_MODE=duplicate >/dev/null 2>&1); then
+  echo "distribution smoke unexpectedly accepted duplicate markers" >&2
   exit 1
 fi
 
