@@ -206,15 +206,15 @@ runs_json="$(
     --limit 100 \
     --json displayTitle,status,conclusion,createdAt,updatedAt
 )"
-active_release_count="$(python3 - "$runs_json" <<'PY'
+active_release_count="$(RUNS_JSON="$runs_json" python3 - <<'PY'
 import json
-import sys
+import os
 
 active_statuses = {"in_progress", "pending", "queued", "requested", "waiting"}
 print(
     sum(
         run.get("status") in active_statuses
-        for run in json.loads(sys.argv[1])
+        for run in json.loads(os.environ["RUNS_JSON"])
     )
 )
 PY
@@ -311,11 +311,13 @@ PY
       continue
     fi
 
-    if ! versions="$(python3 - "$tag_pattern" "$release_floor" "$release_tags" <<'PY'
+    if ! versions="$(RELEASE_TAGS="$release_tags" python3 - "$tag_pattern" "$release_floor" <<'PY'
+import os
 import re
 import sys
 
-pattern_raw, release_floor, release_tags = sys.argv[1:]
+pattern_raw, release_floor = sys.argv[1:]
+release_tags = os.environ["RELEASE_TAGS"]
 pattern = re.compile(pattern_raw)
 
 def version_key(value):
@@ -362,16 +364,17 @@ PY
     fi
 
     expected_run_title="Release $service $version"
-    run_state="$(python3 - \
+    run_state="$(RUNS_JSON="$runs_json" python3 - \
       "$expected_run_title" \
-      "$runs_json" \
       "$POLL_RETRY_COOLDOWN_SECONDS" \
       "$POLL_SUCCESS_GRACE_SECONDS" <<'PY'
 import datetime
 import json
+import os
 import sys
 
-expected_title, runs_raw, cooldown_raw, success_grace_raw = sys.argv[1:]
+expected_title, cooldown_raw, success_grace_raw = sys.argv[1:]
+runs_raw = os.environ["RUNS_JSON"]
 cooldown = int(cooldown_raw)
 success_grace = int(success_grace_raw)
 active_statuses = {"in_progress", "pending", "queued", "requested", "waiting"}

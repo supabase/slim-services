@@ -375,6 +375,73 @@ start_host_service() {
   host_service_pids+=("$host_service_pid")
 }
 
+_smoke_beam_release_distribution_value() {
+  local output="$1"
+  local marker="$2"
+  printf '%s\n' "$output" |
+    awk -v marker="$marker" '
+      BEGIN { found = 0 }
+      index($0, marker) == 1 {
+        found++
+        value = substr($0, length(marker) + 1)
+      }
+      END {
+        if (found != 1) exit 1
+        print value
+      }
+    '
+}
+
+# Prove that a built BEAM release launcher preserves its named distribution
+# default while honoring an explicit caller override. The launcher sources the
+# release's built env.sh before evaluating the expression.
+# Usage: smoke_beam_release_distribution /path/to/release/bin/name [ENV=value ...]
+smoke_beam_release_distribution() {
+  local launcher="$1"
+  shift
+  [[ -x "$launcher" ]] || fail "BEAM release launcher not found or not executable: $launcher"
+
+  local smoke_env=()
+  local pair
+  for pair in "$@"; do
+    [[ "$pair" == RELEASE_DISTRIBUTION=* ]] && continue
+    smoke_env+=("$pair")
+  done
+
+  local marker='__slim_beam_release_distribution__='
+  local expression="IO.puts(\"${marker}\" <> System.get_env(\"RELEASE_DISTRIBUTION\"))"
+  local default_output override_output default_distribution override_distribution
+  if ! default_output="$(
+    env -u RELEASE_DISTRIBUTION \
+      ${smoke_env[@]+"${smoke_env[@]}"} \
+      "$launcher" eval "$expression"
+  )"; then
+    fail "BEAM release distribution smoke failed with caller variable unset"
+  fi
+  if ! default_distribution="$(_smoke_beam_release_distribution_value "$default_output" "$marker")"; then
+    fail "BEAM release distribution marker missing or duplicated with caller variable unset"
+  fi
+  [[ "$default_distribution" == name ]] || {
+    fail "BEAM release default distribution was '$default_distribution', expected name"
+  }
+
+  if ! override_output="$(
+    env -u RELEASE_DISTRIBUTION \
+      ${smoke_env[@]+"${smoke_env[@]}"} \
+      RELEASE_DISTRIBUTION=none "$launcher" eval "$expression"
+  )"; then
+    fail "BEAM release distribution smoke failed with caller override"
+  fi
+  if ! override_distribution="$(_smoke_beam_release_distribution_value "$override_output" "$marker")"; then
+    fail "BEAM release distribution marker missing or duplicated with caller override"
+  fi
+  [[ "$override_distribution" == none ]] || {
+    fail "BEAM release override distribution was '$override_distribution', expected none"
+  }
+
+  log "BEAM release distribution smoke passed for $launcher"
+}
+
 # wait_for_http_code for a host process: fails fast (with logs) when the
 # process exits before serving.
 wait_for_http_code_host() {

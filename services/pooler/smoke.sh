@@ -58,7 +58,9 @@ PY
     API_JWT_SECRET="$api_secret"
     METRICS_JWT_SECRET="$metrics_secret"
     PORT="$port"
+    RELEASE_DISTRIBUTION=none
   )
+  smoke_beam_release_distribution "$pooler_bin" "${pooler_env[@]}"
 
   log "running pooler migrations"
   if ! env "${pooler_env[@]}" "$artifact_rootfs/bin/migrate" >"$pooler_log" 2>&1; then

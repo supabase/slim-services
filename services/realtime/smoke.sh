@@ -63,7 +63,9 @@ PY
     SECRET_KEY_BASE="$secret_key_base"
     APP_NAME=realtime-smoke
     PORT="$port"
+    RELEASE_DISTRIBUTION=none
   )
+  smoke_beam_release_distribution "$realtime_bin" "${rt_env[@]}"
 
   log "running realtime migrations"
   if ! env "${rt_env[@]}" "$artifact_rootfs/bin/migrate" >"$realtime_log" 2>&1; then

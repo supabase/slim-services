@@ -61,7 +61,9 @@ PY
     LOGFLARE_DB_ENCRYPTION_KEY="$db_encryption_key"
     PHX_HTTP_PORT="$port"
     PHX_SECRET_KEY_BASE="$secret_key_base"
+    RELEASE_DISTRIBUTION=none
   )
+  smoke_beam_release_distribution "$logflare_bin" "${analytics_env[@]}"
 
   log "running analytics migrations"
   if ! env "${analytics_env[@]}" "$logflare_bin" eval Logflare.Release.migrate >"$analytics_log" 2>&1; then
@@ -72,7 +74,7 @@ PY
   log "smoke testing analytics host process on port $port"
   start_host_service analytics "$analytics_log" \
     "${analytics_env[@]}" \
-    -- "$logflare_bin" start --sname logflare
+    -- "$logflare_bin" start
 
   if ! wait_for_http_code_host "http://127.0.0.1:$port/health" "200" 180 "$host_service_pid" "$analytics_log"; then
     fail "analytics /health did not return 200"
