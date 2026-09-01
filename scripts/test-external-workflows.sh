@@ -335,6 +335,25 @@ def test_workflow_downloads_and_verifies_snapshot_before_recipe_build_consumers(
     assert_true("matrix.external != true" not in artifact_nix_cache.get("if", ""), "external artifact source incorrectly skips Nix cache")
 
 
+def test_service_release_mirror_ecr_gates_publish_release():
+    ruby = (
+        "require 'yaml'; require 'json'; "
+        "data=YAML.safe_load(File.read(ARGV[0]), aliases: true); "
+        "jobs=data.fetch('jobs'); "
+        "notes=jobs.fetch('publish-release').fetch('steps').find { |s| s['name'] == 'Prepare checksums and release notes' }; "
+        "puts JSON.generate({mirror: jobs.key?('mirror-ecr'), needs: jobs.fetch('publish-release').fetch('needs'), notes_env: notes.fetch('env')})"
+    )
+    result = run(["ruby", "-e", ruby, str(ROOT / ".github" / "workflows" / "service-release.yml")])
+    assert_true(result.returncode == 0, result.stderr)
+    parsed = json.loads(result.stdout)
+    assert_true(parsed["mirror"] is True, "jobs.mirror-ecr is missing")
+    assert_true("mirror-ecr" in parsed["needs"], "publish-release.needs omits mirror-ecr")
+    assert_true(
+        "needs.mirror-ecr.outputs.mirrored" in str(parsed["notes_env"].get("MIRRORED", "")),
+        "notes step env omits needs.mirror-ecr.outputs.mirrored",
+    )
+
+
 def test_repository_checks_runs_dynamic_and_external_contracts():
     ruby = (
         "require 'yaml'; require 'json'; "

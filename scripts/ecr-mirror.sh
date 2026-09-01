@@ -53,6 +53,9 @@ SOURCE_IMAGE_PREFIX="${SOURCE_IMAGE_PREFIX:-ghcr.io/supabase/cli}"
 ECR_MIRROR_PREFIX="${ECR_MIRROR_PREFIX:-public.ecr.aws/supabase/cli}"
 ECR_MIRROR_TIMEOUT="${ECR_MIRROR_TIMEOUT:-900}"
 ECR_MIRROR_POLL_INTERVAL="${ECR_MIRROR_POLL_INTERVAL:-30}"
+# Dest lookups must succeed without the caller's registry credentials.
+anonymous_regctl_config=""
+anonymous_docker_config=""
 
 [[ -f "$CONFIG_FILE" ]] || fail "service release config not found: $CONFIG_FILE"
 
@@ -100,13 +103,23 @@ print(json.dumps({
 PY
 }
 
+init_anonymous_configs() {
+  if [[ -z "$anonymous_regctl_config" ]]; then
+    anonymous_regctl_config="$(mktemp -d "${TMPDIR:-/tmp}/slim-ecr-anon-regctl.XXXXXX")"
+    anonymous_docker_config="$(mktemp -d "${TMPDIR:-/tmp}/slim-ecr-anon-docker.XXXXXX")"
+  fi
+}
+
 destination_digest() {
   local reference="$1"
-  regctl manifest head "$reference" 2>/dev/null | tr -d '[:space:]' || true
+  REGCTL_CONFIG="$anonymous_regctl_config" \
+  DOCKER_CONFIG="$anonymous_docker_config" \
+    regctl image digest "$reference" 2>/dev/null | tr -d '[:space:]' || true
 }
 
 verify_release() {
   local service="$1" version="$2" digest="$3"
+  init_anonymous_configs
   local destination_ref="$ECR_MIRROR_PREFIX/$service:$version"
   local deadline=$((SECONDS + ECR_MIRROR_TIMEOUT))
   local live=""
@@ -126,6 +139,7 @@ verify_release() {
 
 request_release() {
   local service="$1" version="$2" digest="$3"
+  init_anonymous_configs
   local destination_ref="$ECR_MIRROR_PREFIX/$service:$version"
   local live
   live="$(destination_digest "$destination_ref")"
@@ -148,7 +162,6 @@ list_releases() {
     > "$releases_json"
   python3 - "$CONFIG_FILE" "$releases_json" <<'PY'
 import json
-import re
 import sys
 
 config_path, releases_path = sys.argv[1:]
@@ -157,18 +170,22 @@ with open(config_path, encoding="utf-8") as fh:
 with open(releases_path, encoding="utf-8") as fh:
     release_pages = json.load(fh)
 
+# Prefix only: tag_pattern is for payload/request/verify, not the audit set.
+# Longest prefix wins so a shorter name cannot steal another service's tags.
+prefixes = sorted(
+    ((f"{name}-", name) for name in services),
+    key=lambda item: len(item[0]),
+    reverse=True,
+)
+
 for page in release_pages:
     for release in page:
         tag = release.get("tag_name", "")
         if release.get("draft") or release.get("prerelease"):
             continue
-        for service, config in services.items():
-            prefix = f"{service}-"
-            if not tag.startswith(prefix):
-                continue
-            version = tag[len(prefix):]
-            if re.fullmatch(config["tag_pattern"], version):
-                print(f"{service}\t{version}")
+        for prefix, service in prefixes:
+            if tag.startswith(prefix):
+                print(f"{service}\t{tag[len(prefix):]}")
                 break
 PY
 }
@@ -177,6 +194,7 @@ sync_releases() {
   local request="$1"
   require_cmd gh
   require_cmd regctl
+  init_anonymous_configs
   local temp_dir
   temp_dir="$(mktemp -d "${TMPDIR:-/tmp}/slim-ecr-sync.XXXXXX")"
   trap 'rm -rf "$temp_dir"' EXIT

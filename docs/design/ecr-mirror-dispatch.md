@@ -17,14 +17,19 @@ no AWS access of its own.
 3. The `publish-release` job appends the ECR references to the release notes
    when the mirror was verified.
 4. `.github/workflows/ecr-mirror-check.yml` runs daily and fails when any
-   published release is missing from ECR Public or resolves to a different
-   digest. Run it manually with `request: true` to re-request out-of-sync
-   tags (this is also the backfill path for releases that predate mirroring).
+   published non-draft/non-prerelease tag that maps to a configured service
+   (by `<service>-` prefix) is missing from ECR Public or resolves to a
+   different digest. The daily audit does not apply `tag_pattern`, so older
+   tags that no longer match the current pattern stay in the compare set.
+   Run it manually with `request: true` to re-request out-of-sync tags
+   (this is also the backfill path for releases that predate mirroring).
 
-The mirror is skipped, with a workflow notice, until the
-`CLI_MIRROR_DISPATCH_TOKEN` secret exists. Once the secret is set, a failed
-or unverified mirror fails the release: a release is only done when both
-registries serve the same digest.
+Release-time mirroring (`service-release.yml` `mirror-ecr`) is skipped,
+with a workflow notice, until the `CLI_MIRROR_DISPATCH_TOKEN` secret
+exists. Once the secret is set, a failed or unverified mirror fails the
+release: a release is only done when both registries serve the same
+digest. The daily audit always runs; it needs only `gh` and `regctl`.
+Dispatch (`request: true`) still requires the token.
 
 ## Dispatch contract
 
