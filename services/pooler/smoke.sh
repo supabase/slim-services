@@ -40,7 +40,6 @@ if [[ -n "$artifact_rootfs" ]]; then
 
   pooler_bin="$artifact_rootfs/bin/supavisor"
   [[ -x "$pooler_bin" ]] || fail "pooler artifact launcher not found or not executable: $pooler_bin"
-  smoke_beam_release_distribution "$pooler_bin"
 
   pg_port="$(postgres_port)"
   port="$(python3 - <<'PY'
@@ -61,6 +60,7 @@ PY
     PORT="$port"
     RELEASE_DISTRIBUTION=none
   )
+  smoke_beam_release_distribution "$pooler_bin" "${pooler_env[@]}"
 
   log "running pooler migrations"
   if ! env "${pooler_env[@]}" "$artifact_rootfs/bin/migrate" >"$pooler_log" 2>&1; then

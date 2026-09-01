@@ -378,21 +378,30 @@ start_host_service() {
 # Prove that a built BEAM release launcher preserves its named distribution
 # default while honoring an explicit caller override. The launcher sources the
 # release's built env.sh before evaluating the expression.
-# Usage: smoke_beam_release_distribution /path/to/release/bin/name
+# Usage: smoke_beam_release_distribution /path/to/release/bin/name [ENV=value ...]
 smoke_beam_release_distribution() {
   local launcher="$1"
+  shift
   [[ -x "$launcher" ]] || fail "BEAM release launcher not found or not executable: $launcher"
+
+  local smoke_env=()
+  local pair
+  for pair in "$@"; do
+    [[ "$pair" == RELEASE_DISTRIBUTION=* ]] && continue
+    smoke_env+=("$pair")
+  done
 
   local expression='IO.write(System.get_env("RELEASE_DISTRIBUTION"))'
   local default_distribution override_distribution
-  if ! default_distribution="$(env -u RELEASE_DISTRIBUTION "$launcher" eval "$expression")"; then
+  if ! default_distribution="$(env -u RELEASE_DISTRIBUTION "${smoke_env[@]}" "$launcher" eval "$expression")"; then
     fail "BEAM release distribution smoke failed with caller variable unset"
   fi
   [[ "$default_distribution" == name ]] || {
     fail "BEAM release default distribution was '$default_distribution', expected name"
   }
 
-  if ! override_distribution="$(RELEASE_DISTRIBUTION=none "$launcher" eval "$expression")"; then
+  if ! override_distribution="$(env -u RELEASE_DISTRIBUTION "${smoke_env[@]}" \
+    RELEASE_DISTRIBUTION=none "$launcher" eval "$expression")"; then
     fail "BEAM release distribution smoke failed with caller override"
   fi
   [[ "$override_distribution" == none ]] || {

@@ -38,7 +38,6 @@ if [[ -n "$artifact_rootfs" ]]; then
 
   logflare_bin="$artifact_rootfs/bin/logflare"
   [[ -x "$logflare_bin" ]] || fail "analytics artifact launcher not found or not executable: $logflare_bin"
-  smoke_beam_release_distribution "$logflare_bin"
 
   pg_port="$(postgres_port)"
   port="$(python3 - <<'PY'
@@ -64,6 +63,7 @@ PY
     PHX_SECRET_KEY_BASE="$secret_key_base"
     RELEASE_DISTRIBUTION=none
   )
+  smoke_beam_release_distribution "$logflare_bin" "${analytics_env[@]}"
 
   log "running analytics migrations"
   if ! env "${analytics_env[@]}" "$logflare_bin" eval Logflare.Release.migrate >"$analytics_log" 2>&1; then
