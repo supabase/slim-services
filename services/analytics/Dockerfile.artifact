@@ -20,7 +20,7 @@ COPY ${SOURCE_DIR}/ ./
 COPY services/analytics/nix/ nix/
 COPY scripts/nix-build-with-derived-hashes.sh /usr/local/bin/
 RUN rm -rf .git
-RUN nix-build-with-derived-hashes.sh \
+RUN /usr/local/bin/nix-build-with-derived-hashes.sh \
       nix-build "./${NIX_EXPRESSION}" "${NIX_ATTR}" "${SERVICE_VERSION}" \
       /result /nix-derived-hashes.json \
       mix-deps:mix_deps_hash \

@@ -125,6 +125,8 @@ container="realtime-smoke-$RUN_ID"
 run_container \
   "$container" \
   --network "$NETWORK" \
+  --cpus 1 \
+  --memory 384m \
   -p 127.0.0.1::4000 \
   -e DB_HOST="$POSTGRES_CONTAINER" \
   -e DB_PORT=5432 \
