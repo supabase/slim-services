@@ -38,6 +38,7 @@ if [[ -n "$artifact_rootfs" ]]; then
 
   logflare_bin="$artifact_rootfs/bin/logflare"
   [[ -x "$logflare_bin" ]] || fail "analytics artifact launcher not found or not executable: $logflare_bin"
+  smoke_beam_release_distribution "$logflare_bin"
 
   pg_port="$(postgres_port)"
   port="$(python3 - <<'PY'
@@ -73,7 +74,7 @@ PY
   log "smoke testing analytics host process on port $port"
   start_host_service analytics "$analytics_log" \
     "${analytics_env[@]}" \
-    -- "$logflare_bin" start --sname logflare
+    -- "$logflare_bin" start
 
   if ! wait_for_http_code_host "http://127.0.0.1:$port/health" "200" 180 "$host_service_pid" "$analytics_log"; then
     fail "analytics /health did not return 200"

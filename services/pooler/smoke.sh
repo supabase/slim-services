@@ -40,6 +40,7 @@ if [[ -n "$artifact_rootfs" ]]; then
 
   pooler_bin="$artifact_rootfs/bin/supavisor"
   [[ -x "$pooler_bin" ]] || fail "pooler artifact launcher not found or not executable: $pooler_bin"
+  smoke_beam_release_distribution "$pooler_bin"
 
   pg_port="$(postgres_port)"
   port="$(python3 - <<'PY'

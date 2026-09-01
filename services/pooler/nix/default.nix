@@ -223,10 +223,43 @@ in
         sed -i -E '1s|^#![ ]*/nix/store/[^ /]*/bin/([a-z0-9]+)( .*)?$|#!/bin/\1\2|' "$script"
       done
 
-      for envsh in "$rootfs"/releases/*/env.sh; do
-        [ -f "$envsh" ] || continue
-        "${../../../scripts/patch-beam-release-env.sh}" "$envsh"
+      envsh_count=0
+      envsh=""
+      for candidate in "$rootfs"/releases/*/env.sh; do
+        [ -f "$candidate" ] || continue
+        envsh_count=$((envsh_count + 1))
+        envsh="$candidate"
       done
+      [ "$envsh_count" -eq 1 ] || {
+        echo "expected exactly one release env.sh, found $envsh_count" >&2
+        exit 1
+      }
+      if mode=$(stat -c '%a' "$envsh" 2>/dev/null); then
+        :
+      else
+        mode=$(stat -f '%Lp' "$envsh")
+      fi
+      envsh_tmp="$(mktemp "$envsh.tmp.XXXXXX")"
+      cleanup_envsh() {
+        rm -f "$envsh_tmp"
+      }
+      trap cleanup_envsh EXIT HUP INT TERM
+      if ! awk '
+        BEGIN { found = 0 }
+        /^[[:space:]]*export[[:space:]]+RELEASE_DISTRIBUTION=name[[:space:]]*$/ {
+          print "export RELEASE_DISTRIBUTION=\"''${RELEASE_DISTRIBUTION:-name}\""
+          found++
+          next
+        }
+        { print }
+        END { if (found != 1) exit 1 }
+      ' "$envsh" >"$envsh_tmp"; then
+        echo "unable to patch release distribution in: $envsh" >&2
+        exit 1
+      fi
+      chmod "$mode" "$envsh_tmp"
+      mv -f "$envsh_tmp" "$envsh"
+      trap - EXIT HUP INT TERM
     '' + lib.optionalString pkgs.stdenv.isLinux ''
       # Linux half of the portable playbook: bundle every non-glibc shared
       # library into dylib/, point every ELF at it with $ORIGIN-relative

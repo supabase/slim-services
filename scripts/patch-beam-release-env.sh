@@ -28,12 +28,8 @@ trap cleanup EXIT HUP INT TERM
 
 if ! awk '
   BEGIN { found = 0 }
-  /^[[:space:]]*(export[[:space:]]+)?RELEASE_DISTRIBUTION=name[[:space:]]*$/ {
-    if ($0 ~ /^[[:space:]]*export[[:space:]]+/) {
-      print "export RELEASE_DISTRIBUTION=\"${RELEASE_DISTRIBUTION:-name}\""
-    } else {
-      print "RELEASE_DISTRIBUTION=\"${RELEASE_DISTRIBUTION:-name}\""
-    }
+  /^[[:space:]]*export[[:space:]]+RELEASE_DISTRIBUTION=name[[:space:]]*$/ {
+    print "export RELEASE_DISTRIBUTION=\"${RELEASE_DISTRIBUTION:-name}\""
     found++
     next
   }

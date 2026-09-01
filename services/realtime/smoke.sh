@@ -34,6 +34,7 @@ if [[ -n "$artifact_rootfs" ]]; then
 
   realtime_bin="$artifact_rootfs/bin/realtime"
   [[ -x "$realtime_bin" ]] || fail "realtime artifact launcher not found or not executable: $realtime_bin"
+  smoke_beam_release_distribution "$realtime_bin"
 
   start_postgres realtime_smoke
   pg_port="$(postgres_port)"

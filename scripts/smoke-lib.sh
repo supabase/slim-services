@@ -375,6 +375,33 @@ start_host_service() {
   host_service_pids+=("$host_service_pid")
 }
 
+# Prove that a built BEAM release launcher preserves its named distribution
+# default while honoring an explicit caller override. The launcher sources the
+# release's built env.sh before evaluating the expression.
+# Usage: smoke_beam_release_distribution /path/to/release/bin/name
+smoke_beam_release_distribution() {
+  local launcher="$1"
+  [[ -x "$launcher" ]] || fail "BEAM release launcher not found or not executable: $launcher"
+
+  local expression='IO.write(System.get_env("RELEASE_DISTRIBUTION"))'
+  local default_distribution override_distribution
+  if ! default_distribution="$(env -u RELEASE_DISTRIBUTION "$launcher" eval "$expression")"; then
+    fail "BEAM release distribution smoke failed with caller variable unset"
+  fi
+  [[ "$default_distribution" == name ]] || {
+    fail "BEAM release default distribution was '$default_distribution', expected name"
+  }
+
+  if ! override_distribution="$(RELEASE_DISTRIBUTION=none "$launcher" eval "$expression")"; then
+    fail "BEAM release distribution smoke failed with caller override"
+  fi
+  [[ "$override_distribution" == none ]] || {
+    fail "BEAM release override distribution was '$override_distribution', expected none"
+  }
+
+  log "BEAM release distribution smoke passed for $launcher"
+}
+
 # wait_for_http_code for a host process: fails fast (with logs) when the
 # process exits before serving.
 wait_for_http_code_host() {
