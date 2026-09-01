@@ -230,6 +230,11 @@ in
       grep -rl '^#![ ]*/nix/store' "$rootfs" 2>/dev/null | while read -r script; do
         sed -i -E '1s|^#![ ]*/nix/store/[^ /]*/bin/([a-z0-9]+)( .*)?$|#!/bin/\1\2|' "$script"
       done
+
+      for envsh in "$rootfs"/releases/*/env.sh; do
+        [ -f "$envsh" ] || continue
+        "${../../../scripts/patch-beam-release-env.sh}" "$envsh"
+      done
     '' + lib.optionalString pkgs.stdenv.isLinux ''
       # Linux half of the portable playbook: bundle every non-glibc shared
       # library into dylib/, point every ELF at it with $ORIGIN-relative

@@ -58,6 +58,7 @@ PY
     API_JWT_SECRET="$api_secret"
     METRICS_JWT_SECRET="$metrics_secret"
     PORT="$port"
+    RELEASE_DISTRIBUTION=none
   )
 
   log "running pooler migrations"

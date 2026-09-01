@@ -61,6 +61,7 @@ PY
     LOGFLARE_DB_ENCRYPTION_KEY="$db_encryption_key"
     PHX_HTTP_PORT="$port"
     PHX_SECRET_KEY_BASE="$secret_key_base"
+    RELEASE_DISTRIBUTION=none
   )
 
   log "running analytics migrations"

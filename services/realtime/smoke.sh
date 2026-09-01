@@ -63,6 +63,7 @@ PY
     SECRET_KEY_BASE="$secret_key_base"
     APP_NAME=realtime-smoke
     PORT="$port"
+    RELEASE_DISTRIBUTION=none
   )
 
   log "running realtime migrations"
