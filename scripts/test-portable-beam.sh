@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 python3 - "$ROOT_DIR" <<'PY'
 import os
+import json
 import pathlib
 import shutil
 import subprocess
@@ -222,6 +223,132 @@ tar -xOf "$1" "$notice_member" > "$2"
             self.assertIn('"nix/portable-beam:nix/portable-beam"', recipe)
             dockerfile = (ROOT_DIR / "services" / service / "Dockerfile.artifact").read_text(encoding="utf-8")
             self.assertIn("COPY nix/portable-beam/ nix/portable-beam/", dockerfile)
+
+    def test_local_auxiliary_overlay_stages_shared_seam_before_nix_build(self):
+        """Exercise build-artifact-from-nix's real local export path."""
+        fixture_root = self.temp / "local-export-repo"
+        (fixture_root / "scripts").mkdir(parents=True)
+        for name in (
+            "build-artifact-from-nix.sh",
+            "lib.sh",
+            "prune-runtime-tree.sh",
+            "generate-artifact-sbom.sh",
+            "generate-artifact-sbom.py",
+            "measure-artifact.sh",
+        ):
+            shutil.copy2(ROOT_DIR / "scripts" / name, fixture_root / "scripts" / name)
+        for name in ("LICENSE", "THIRD_PARTY_NOTICES.md"):
+            shutil.copy2(ROOT_DIR / name, fixture_root / name)
+        shutil.copytree(ROOT_DIR / "nix" / "portable-beam", fixture_root / "nix" / "portable-beam")
+
+        service_dir = fixture_root / "services" / "realtime"
+        service_dir.mkdir(parents=True)
+        (service_dir / "recipe.env").write_text(
+            'SOURCE_DIR="sources/realtime"\n'
+            'SOURCE_REF="${SOURCE_REF:-fixture}"\n'
+            'ARTIFACT_BACKEND="nix"\n'
+            'BASE_IMAGE="scratch"\n'
+            "ENTRYPOINT_JSON='[]'\n"
+            "CMD_JSON='[]'\n"
+            'NIX_FLAKE="."\n'
+            'NIX_ATTR="fixture"\n'
+            'NIX_BUILD_MODE="nix-build"\n'
+            'NIX_EXPRESSION="."\n'
+            'NIX_RUNNER="${NIX_RUNNER:-auto}"\n'
+            'NIX_OUTPUT_KIND="rootfs"\n'
+            "NIX_COPY_PATHS_JSON='[]'\n"
+            'NIX_PACKAGE_OVERLAY=""\n'
+            'NIX_PACKAGE_OVERLAY_DEST=""\n'
+            'NIX_AUXILIARY_OVERLAYS=(\n'
+            '  "nix/portable-beam:nix/portable-beam"\n'
+            ')\n'
+            'PORTABLE="true"\n',
+            encoding="utf-8",
+        )
+
+        source_dir = fixture_root / "sources" / "realtime"
+        source_dir.mkdir(parents=True)
+        (source_dir / "fixture.txt").write_text("source fixture\n", encoding="utf-8")
+        subprocess.run(["git", "init", "-q"], cwd=source_dir, check=True)
+        subprocess.run(["git", "config", "user.email", "fixture@example.invalid"], cwd=source_dir, check=True)
+        subprocess.run(["git", "config", "user.name", "Portable Beam Fixture"], cwd=source_dir, check=True)
+        subprocess.run(["git", "add", "fixture.txt"], cwd=source_dir, check=True)
+        subprocess.run(["git", "commit", "-qm", "fixture"], cwd=source_dir, check=True)
+        source_ref = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=source_dir, text=True
+        ).strip()
+
+        fake_bin = fixture_root / "fake-bin"
+        fake_bin.mkdir()
+        (fake_bin / "nix").write_text(
+            "#!/usr/bin/env bash\n"
+            "if [[ ${1:-} == eval ]]; then printf '%s\\n' aarch64-darwin; exit 0; fi\n"
+            "exit 1\n",
+            encoding="utf-8",
+        )
+        nix_build = fake_bin / "nix-build"
+        nix_build.write_text(
+            "#!/usr/bin/env bash\n"
+            "set -euo pipefail\n"
+            'build_root="${1:?missing build root}"\n'
+            '[ -f "$build_root/nix/portable-beam/beam-linux-fixup.sh" ]\n'
+            '[ -f "$build_root/nix/portable-beam/beam-launcher.sh" ]\n'
+            '[ -f "$build_root/fixture.txt" ]\n'
+            '{ printf \'build-root=%s\\n\' "$build_root"; printf \'%s\\n\' "$build_root/nix/portable-beam/beam-linux-fixup.sh" "$build_root/nix/portable-beam/beam-launcher.sh"; } > "$FAKE_NIX_TRACE"\n'
+            'out=""\n'
+            'while [[ $# -gt 0 ]]; do\n'
+            '  if [[ $1 == --out-link ]]; then out=$2; shift 2; else shift; fi\n'
+            'done\n'
+            '[[ -n "$out" ]]\n'
+            'mkdir -p "$out/bin"\n'
+            "printf 'fixture\\n' > \"$out/bin/realtime\"\n"
+            'chmod 0755 "$out/bin/realtime"\n',
+            encoding="utf-8",
+        )
+        for command in (fake_bin / "nix", nix_build):
+            command.chmod(0o755)
+        bash_env = fixture_root / "bash-env"
+        bash_env.write_text(
+            "nix() {\n"
+            "  if [[ ${1:-} == eval ]]; then printf '%s\\n' aarch64-darwin; return 0; fi\n"
+            "  return 1\n"
+            "}\n"
+            'nix-build() { "$FAKE_NIX_BUILD" "$@"; }\n',
+            encoding="utf-8",
+        )
+
+        version = f"local-overlay-{os.getpid()}"
+        environment = {
+            **os.environ,
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "BASH_ENV": str(bash_env),
+            "FAKE_NIX_BUILD": str(nix_build),
+            "SOURCE_REF": source_ref,
+            "TARGET_OS": "darwin",
+            "ARCH": "arm64",
+            "NIX_RUNNER": "local",
+            "ARTIFACT_ARCHIVE_ON_BUILD": "0",
+            "FAKE_NIX_TRACE": str(self.temp / "local-overlay.trace"),
+        }
+        result = subprocess.run(
+            ["bash", str(fixture_root / "scripts" / "build-artifact-from-nix.sh"), "realtime", version],
+            cwd=fixture_root,
+            env=environment,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        trace = (self.temp / "local-overlay.trace").read_text(encoding="utf-8").splitlines()
+        self.assertTrue(trace[0].startswith("build-root="))
+        self.assertTrue(pathlib.Path(trace[1]).is_file())
+        self.assertTrue(pathlib.Path(trace[2]).is_file())
+        manifest = json.loads(
+            (fixture_root / "artifacts" / "realtime" / version / "darwin-arm64" / "manifest.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(manifest["nix_auxiliary_overlays"], ["nix/portable-beam:nix/portable-beam"])
 
 
 if __name__ == "__main__":
