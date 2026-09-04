@@ -38,6 +38,13 @@ fi
 # host environment to inject a different glibc family or its side data.
 unset LD_LIBRARY_PATH LD_PRELOAD LD_AUDIT GLIBC_TUNABLES \
   GCONV_PATH LOCALE_ARCHIVE LOCPATH NSS_MODULE_PATH
+# Keep PostgreSQL's process locale independent of the invoking host. The
+# portable binary uses the bundled en_US.UTF-8 archive below; image tooling
+# (busybox/bash in Dockerfile.slim) uses the separate system archive generated
+# by the image's tools stage.
+export LANG=en_US.UTF-8
+export LANGUAGE=en_US:en
+export LC_ALL=en_US.UTF-8
 if [ -d "$LIB_DIR/gconv" ]; then
   export GCONV_PATH="$LIB_DIR/gconv"
 fi

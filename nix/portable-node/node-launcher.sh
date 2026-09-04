@@ -41,7 +41,11 @@ fi
 # The explicit loader path is the complete runtime search path.  Do not let a
 # host environment inject libraries or side data from a different glibc
 # provenance.
-unset LD_LIBRARY_PATH GCONV_PATH LOCALE_ARCHIVE
+# Do not let an inherited loader, audit, tunable, locale, or NSS setting
+# inject host state into the bundled runtime. The launcher repopulates only
+# the artifact-owned side-data paths below.
+unset LD_LIBRARY_PATH LD_PRELOAD LD_AUDIT GLIBC_TUNABLES \
+  GCONV_PATH LOCALE_ARCHIVE LOCPATH NSS_MODULE_PATH
 if [ -d "$GLIBC_DIR/gconv" ]; then
   export GCONV_PATH="$GLIBC_DIR/gconv"
 fi

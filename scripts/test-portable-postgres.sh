@@ -40,6 +40,7 @@ class PortablePostgresLauncherTest(unittest.TestCase):
         self.trace = self.temp / "loader.trace"
         self.real_args = {}
         self.real_env = {}
+        self.real_locale_env = self.temp / "real.locale-env"
         self.real_paths = {}
 
         loader = self.lib_dir / "ld-linux-x86-64.so.2"
@@ -71,6 +72,7 @@ class PortablePostgresLauncherTest(unittest.TestCase):
                 ": > \"$ARGS_PATH\"\n"
                 "printf '%s\\n' \"$@\" >> \"$ARGS_PATH\"\n"
                 "printf '%s\\n' \"${LD_LIBRARY_PATH-unset}\" \"${LD_PRELOAD-unset}\" \"${LD_AUDIT-unset}\" \"${GLIBC_TUNABLES-unset}\" \"${GCONV_PATH-unset}\" \"${LOCALE_ARCHIVE-unset}\" \"${LOCPATH-unset}\" \"${NSS_MODULE_PATH-unset}\" > \"$ENV_PATH\"\n"
+                "printf '%s\\n' \"${LANG-unset}\" \"${LANGUAGE-unset}\" \"${LC_ALL-unset}\" > \"$LOCALE_ENV\"\n"
                 "printf '%s\\n' \"${NIX_PGLIBDIR-unset}\" >> \"$ENV_PATH\"\n",
                 encoding="utf-8",
             )
@@ -86,7 +88,7 @@ class PortablePostgresLauncherTest(unittest.TestCase):
             self.real_args[public_name] = args_path
             self.real_env[public_name] = env_path
 
-    def run_launcher(self, public_name="postgres", args=(), root=None, stdin=None):
+    def run_launcher(self, public_name="postgres", args=(), root=None, stdin=None, extra_env=None):
         root = pathlib.Path(root or self.rootfs)
         launcher = root / "bin" / public_name
         env = {
@@ -95,6 +97,7 @@ class PortablePostgresLauncherTest(unittest.TestCase):
             "TRACE": str(self.trace),
             "ARGS_PATH": str(self.real_args[public_name]),
             "ENV_PATH": str(self.real_env[public_name]),
+            "LOCALE_ENV": str(self.real_locale_env),
             "LD_LIBRARY_PATH": "/host/lib",
             "LD_PRELOAD": "/host/preload.so",
             "LD_AUDIT": "/host/audit.so",
@@ -104,6 +107,8 @@ class PortablePostgresLauncherTest(unittest.TestCase):
             "LOCPATH": "/host/locale",
             "NSS_MODULE_PATH": "/host/nss",
         }
+        if extra_env:
+            env.update(extra_env)
         command = [str(launcher)] if pathlib.Path("/usr/bin/sh").exists() else ["/bin/sh", str(launcher)]
         return subprocess.run(
             [*command, *args],
@@ -156,6 +161,21 @@ class PortablePostgresLauncherTest(unittest.TestCase):
         self.assertEqual(
             self.real_env["postgres"].read_text(encoding="utf-8").splitlines(),
             ["unset", "unset", "unset", "unset", "unset", "unset", "unset", "unset", str(self.lib_dir.resolve())],
+        )
+
+    def test_launcher_pins_process_locale_to_bundled_en_us(self):
+        result = self.run_launcher(
+            args=("--version",),
+            extra_env={
+                "LANG": "C",
+                "LANGUAGE": "C",
+                "LC_ALL": "C",
+            },
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            self.real_locale_env.read_text(encoding="utf-8").splitlines(),
+            ["en_US.UTF-8", "en_US:en", "en_US.UTF-8"],
         )
 
     def test_multiple_public_entrypoints_use_the_same_template(self):

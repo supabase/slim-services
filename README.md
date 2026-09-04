@@ -117,7 +117,9 @@ Postgres, PostgREST (dynamic Linux builds), imgproxy, the BEAM trio, and the
 Node services (storage, pgmeta, and Studio) carry a matched loader+glibc
 runtime and are proven in Ubuntu 22.04, so their execution does not depend on
 the host glibc version. Auth is statically linked and Vector uses musl. The
-manifest records the applicable floor as `os_floor`.
+manifest records the host-applicable floor as `os_floor.floor`;
+bundled-glibc artifacts report `null` there because their own loader/libc
+define the runtime floor.
 
 <!-- generated:host-native:begin -->
 | Service | Version | Archive | rootfs | Idle RSS | Idle CPU | Portable | Sources |

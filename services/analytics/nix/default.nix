@@ -253,6 +253,7 @@ in
     dontUnpack = true;
     dontPatchShebangs = true;
     dontStrip = true;
+    dontPatchELF = true;
     nativeBuildInputs = [
       pkgs.python3
       pkgs.file

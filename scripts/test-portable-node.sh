@@ -52,6 +52,7 @@ class PortableNodeLauncherTest(unittest.TestCase):
         self.real_args = self.temp / "real.args"
         self.real_env = self.temp / "real.env"
         self.real_side_data = self.temp / "real.side-data"
+        self.real_poison_env = self.temp / "real.poison-env"
         self.real_wrapper = self.temp / "real.wrapper"
         self.loader = self.rootfs / "lib" / "ld-linux-x86-64.so.2"
         self.loader.write_text(
@@ -74,12 +75,13 @@ class PortableNodeLauncherTest(unittest.TestCase):
             "printf '%s\\n' \"$@\" >> \"$REAL_ARGS\"\n"
             "printf '%s\\n' \"${LD_LIBRARY_PATH-unset}\" > \"$REAL_ENV\"\n"
             "printf '%s\\n' \"${GCONV_PATH-unset}\n${LOCALE_ARCHIVE-unset}\" > \"$REAL_SIDE_DATA\"\n"
+            "printf '%s\\n' \"${LD_PRELOAD-unset}\" \"${LD_AUDIT-unset}\" \"${GLIBC_TUNABLES-unset}\" \"${LOCPATH-unset}\" \"${NSS_MODULE_PATH-unset}\" > \"$REAL_POISON_ENV\"\n"
             "printf '%s\\n' \"${SLIM_NODE_WRAPPER-unset}\" > \"$REAL_WRAPPER\"\n",
             encoding="utf-8",
         )
         self.real.chmod(0o755)
 
-    def run_launcher(self, root=None, args=()):
+    def run_launcher(self, root=None, args=(), extra_env=None):
         root = pathlib.Path(root or self.rootfs)
         env = {
             **os.environ,
@@ -88,11 +90,14 @@ class PortableNodeLauncherTest(unittest.TestCase):
             "REAL_ARGS": str(self.real_args),
             "REAL_ENV": str(self.real_env),
             "REAL_SIDE_DATA": str(self.real_side_data),
+            "REAL_POISON_ENV": str(self.real_poison_env),
             "REAL_WRAPPER": str(self.real_wrapper),
             "LD_LIBRARY_PATH": "/host/glibc",
             "GCONV_PATH": "/host/gconv",
             "LOCALE_ARCHIVE": "/host/locale-archive",
         }
+        if extra_env:
+            env.update(extra_env)
         launcher = root / "node" / "bin" / "node"
         # macOS lacks the image-provided /usr/bin/sh; invoke the exact
         # template through the host shell there while preserving its image
@@ -305,6 +310,23 @@ in (import ./nix/portable-node/default.nix { pkgs = fakePkgs; nodeMajor = 24; })
         self.assertEqual(
             self.real_side_data.read_text(encoding="utf-8").splitlines(),
             ["unset", "unset"],
+        )
+
+    def test_launcher_clears_inherited_loader_injection_variables(self):
+        result = self.run_launcher(
+            args=("--version",),
+            extra_env={
+                "LD_PRELOAD": "/host/preload.so",
+                "LD_AUDIT": "/host/audit.so",
+                "GLIBC_TUNABLES": "glibc.malloc.check=3",
+                "LOCPATH": "/host/locale",
+                "NSS_MODULE_PATH": "/host/nss",
+            },
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            self.real_poison_env.read_text(encoding="utf-8").splitlines(),
+            ["unset", "unset", "unset", "unset", "unset"],
         )
 
     def test_generated_launcher_uses_image_sh_path(self):
