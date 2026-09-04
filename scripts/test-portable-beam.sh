@@ -6,9 +6,11 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 python3 - "$ROOT_DIR" <<'PY'
 import os
 import json
+import io
 import pathlib
 import shutil
 import subprocess
+import tarfile
 import tempfile
 import unittest
 
@@ -349,6 +351,113 @@ tar -xOf "$1" "$notice_member" > "$2"
             )
         )
         self.assertEqual(manifest["nix_auxiliary_overlays"], ["nix/portable-beam:nix/portable-beam"])
+
+    def test_fixup_generates_nested_launcher_with_artifact_root(self):
+        """Run the shared fixup seam and execute its generated ERTS wrapper."""
+        rootfs = self.temp / "generated-rootfs"
+        erts_bin = rootfs / "erts-16.4.0.5" / "bin"
+        erts_bin.mkdir(parents=True)
+        real_beam = erts_bin / "beam.smp"
+        real_beam.write_text(
+            "#!/bin/sh\n"
+            "printf 'beam-ok:%s\\n' \"$*\"\n",
+            encoding="utf-8",
+        )
+        real_beam.chmod(0o755)
+
+        glibc_root = self.temp / "glibc"
+        glibc_lib = glibc_root / "lib"
+        glibc_lib.mkdir(parents=True)
+        glibc_loader = glibc_lib / "ld-linux-x86-64.so.2"
+        glibc_loader.write_text(
+            "#!/bin/sh\n"
+            "set -eu\n"
+            "if [ \"${1:-}\" = --help ]; then printf '%s\\n' --argv0; exit 0; fi\n"
+            "if [ \"${1:-}\" = --argv0 ]; then shift 2; fi\n"
+            "if [ \"${1:-}\" = --library-path ]; then shift 2; fi\n"
+            "if [ \"${1:-}\" = --list ]; then exit 0; fi\n"
+            "exec \"$@\"\n",
+            encoding="utf-8",
+        )
+        glibc_loader.chmod(0o755)
+        (glibc_lib / "libc.so.6").write_text("glibc fixture", encoding="utf-8")
+        locale_lib = self.temp / "glibc-locales" / "lib" / "locale"
+        locale_lib.mkdir(parents=True)
+        (locale_lib / "locale-archive").write_text("locale fixture", encoding="utf-8")
+        tzdata = self.temp / "tzdata"
+        tzdata.mkdir()
+        (tzdata / "UTC").write_text("zone fixture", encoding="utf-8")
+
+        def write_archive(path, files):
+            with tarfile.open(path, "w") as archive:
+                for name, contents in files.items():
+                    member = tarfile.TarInfo(name)
+                    member.size = len(contents.encode("utf-8"))
+                    archive.addfile(member, io.BytesIO(contents.encode("utf-8")))
+
+        glibc_archive = self.temp / "glibc-src.tar"
+        compiler_archive = self.temp / "compiler-src.tar"
+        tzdata_archive = self.temp / "tzdata-src.tar"
+        write_archive(glibc_archive, {"glibc-2.40/COPYING.LIB": "glibc license"})
+        write_archive(
+            compiler_archive,
+            {"gcc-14/COPYING.RUNTIME": "runtime license", "gcc-14/COPYING3": "gcc license"},
+        )
+        write_archive(tzdata_archive, {"LICENSE": "tzdata license"})
+
+        fake_bin = self.temp / "fixup-tools"
+        fake_bin.mkdir()
+        tools = {
+            "uname": "#!/bin/sh\nprintf '%s\\n' x86_64\n",
+            "ldd": "#!/bin/sh\nexit 0\n",
+            "strip": "#!/bin/sh\nexit 0\n",
+            "patchelf": "#!/bin/sh\nexit 0\n",
+            "readelf": "#!/bin/sh\nprintf '%s\\n' INTERP\n",
+            "file": (
+                "#!/bin/sh\n"
+                "case \"$1\" in */erts-*/bin/*) printf '%s\\n' 'ELF 64-bit' ;; *) printf '%s\\n' data ;; esac\n"
+            ),
+        }
+        for name, content in tools.items():
+            path = fake_bin / name
+            path.write_text(content, encoding="utf-8")
+            path.chmod(0o755)
+
+        environment = {
+            **os.environ,
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "PORTABLE_BEAM_ROOTFS": str(rootfs),
+            "PORTABLE_BEAM_GLIBC_LIB": str(glibc_lib),
+            "PORTABLE_BEAM_GLIBC_SRC": str(glibc_archive),
+            "PORTABLE_BEAM_COMPILER_SRC": str(compiler_archive),
+            "PORTABLE_BEAM_TZDATA": str(tzdata),
+            "PORTABLE_BEAM_TZDATA_SRC": str(tzdata_archive),
+            "PORTABLE_BEAM_LOCALE_LIB": str(locale_lib),
+            "PORTABLE_BEAM_LAUNCHER": str(LAUNCHER),
+        }
+        result = subprocess.run(
+            ["bash", str(FIXUP)],
+            cwd=ROOT_DIR,
+            env=environment,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        launcher = erts_bin / "beam.smp"
+        self.assertTrue(launcher.is_file())
+        self.assertTrue((erts_bin / ".beam.smp-portable-real").is_file())
+        command = [str(launcher)] if pathlib.Path("/usr/bin/sh").exists() else ["/bin/sh", str(launcher)]
+        launch = subprocess.run(
+            [*command, "--version"],
+            cwd=ROOT_DIR,
+            env={**environment, "PATH": os.environ["PATH"]},
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(launch.returncode, 0, launch.stderr)
+        self.assertEqual(launch.stdout, "beam-ok:--version\n")
 
 
 if __name__ == "__main__":

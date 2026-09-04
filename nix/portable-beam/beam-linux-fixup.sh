@@ -247,7 +247,7 @@ while IFS= read -r elf; do
     exit 1
   }
   mv "$elf" "$real_path"
-  root_rel="$(python3 -c "import os,sys; print(os.path.relpath(sys.argv[1], os.path.dirname(sys.argv[2])))" "$rootfs" "$bin_dir")"
+  root_rel="$(python3 -c "import os,sys; print(os.path.relpath(sys.argv[1], sys.argv[2]))" "$rootfs" "$bin_dir")"
   sed \
     -e "s|@LOADER_NAME@|$loader_name|g" \
     -e "s|@ROOT_REL@|$root_rel|g" \
