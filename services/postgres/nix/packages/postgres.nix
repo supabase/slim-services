@@ -313,16 +313,14 @@
         };
       };
 
-      # Major-specific portable outputs are owned by this overlay so both
-      # supported majors run through the same matched-loader/glibc fixup.
+      # PG15 portable output is added by this overlay. The pinned source's
+      # default package module already exports psql_17_cli_portable; because
+      # this overlay replaces its postgres-portable.nix, both major paths use
+      # the same matched-loader/glibc fixup.
       portablePackages = {
         psql_15_cli_portable = pkgs.callPackage ./postgres-portable.nix {
           psql_cli = cliPackages.psql_15_cli;
           postgres_major = "15";
-        };
-        psql_17_cli_portable = pkgs.callPackage ./postgres-portable.nix {
-          psql_17_cli = cliPackages.psql_17_cli;
-          postgres_major = "17";
         };
       };
 
