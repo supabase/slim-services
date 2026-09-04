@@ -135,7 +135,7 @@ nix_store_deps() {
 
 should_exclude() {
   case "$1" in
-    libc.so*|libc-*.so*|ld-linux*.so*|libdl.so*|libpthread.so*|libm.so*|\
+    libc.so*|libc-*.so*|ld-linux*.so*|libdl.so*|libpthread.so*|libm.so*|libmvec.so*|\
     libresolv.so*|librt.so*|libutil.so*|libanl.so*|libBrokenLocale.so*|\
     libthread_db.so*|libnss_*.so*|libnsl.so*)
       return 0 ;;
