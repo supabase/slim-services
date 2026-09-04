@@ -1,0 +1,52 @@
+#!/usr/bin/sh
+set -eu
+
+# A generated wrapper lives beside one real PostgreSQL executable. Keep the
+# public path stable while invoking the matching loader and libraries bundled
+# at the extracted artifact root.
+case "$0" in
+  */*) PG_BIN_DIR="${0%/*}"; [ -n "$PG_BIN_DIR" ] || PG_BIN_DIR=/ ;;
+  *) PG_BIN_DIR=. ;;
+esac
+
+PG_ROOT="$(CDPATH= cd "$PG_BIN_DIR/@ROOT_REL@" && pwd -P)"
+PG_NAME="${0##*/}"
+PUBLIC_PATH="$PG_BIN_DIR/$PG_NAME"
+REAL_POSTGRES="$PG_BIN_DIR/@REAL_NAME@"
+LIB_DIR="$PG_ROOT/lib"
+LOADER="$LIB_DIR/@LOADER_NAME@"
+
+# PostgreSQL's Nix wrapper uses this directory for extension modules and
+# libpq-adjacent support files. Keep the same contract after relocation.
+export NIX_PGLIBDIR="$LIB_DIR"
+
+if [ ! -x "$LOADER" ]; then
+  echo "portable-postgres: bundled loader is missing or not executable: $LOADER" >&2
+  exit 127
+fi
+if [ ! -x "$REAL_POSTGRES" ]; then
+  echo "portable-postgres: real PostgreSQL executable is missing or not executable: $REAL_POSTGRES" >&2
+  exit 127
+fi
+
+# The explicit loader path is the complete runtime search path. Do not allow a
+# host environment to inject a different glibc family or its side data.
+unset LD_LIBRARY_PATH LD_PRELOAD LD_AUDIT GLIBC_TUNABLES \
+  GCONV_PATH LOCALE_ARCHIVE LOCPATH NSS_MODULE_PATH
+if [ -d "$LIB_DIR/gconv" ]; then
+  export GCONV_PATH="$LIB_DIR/gconv"
+fi
+if [ -f "$LIB_DIR/locale/locale-archive" ]; then
+  export LOCALE_ARCHIVE="$LIB_DIR/locale/locale-archive"
+fi
+
+if [ "@ARGV0_SUPPORTED@" = 1 ]; then
+  exec "$LOADER" \
+    --argv0 "$PUBLIC_PATH" \
+    --library-path "$LIB_DIR" \
+    "$REAL_POSTGRES" "$@"
+fi
+
+exec "$LOADER" \
+  --library-path "$LIB_DIR" \
+  "$REAL_POSTGRES" "$@"
