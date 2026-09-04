@@ -311,6 +311,7 @@ tar -xOf "$1" "$notice_member" > "$2"
             command.chmod(0o755)
         bash_env = fixture_root / "bash-env"
         bash_env.write_text(
+            "NIX_AUXILIARY_OVERLAYS=()\n"
             "nix() {\n"
             "  if [[ ${1:-} == eval ]]; then printf '%s\\n' aarch64-darwin; return 0; fi\n"
             "  return 1\n"
@@ -454,7 +455,6 @@ tar -xOf "$1" "$notice_member" > "$2"
             "NIX_RUNNER": "local",
             "ARTIFACT_ARCHIVE_ON_BUILD": "0",
         }
-        environment.pop("NIX_AUXILIARY_OVERLAYS", None)
         result = subprocess.run(
             ["bash", str(fixture_root / "scripts" / "build-artifact-from-nix.sh"), "vector", version],
             cwd=fixture_root,

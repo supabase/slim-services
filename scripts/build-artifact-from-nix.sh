@@ -64,7 +64,9 @@ NIX_PACKAGE_OVERLAY_DEST="${NIX_PACKAGE_OVERLAY_DEST:-}"
 # nix/<basename>), allowing shared package assets without service hardcoding.
 nix_auxiliary_overlays=()
 if declare -p NIX_AUXILIARY_OVERLAYS >/dev/null 2>&1; then
-  nix_auxiliary_overlays=("${NIX_AUXILIARY_OVERLAYS[@]}")
+  if ((${#NIX_AUXILIARY_OVERLAYS[@]} > 0)); then
+    nix_auxiliary_overlays=("${NIX_AUXILIARY_OVERLAYS[@]}")
+  fi
 fi
 NIX_DERIVE_MIX_DEPS_HASH="${NIX_DERIVE_MIX_DEPS_HASH:-false}"
 
