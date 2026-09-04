@@ -16,6 +16,7 @@ ROOT_DIR = pathlib.Path(os.sys.argv[1])
 os.sys.argv[1:] = []
 LAUNCHER = ROOT_DIR / "nix" / "portable-postgres" / "postgres-launcher.sh"
 ENTRYPOINT_FIXUP = ROOT_DIR / "nix" / "portable-postgres" / "postgres-entrypoint-fixup.sh"
+COMPILER_RUNTIME = ROOT_DIR / "nix" / "portable-postgres" / "postgres-compiler-runtime.sh"
 
 
 class PortablePostgresLauncherTest(unittest.TestCase):
@@ -187,6 +188,55 @@ class PortablePostgresLauncherTest(unittest.TestCase):
         self.assertNotIn("BASH_SOURCE", content)
         self.assertNotIn("dirname", content)
         self.assertNotIn("uname", content)
+
+    def test_compiler_runtime_selector_rejects_linker_scripts(self):
+        compiler_root = self.temp / "compiler" / "lib"
+        compiler_root.mkdir(parents=True)
+        (compiler_root / "libstdc++.so.6").write_text("GNU ld script", encoding="utf-8")
+        (compiler_root / "libstdc++.so.6.0.33").write_text("ELF fixture libstdc++", encoding="utf-8")
+        (compiler_root / "libgcc_s.so.1.0.0").write_text("ELF fixture libgcc", encoding="utf-8")
+        (compiler_root / "libgcc_s.so.1").symlink_to("libgcc_s.so.1.0.0")
+
+        fakebin = self.temp / "runtime-fake-bin"
+        fakebin.mkdir()
+        (fakebin / "file").write_text(
+            "#!/bin/sh\n"
+            "if grep -q ELF \"$1\" 2>/dev/null; then echo \"$1: ELF executable\"; else echo \"$1: ASCII text\"; fi\n",
+            encoding="utf-8",
+        )
+        (fakebin / "readelf").write_text(
+            "#!/bin/sh\n"
+            "echo '  Machine: Advanced Micro Devices X86-64'\n",
+            encoding="utf-8",
+        )
+        for command in (fakebin / "file", fakebin / "readelf"):
+            command.chmod(0o755)
+
+        destination = self.temp / "runtime-out"
+        env = {
+            **os.environ,
+            "PATH": f"{fakebin}:{os.environ['PATH']}",
+            "PORTABLE_POSTGRES_COMPILER_RUNTIME_STANDALONE": "1",
+            "PORTABLE_POSTGRES_RUNTIME_ARCH": "x86_64",
+            "PORTABLE_POSTGRES_RUNTIME_DEST": str(destination),
+            "PORTABLE_POSTGRES_RUNTIME_NAME": "libstdc++.so.6",
+            "PORTABLE_POSTGRES_COMPILER_LIB": str(compiler_root),
+            "PORTABLE_POSTGRES_COMPILER_LIBGCC": str(compiler_root),
+        }
+        result = subprocess.run([str(COMPILER_RUNTIME)], text=True, capture_output=True, env=env, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((destination / "libstdc++.so.6").read_text(encoding="utf-8"), "ELF fixture libstdc++")
+
+        env["PORTABLE_POSTGRES_RUNTIME_NAME"] = "libgcc_s.so.1"
+        result = subprocess.run([str(COMPILER_RUNTIME)], text=True, capture_output=True, env=env, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((destination / "libgcc_s.so.1").read_text(encoding="utf-8"), "ELF fixture libgcc")
+
+        (compiler_root / "libstdc++.so.6.0.33").unlink()
+        env["PORTABLE_POSTGRES_RUNTIME_NAME"] = "libstdc++.so.6"
+        result = subprocess.run([str(COMPILER_RUNTIME)], text=True, capture_output=True, env=env, check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("no matching ELF libstdc++.so.6", result.stderr)
 
     def test_entrypoint_fixup_executable_seam_creates_public_launchers(self):
         rootfs = self.temp / "entrypoint-rootfs"

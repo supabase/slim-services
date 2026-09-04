@@ -486,6 +486,7 @@ stdenv.mkDerivation {
         PORTABLE_POSTGRES_COMPILER_VERSION="${stdenv.cc.cc.version}" \
         PORTABLE_POSTGRES_LAUNCHER="${../portable-postgres/postgres-launcher.sh}" \
         PORTABLE_POSTGRES_ENTRYPOINT_HELPER="${../portable-postgres/postgres-entrypoint-fixup.sh}" \
+        PORTABLE_POSTGRES_COMPILER_HELPER="${../portable-postgres/postgres-compiler-runtime.sh}" \
         . ${../portable-postgres/postgres-linux-fixup.sh}
     ''
     + lib.optionalString stdenv.isDarwin ''

@@ -13,10 +13,12 @@ compiler_libgcc="${PORTABLE_POSTGRES_COMPILER_LIBGCC:?missing PORTABLE_POSTGRES_
 compiler_src="${PORTABLE_POSTGRES_COMPILER_SRC:?missing PORTABLE_POSTGRES_COMPILER_SRC}"
 launcher_template="${PORTABLE_POSTGRES_LAUNCHER:?missing PORTABLE_POSTGRES_LAUNCHER}"
 entrypoint_helper="${PORTABLE_POSTGRES_ENTRYPOINT_HELPER:?missing PORTABLE_POSTGRES_ENTRYPOINT_HELPER}"
+compiler_runtime_helper="${PORTABLE_POSTGRES_COMPILER_HELPER:?missing PORTABLE_POSTGRES_COMPILER_HELPER}"
 
 # Keep hidden-entrypoint normalization and launcher generation in one
 # executable seam so host tests can exercise the exact public-name contract.
 . "$entrypoint_helper"
+. "$compiler_runtime_helper"
 
 runtime_dir="$rootfs/lib"
 mkdir -p "$runtime_dir"
@@ -90,24 +92,12 @@ EOF
 
 # Native extensions may require C++ ABI/runtime libraries even when the core
 # PostgreSQL executable does not. Seed both compiler outputs before closure
-# discovery so the final loader audit also covers extension ELFs.
-copy_compiler_runtime() {
-  runtime_name="$1"
-  runtime_file=""
-  for compiler_root in "$compiler_lib" "$compiler_libgcc"; do
-    [ -d "$compiler_root" ] || continue
-    runtime_file="$(find "$compiler_root" -type f \( -name "$runtime_name" -o -name "$runtime_name.*" \) -print -quit 2>/dev/null || true)"
-    [ -n "$runtime_file" ] && break
-  done
-  [ -n "$runtime_file" ] || {
-    echo "missing pinned compiler runtime $runtime_name under $compiler_lib" >&2
-    exit 1
-  }
-  cp -L "$runtime_file" "$runtime_dir/$runtime_name"
-  chmod u+w "$runtime_dir/$runtime_name"
-}
-copy_compiler_runtime "libstdc++.so.6"
-copy_compiler_runtime "libgcc_s.so.1"
+# discovery so the final loader audit also covers extension ELFs. The selector
+# rejects linker scripts and validates the target machine before copying.
+portable_postgres_copy_compiler_runtime \
+  "$runtime_dir" "libstdc++.so.6" "$compiler_lib" "$compiler_libgcc"
+portable_postgres_copy_compiler_runtime \
+  "$runtime_dir" "libgcc_s.so.1" "$compiler_lib" "$compiler_libgcc"
 
 is_elf() {
   portable_postgres_is_elf "$1"
