@@ -30,6 +30,14 @@ class PortableAuditTest(unittest.TestCase):
         self.fake_bin = self.temp / "bin"
         self.fake_bin.mkdir()
         self.trace = self.temp / "trace"
+        self.audit_root = self.temp / "scripts"
+        self.audit_root.mkdir()
+        shutil.copy2(AUDIT, self.audit_root / "audit-portable-artifact.sh")
+        shutil.copy2(ROOT_DIR / "scripts" / "lib.sh", self.audit_root / "lib.sh")
+        shutil.copy2(
+            ROOT_DIR / "scripts" / "validate-artifact-symlinks.py",
+            self.audit_root / "validate-artifact-symlinks.py",
+        )
         self.write_tools()
 
     def write_tools(self):
@@ -61,10 +69,16 @@ class PortableAuditTest(unittest.TestCase):
             "printf '\\tlibfixture.so => /artifact/libfixture.so (0x0)\\n'\n",
             encoding="utf-8",
         )
-        (self.fake_bin / "os-floor.sh").write_text(
-            "#!/usr/bin/env bash\nprintf '{\"floor\": null, \"bundled_glibc\": false}\\n'\n",
+        (self.audit_root / "os-floor.sh").write_text(
+            "#!/usr/bin/env bash\n"
+            "if [[ -n \"${FAKE_FLOOR_JSON:-}\" ]]; then\n"
+            "  printf '%s\\n' \"$FAKE_FLOOR_JSON\"\n"
+            "else\n"
+            "  printf '{\\\"floor\\\": null, \\\"bundled_glibc\\\": false}\\n'\n"
+            "fi\n",
             encoding="utf-8",
         )
+        (self.audit_root / "os-floor.sh").chmod(0o755)
         (self.fake_bin / "uname").write_text(
             "#!/usr/bin/env bash\n"
             "if [[ ${1:-} == -m ]]; then printf '%s\\n' x86_64; else /usr/bin/uname \"$@\"; fi\n",
@@ -73,8 +87,16 @@ class PortableAuditTest(unittest.TestCase):
         for path in self.fake_bin.iterdir():
             path.chmod(0o755)
 
-    def env(self, loader_mode="ok"):
-        loader = self.rootfs / "lib64" / "ld-linux-x86-64.so.2"
+    def loader_path(self, loader_layout="canonical"):
+        if loader_layout == "multiarch":
+            return self.rootfs / "lib" / "x86_64-linux-gnu" / "ld-linux-x86-64.so.2"
+        return self.rootfs / "lib64" / "ld-linux-x86-64.so.2"
+
+    def env(self, loader_mode="ok", loader_layout="canonical", paired_libc=True):
+        loader = self.loader_path(loader_layout)
+        loader.parent.mkdir(parents=True, exist_ok=True)
+        if loader_layout == "canonical" and paired_libc:
+            (self.rootfs / "lib64" / "libc.so.6").write_text("fixture", encoding="utf-8")
         loader.write_text(
             "#!/usr/bin/env bash\n"
             "printf 'loader %s\\n' \"$*\" >> \"$FAKE_TRACE\"\n"
@@ -89,16 +111,25 @@ class PortableAuditTest(unittest.TestCase):
             "ROOT_DIR": str(ROOT_DIR),
         }
 
-    def run_audit(self, loader_mode="ok", bundled=True):
-        loader = self.rootfs / "lib64" / "ld-linux-x86-64.so.2"
+    def run_audit(
+        self,
+        loader_mode="ok",
+        bundled=True,
+        floor_json=None,
+        loader_layout="canonical",
+        paired_libc=True,
+    ):
+        loader = self.loader_path(loader_layout)
         if bundled:
-            result_env = self.env(loader_mode)
+            result_env = self.env(loader_mode, loader_layout, paired_libc)
         else:
             loader.unlink(missing_ok=True)
-            result_env = self.env(loader_mode)
+            result_env = self.env(loader_mode, loader_layout, paired_libc)
             loader.unlink(missing_ok=True)
+        if floor_json is not None:
+            result_env["FAKE_FLOOR_JSON"] = floor_json
         return subprocess.run(
-            ["bash", str(AUDIT), "--linux", str(self.rootfs)],
+            ["bash", str(self.audit_root / "audit-portable-artifact.sh"), "--linux", str(self.rootfs)],
             cwd=ROOT_DIR,
             env=result_env,
             text=True,
@@ -149,6 +180,101 @@ class PortableAuditTest(unittest.TestCase):
         result = self.run_audit(bundled=False)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("ldd audit failed", result.stderr)
+
+    def test_host_glibc_floor_defaults_to_235(self):
+        (self.rootfs / "bin" / "host").write_text("fixture", encoding="utf-8")
+        result = self.run_audit(
+            bundled=False,
+            floor_json='{"floor":"2.39","bundled_glibc":false}',
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("policy 2.35", result.stderr)
+
+    def test_bundled_floor_bypass_requires_loader_resolution(self):
+        (self.rootfs / "bin" / "app").write_text("fixture", encoding="utf-8")
+        result = self.run_audit(
+            loader_mode="fail",
+            floor_json='{"floor":"2.39","bundled_glibc":true}',
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("bundled loader audit failed", result.stderr)
+
+    def test_bundled_floor_bypass_requires_executable_loader(self):
+        (self.rootfs / "bin" / "host").write_text("fixture", encoding="utf-8")
+        result = self.run_audit(
+            bundled=False,
+            floor_json='{"floor":"2.39","bundled_glibc":true}',
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("no executable bundled loader", result.stderr)
+
+    def test_resolved_bundled_loader_is_classified_as_hermetic(self):
+        (self.rootfs / "bin" / "app").write_text("fixture", encoding="utf-8")
+        result = self.run_audit(
+            floor_json='{"floor":"2.39","bundled_glibc":true}',
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("glibc floor gate skipped", result.stdout)
+
+    def test_multiarch_bundled_loader_is_used_with_paired_libc(self):
+        multiarch = self.rootfs / "lib" / "x86_64-linux-gnu"
+        multiarch.mkdir(parents=True)
+        (multiarch / "libc.so.6").write_text("fixture", encoding="utf-8")
+        (self.rootfs / "bin" / "app").write_text("fixture", encoding="utf-8")
+        (self.fake_bin / "ldd").unlink()
+        result = self.run_audit(loader_layout="multiarch")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        trace = self.trace.read_text(encoding="utf-8")
+        self.assertNotIn("ldd", trace)
+        self.assertIn("--library-path", trace)
+        self.assertIn(str(multiarch), trace)
+        self.assertIn("--list", trace)
+
+    def test_multiarch_loader_requires_paired_libc(self):
+        multiarch = self.rootfs / "lib" / "x86_64-linux-gnu"
+        multiarch.mkdir(parents=True)
+        (self.rootfs / "bin" / "app").write_text("fixture", encoding="utf-8")
+        result = self.run_audit(loader_layout="multiarch")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("no paired libc", result.stderr)
+
+    def test_canonical_loader_requires_paired_libc(self):
+        (self.rootfs / "bin" / "app").write_text("fixture", encoding="utf-8")
+        result = self.run_audit(paired_libc=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("canonical bundled loader has no paired libc", result.stderr)
+
+    def test_equivalent_canonical_loader_symlink_is_not_ambiguous(self):
+        canonical_alias = self.rootfs / "lib" / "ld-linux-x86-64.so.2"
+        canonical_alias.parent.mkdir(parents=True)
+        canonical_alias.symlink_to("../lib64/ld-linux-x86-64.so.2")
+        (self.rootfs / "bin" / "app").write_text("fixture", encoding="utf-8")
+        (self.fake_bin / "ldd").unlink()
+        result = self.run_audit()
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_multiarch_loader_cannot_coexist_with_canonical_loader(self):
+        self.env()
+        multiarch = self.rootfs / "lib" / "x86_64-linux-gnu"
+        multiarch.mkdir(parents=True)
+        (multiarch / "libc.so.6").write_text("fixture", encoding="utf-8")
+        multiarch_loader = self.loader_path("multiarch")
+        multiarch_loader.write_text("fixture", encoding="utf-8")
+        multiarch_loader.chmod(0o755)
+        (self.rootfs / "bin" / "app").write_text("fixture", encoding="utf-8")
+        result = self.run_audit(loader_layout="multiarch")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("ambiguous canonical and multiarch", result.stderr)
+
+    def test_mismatched_multiarch_loader_is_rejected(self):
+        wrong = self.rootfs / "lib" / "aarch64-linux-gnu" / "ld-linux-aarch64.so.1"
+        wrong.parent.mkdir(parents=True)
+        wrong.write_text("fixture", encoding="utf-8")
+        wrong.chmod(0o755)
+        (self.rootfs / "bin" / "app").write_text("fixture", encoding="utf-8")
+        result = self.run_audit(bundled=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("mismatched multiarch", result.stderr)
 
     def test_dangling_symlink_is_rejected(self):
         (self.rootfs / "bin" / "broken").symlink_to("missing")
