@@ -227,6 +227,11 @@ in
         [ -f "$vmargs" ] || continue
         printf '\n## Portable artifact: disksup would spawn a Nix store bash (see nix package)\n-os_mon start_disksup false\n' >> "$vmargs"
       done
+
+      for envsh in "$rootfs"/releases/*/env.sh; do
+        [ -f "$envsh" ] || continue
+        printf '\nexport RELEASE_DISTRIBUTION=none\n' >> "$envsh"
+      done
     '';
 
     postFixup = ''
