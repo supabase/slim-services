@@ -9,6 +9,7 @@ import os
 import pathlib
 import shutil
 import subprocess
+import struct
 import tempfile
 import unittest
 
@@ -18,20 +19,30 @@ os.sys.argv[1:] = []
 SCANNER = ROOT_DIR / "scripts" / "os-floor.sh"
 
 
-def is_elf(path):
+def elf_machine(path):
     try:
         with path.open("rb") as stream:
-            return stream.read(4) == b"\x7fELF"
+            data = stream.read(20)
     except OSError:
-        return False
+        return None
+    if len(data) < 20 or data[:4] != b"\x7fELF" or data[4] != 2 or data[5] != 1:
+        return None
+    return struct.unpack_from("<H", data, 18)[0]
 
 
-def first_elf(paths):
+def elf_paths(paths, *, executable=False):
+    result = []
+    seen = set()
     for path in paths:
         path = pathlib.Path(path)
-        if path.is_file() and is_elf(path):
-            return path
-    return None
+        if path in seen or not path.is_file():
+            continue
+        seen.add(path)
+        if executable and not path.stat().st_mode & 0o111:
+            continue
+        if elf_machine(path) is not None:
+            result.append(path)
+    return result
 
 
 class OsFloorScannerTest(unittest.TestCase):
@@ -42,14 +53,14 @@ class OsFloorScannerTest(unittest.TestCase):
         (self.rootfs / "bin").mkdir(parents=True)
         (self.rootfs / "lib").mkdir()
 
-        consumer = first_elf(
+        consumer_candidates = elf_paths(
             [
                 pathlib.Path("/usr/bin/true"),
                 pathlib.Path("/bin/true"),
                 *pathlib.Path("/nix/store").glob("*/lib/*.so.*"),
             ]
         )
-        loader = first_elf(
+        loader_candidates = elf_paths(
             [
                 *pathlib.Path("/lib").glob("ld-linux*.so*"),
                 *pathlib.Path("/lib64").glob("ld-linux*.so*"),
@@ -59,9 +70,10 @@ class OsFloorScannerTest(unittest.TestCase):
                 pathlib.Path("/lib64/ld-linux-x86-64.so.2"),
                 pathlib.Path("/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"),
                 *pathlib.Path("/nix/store").glob("*/lib/ld-linux-*.so.*"),
-            ]
+            ],
+            executable=True,
         )
-        libc = first_elf(
+        libc_candidates = elf_paths(
             [
                 *pathlib.Path("/lib").glob("libc.so.*"),
                 *pathlib.Path("/lib64").glob("libc.so.*"),
@@ -73,8 +85,43 @@ class OsFloorScannerTest(unittest.TestCase):
                 *pathlib.Path("/nix/store").glob("*/lib/libc.so.6"),
             ]
         )
-        if not (consumer and loader and libc):
-            self.skipTest("a host Linux ELF consumer, loader, and libc are required")
+
+        # Select a pair from one runtime directory.  Independent first-match
+        # selection can pair a 32-bit loader with a 64-bit libc on hosts that
+        # expose both, making the fixture look unlike a real bundled runtime.
+        runtime_pair = next(
+            (
+                (loader, libc, elf_machine(loader))
+                for loader in loader_candidates
+                for libc in libc_candidates
+                if loader.resolve().parent == libc.resolve().parent
+                and elf_machine(loader) == elf_machine(libc)
+            ),
+            None,
+        )
+        if runtime_pair is None:
+            self.skipTest(
+                "a same-machine bundled loader/libc pair is required; "
+                f"loaders={[str(path) for path in loader_candidates]}, "
+                f"libcs={[str(path) for path in libc_candidates]}"
+            )
+        loader, libc, machine = runtime_pair
+        consumer = next(
+            (path for path in consumer_candidates if elf_machine(path) == machine),
+            None,
+        )
+        if consumer is None:
+            self.skipTest(
+                "a host ELF consumer matching the bundled runtime is required; "
+                f"machine={machine}, consumers={[str(path) for path in consumer_candidates]}"
+            )
+
+        self.runtime_sources = {
+            "consumer": str(consumer),
+            "loader": str(loader),
+            "libc": str(libc),
+            "machine": machine,
+        }
 
         shutil.copy2(consumer, self.rootfs / "bin" / "consumer")
         shutil.copy2(loader, self.rootfs / "lib" / loader.name)
@@ -91,10 +138,11 @@ class OsFloorScannerTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         report = json.loads(result.stdout)
         self.assertEqual(report["kind"], "glibc")
-        self.assertTrue(report["bundled_glibc"])
+        diagnostics = f"report={report}, runtime_sources={self.runtime_sources}"
+        self.assertTrue(report["bundled_glibc"], diagnostics)
         self.assertGreaterEqual(report["scanned"], 3)
-        self.assertIsNone(report["floor"])
-        self.assertIsNone(report["offender"])
+        self.assertIsNone(report["floor"], diagnostics)
+        self.assertIsNone(report["offender"], diagnostics)
 
     def test_non_executable_loader_does_not_claim_bundled_glibc(self):
         loader = next((path for path in (self.rootfs / "lib").glob("ld-linux*")), None)
