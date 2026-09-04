@@ -204,6 +204,19 @@ if [[ "${SPLIT_BUNDLED_GLIBC:-false}" == "true" && -n "${elf_list:-}" ]]; then
     '
 fi
 
+# A service may need a small, service-owned transformation after image
+# extraction has collected and repaired its ELF closure.  Keep this hook
+# optional and fail loud: the transformed rootfs is what the subsequent
+# prune, SBOM, archive, and CI audit consume.  The script receives the staged
+# rootfs as its sole argument and must be executable.
+if [[ -n "${ARTIFACT_POSTPROCESS_SCRIPT:-}" ]]; then
+  postprocess_script="$ARTIFACT_POSTPROCESS_SCRIPT"
+  [[ "$postprocess_script" = /* ]] || postprocess_script="$ROOT_DIR/$postprocess_script"
+  [[ -x "$postprocess_script" ]] || fail "artifact postprocess script is missing or not executable: $postprocess_script"
+  log "running artifact postprocess script for $service"
+  "$postprocess_script" "$rootfs"
+fi
+
 if [[ -n "${WRAPPED_BINARY_SOURCE:-}" && -n "${WRAPPED_BINARY_DEST:-}" ]]; then
   [[ -e "$rootfs$WRAPPED_BINARY_SOURCE" ]] || fail "wrapped binary source was not copied: $WRAPPED_BINARY_SOURCE"
   mkdir -p "$rootfs$(dirname "$WRAPPED_BINARY_DEST")"

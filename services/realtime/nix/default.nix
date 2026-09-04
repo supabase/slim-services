@@ -33,6 +33,8 @@
 }:
 let
   lib = pkgs.lib;
+  portableBeam =
+    if builtins.pathExists ./portable-beam then ./portable-beam else ../../../nix/portable-beam;
   upstreamDockerfile = builtins.readFile ../Dockerfile;
   upstreamDockerfileLines = lib.splitString "\n" upstreamDockerfile;
   upstreamDockerArg = name:
@@ -83,6 +85,10 @@ let
       }
     else
       throw "runtime definitions do not provide Elixir ${elixirGeneration} required by Realtime's upstream Dockerfile";
+  glibcLocalesMinimal = pkgs.glibcLocales.override {
+    allLocales = false;
+    locales = [ "en_US.UTF-8/UTF-8" ];
+  };
   fetchMixDeps = beamPackages.fetchMixDeps.override { inherit elixir; };
   mixRelease = beamPackages.mixRelease.override { inherit elixir fetchMixDeps; };
 
@@ -172,10 +178,11 @@ in
     dontUnpack = true;
     dontPatchShebangs = true;
     dontStrip = true;
+    dontPatchELF = true;
     nativeBuildInputs = [
       pkgs.python3
       pkgs.file
-    ] ++ lib.optionals pkgs.stdenv.isLinux [ pkgs.patchelf ];
+    ] ++ lib.optionals pkgs.stdenv.isLinux [ pkgs.patchelf pkgs.binutils ];
 
     buildPhase = ''
       rootfs="$out"
@@ -269,119 +276,18 @@ in
       mv -f "$envsh_tmp" "$envsh"
       trap - EXIT HUP INT TERM
     '' + lib.optionalString pkgs.stdenv.isLinux ''
-      # Linux half of the portable playbook: bundle every non-glibc shared
-      # library into dylib/, point every ELF at it with $ORIGIN-relative
-      # rpaths and at the host's dynamic loader, then audit with ldd.
-      rootfs="$out"
-      dylib_dir="$rootfs/dylib"
-      mkdir -p "$dylib_dir"
-      # Runtime side-data: bundle zoneinfo and point TZDIR at it from the
-      # release env.sh. Minimal hosts may lack /usr/share/zoneinfo and glibc
-      # silently falls back to UTC. NSS/gconv/locale need NO bundling at the
-      # glibc 2.39 floor (nss_files/nss_dns are compiled into libc >= 2.34,
-      # gconv ships with the host libc, C.UTF-8 is built in >= 2.35) — see
-      # docs/design/glibc-runtime-side-data.md.
-      mkdir -p "$rootfs/share"
-      cp -RL ${pkgs.tzdata}/share/zoneinfo "$rootfs/share/zoneinfo"
-      chmod -R u+w "$rootfs/share/zoneinfo"
-      # posix/ duplicates the top-level zones; right/ is the TAI variant.
-      rm -rf "$rootfs/share/zoneinfo/posix" "$rootfs/share/zoneinfo/right"
-      for envsh in "$rootfs"/releases/*/env.sh; do
-        [ -f "$envsh" ] || continue
-        {
-          printf '\n## Portable artifact: prefer bundled zoneinfo (see nix package)\n'
-          printf 'if [ -z "''${TZDIR:-}" ] && [ -d "$RELEASE_ROOT/share/zoneinfo" ]; then\n'
-          printf '  export TZDIR="$RELEASE_ROOT/share/zoneinfo"\nfi\n'
-        } >> "$envsh"
-      done
-
-      case "$(uname -m)" in
-        aarch64) interp="/lib/ld-linux-aarch64.so.1" ;;
-        x86_64) interp="/lib64/ld-linux-x86-64.so.2" ;;
-        *) echo "unsupported linux arch $(uname -m)" >&2; exit 1 ;;
-      esac
-
-      is_elf() {
-        file "$1" 2>/dev/null | grep -q "ELF"
-      }
-
-      elf_files() {
-        find "$rootfs" -type f \( -perm -0100 -o -name "*.so" -o -name "*.so.*" \) 2>/dev/null \
-          | while read -r file_path; do
-              if is_elf "$file_path"; then
-                echo "$file_path"
-              fi
-            done
-      }
-
-      # The glibc family resolves from the host (contract item 3).
-      should_exclude() {
-        case "$1" in
-          libc.so*|libc-*.so*|ld-linux*.so*|libdl.so*|libpthread.so*|libm.so*|libresolv.so*|librt.so*)
-            return 0 ;;
-          *)
-            return 1 ;;
-        esac
-      }
-
-      nix_store_deps() {
-        ldd "$1" 2>/dev/null | awk '/=> \/nix\/store/ { print $3 } $1 ~ "^/nix/store" { print $1 }'
-      }
-
-      # 1. Complete the closure before any patching (ldd still resolves the
-      # original Nix rpaths at this point).
-      for iteration in 1 2 3 4 5 6 7 8; do
-        copied=0
-        for elf in $(elf_files) "$dylib_dir"/*; do
-          [ -f "$elf" ] || continue
-          for dep in $(nix_store_deps "$elf"); do
-            dep_name="$(basename "$dep")"
-            should_exclude "$dep_name" && continue
-            if [ ! -e "$dylib_dir/$dep_name" ] && [ -e "$dep" ]; then
-              cp -L "$dep" "$dylib_dir/$dep_name"
-              chmod u+w "$dylib_dir/$dep_name"
-              copied=1
-            fi
-          done
-        done
-        [ "$copied" = "0" ] && break
-      done
-
-      # 2. Patch: system loader for executables, $ORIGIN-relative rpath to
-      # dylib/ for everything, then strip.
-      for elf in $(elf_files); do
-        rel="$(python3 -c "import os,sys; print(os.path.relpath(sys.argv[1], os.path.dirname(sys.argv[2])))" "$dylib_dir" "$elf")"
-        if patchelf --print-interpreter "$elf" >/dev/null 2>&1; then
-          patchelf --set-interpreter "$interp" "$elf" 2>/dev/null || true
-        fi
-        patchelf --set-rpath "\$ORIGIN/$rel" "$elf" 2>/dev/null || true
-        strip --strip-unneeded "$elf" 2>/dev/null || true
-      done
-
-      # 3. Audit: no unresolved deps, no Nix store references (the loader
-      # itself and the glibc family are expected from the host and resolve
-      # to the build sandbox's glibc here).
-      echo "Auditing Linux portable output"
-      unresolved="$(
-        for elf in $(elf_files); do
-          ldd "$elf" 2>/dev/null | awk -v file="$elf" -v rootfs="$rootfs" '
-            /not found/ { print file " -> " $0; next }
-            /=> \// { path = $3 }
-            path ~ "^/nix/store/" && index(path, rootfs "/") != 1 {
-              name = path
-              sub(/^.*\//, "", name)
-              if (name !~ /^(ld-linux.*|libc\.so.*|libc-.*\.so.*|libdl\.so.*|libpthread\.so.*|libm\.so.*|libresolv\.so.*|librt\.so.*)$/) {
-                print file " -> " path
-              }
-              path = ""
-            }
-          '
-        done
-      )"
-      if [ -n "$unresolved" ]; then
-        echo "$unresolved" >&2
-        exit 1
-      fi
+      # Shared BEAM fixup bundles the matching glibc family, relocates the
+      # non-glibc closure, wraps dynamic ERTS/port ELFs, and audits with the
+      # bundled loader. Darwin remains on the unchanged branch below.
+      export PORTABLE_BEAM_ROOTFS="$out"
+      export PORTABLE_BEAM_GLIBC_LIB="${pkgs.glibc}/lib"
+      export PORTABLE_BEAM_GLIBC_SRC="${pkgs.glibc.src}"
+      export PORTABLE_BEAM_COMPILER_SRC="${pkgs.stdenv.cc.cc.src}"
+      export PORTABLE_BEAM_TZDATA="${pkgs.tzdata}/share/zoneinfo"
+      export PORTABLE_BEAM_TZDATA_SRC="${lib.head pkgs.tzdata.srcs}"
+      export PORTABLE_BEAM_LOCALE_LIB="${glibcLocalesMinimal}/lib/locale"
+      export PORTABLE_BEAM_LAUNCHER="${portableBeam}/beam-launcher.sh"
+      ${builtins.readFile "${portableBeam}/beam-linux-fixup.sh"}
     '' + lib.optionalString pkgs.stdenv.isDarwin ''
       rootfs="$out"
       dylib_dir="$rootfs/dylib"

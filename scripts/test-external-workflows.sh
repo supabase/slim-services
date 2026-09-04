@@ -14,6 +14,7 @@ import tempfile
 ROOT = pathlib.Path(__import__("sys").argv[1])
 PLAN = ROOT / "scripts" / "plan-external-release.sh"
 VERIFY = ROOT / "scripts" / "verify-external-release.sh"
+DECISION = ROOT / "scripts" / "release-workflow-decision.sh"
 
 
 def run(command, *, env=None, check=False):
@@ -281,6 +282,51 @@ def test_imgproxy_is_a_manual_release_choice_and_allowlisted():
     assert_true("imgproxy" in parsed["run"], "imgproxy missing from manual release allowlist")
 
 
+def test_validation_only_builds_existing_releases_without_publication():
+    ruby = (
+        "require 'yaml'; require 'json'; "
+        "data=YAML.safe_load(File.read(ARGV[0]), aliases: true); "
+        "dispatch=data.fetch('on').fetch('workflow_dispatch').fetch('inputs'); "
+        "call=data.fetch('on').fetch('workflow_call').fetch('inputs'); "
+        "plan=data.fetch('jobs').fetch('plan'); "
+        "plan_step=plan.fetch('steps').find { |s| s['name'] == 'Validate inputs and check existing release' }; "
+        "puts JSON.generate({dispatch: dispatch, call: call, outputs: plan.fetch('outputs'), "
+        "plan_env: plan_step.fetch('env'), plan_run: plan_step.fetch('run'), "
+        "build_if: data.fetch('jobs').fetch('build').fetch('if'), "
+        "publish_image_if: data.fetch('jobs').fetch('publish-image').fetch('if'), "
+        "publish_release_if: data.fetch('jobs').fetch('publish-release').fetch('if')})"
+    )
+    result = run(["ruby", "-e", ruby, str(ROOT / ".github" / "workflows" / "service-release.yml")])
+    assert_true(result.returncode == 0, result.stderr)
+    parsed = json.loads(result.stdout)
+    for name, inputs in (("workflow_dispatch", parsed["dispatch"]), ("workflow_call", parsed["call"])):
+        validation = inputs.get("validation_only")
+        assert_true(validation is not None, f"{name} lacks validation_only input")
+        assert_true(validation.get("type") == "boolean", f"{name} validation_only must be boolean")
+        assert_true(validation.get("default") is False, f"{name} validation_only must default false")
+    assert_true("validation_only" in parsed["outputs"], "plan must expose validation_only")
+    assert_true("build" in parsed["outputs"], "plan must expose build decision")
+    assert_true("VALIDATION_ONLY" in parsed["plan_env"], "plan must receive VALIDATION_ONLY")
+    assert_true("scripts/release-workflow-decision.sh" in parsed["plan_run"], "plan must consume the decision seam")
+    assert_true(parsed["build_if"] == "needs.plan.outputs.build == 'true'", "build must use the decision output")
+
+    scenarios = {
+        ("true", "false", "true"): {"build": True, "publish": False},
+        ("true", "true", "true"): {"build": True, "publish": False},
+        ("false", "false", "true"): {"build": False, "publish": False},
+        ("false", "true", "true"): {"build": True, "publish": True},
+        ("false", "false", "false"): {"build": True, "publish": True},
+    }
+    for arguments, expected in scenarios.items():
+        decision = run([str(DECISION), *arguments])
+        assert_true(decision.returncode == 0, decision.stderr)
+        assert_true(json.loads(decision.stdout) == expected, f"decision mismatch for {arguments}: {decision.stdout}")
+
+    for key in ("publish_image_if", "publish_release_if"):
+        condition = parsed[key]
+        assert_true("needs.plan.outputs.publish == 'true'" in condition, f"{key} lost publication gate")
+
+
 def test_workflow_downloads_and_verifies_snapshot_before_recipe_build_consumers():
     def workflow_steps(path, job):
         ruby = (
@@ -356,6 +402,10 @@ def test_repository_checks_runs_dynamic_and_external_contracts():
         "scripts/test-external-source-build.sh",
         "scripts/test-dockerhub-release.sh",
         "scripts/test-portable-audit.sh",
+        "scripts/test-portable-node.sh",
+        "scripts/test-portable-beam.sh",
+        "scripts/test-portable-postgres.sh",
+        "scripts/test-portable-postgrest.sh",
         "scripts/test-studio-artifact.sh",
         "scripts/test-license-compliance.sh",
         "scripts/test-poll-service-releases.sh",

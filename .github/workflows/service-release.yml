@@ -31,6 +31,11 @@ run-name: Release ${{ inputs.service }} ${{ inputs.version }}
         required: false
         type: boolean
         default: false
+      validation_only:
+        description: Build, smoke, and upload CI artifacts without publishing.
+        required: false
+        type: boolean
+        default: false
   workflow_call:
     inputs:
       service:
@@ -40,6 +45,10 @@ run-name: Release ${{ inputs.service }} ${{ inputs.version }}
         required: true
         type: string
       force:
+        required: false
+        type: boolean
+        default: false
+      validation_only:
         required: false
         type: boolean
         default: false
@@ -61,6 +70,7 @@ jobs:
     timeout-minutes: 15
     outputs:
       artifact_source: ${{ steps.plan.outputs.artifact_source }}
+      build: ${{ steps.plan.outputs.build }}
       external: ${{ steps.plan.outputs.external }}
       external_snapshot_artifact: ${{ steps.plan.outputs.external_snapshot_artifact }}
       image_release: ${{ steps.plan.outputs.image_release }}
@@ -72,6 +82,7 @@ jobs:
       upstream_image_repository: ${{ steps.plan.outputs.upstream_image_repository }}
       upstream_asset_sha256: ${{ steps.plan.outputs.upstream_asset_sha256 }}
       upstream_asset_url: ${{ steps.plan.outputs.upstream_asset_url }}
+      validation_only: ${{ steps.plan.outputs.validation_only }}
     steps:
       - name: Checkout release policy
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -133,9 +144,11 @@ jobs:
           FORCE: ${{ inputs.force }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SERVICE: ${{ inputs.service }}
+          VALIDATION_ONLY: ${{ inputs.validation_only }}
           VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
+          VALIDATION_ONLY="${VALIDATION_ONLY:-false}"
 
           case "$SERVICE" in
             auth|postgrest|realtime|pooler|analytics|storage|edge-runtime|studio|pgmeta|postgres|mailpit|vector|imgproxy) ;;
@@ -181,14 +194,20 @@ jobs:
             image_repository="ghcr.io/$(
               printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]'
             )/cli/$SERVICE"
-            publish=true
-            if [[ "$FORCE" != "true" ]] && gh release view "$release_tag" >/dev/null 2>&1; then
-              publish=false
-              printf 'release %s already exists; skipping (use force=true to replace it)\n' "$release_tag"
+            release_exists=false
+            if gh release view "$release_tag" >/dev/null 2>&1; then
+              release_exists=true
+              if [[ "$VALIDATION_ONLY" != "true" && "$FORCE" != "true" ]]; then
+                printf 'release %s already exists; skipping (use force=true to replace it)\n' "$release_tag"
+              fi
             fi
+            decision_json="$(scripts/release-workflow-decision.sh "$VALIDATION_ONLY" "$FORCE" "$release_exists")"
+            build="$(python3 -c 'import json,sys; print(str(json.loads(sys.argv[1])["build"]).lower())' "$decision_json")"
+            publish="$(python3 -c 'import json,sys; print(str(json.loads(sys.argv[1])["publish"]).lower())' "$decision_json")"
             matrix='{"include":[{"target_os":"linux","arch":"arm64","platform_dir":"linux-arm64","runner":"large-linux-arm"},{"target_os":"linux","arch":"amd64","platform_dir":"linux-amd64","runner":"large-linux-x86"},{"target_os":"darwin","arch":"arm64","platform_dir":"darwin-arm64","runner":"macos-14-xlarge"}]}'
             {
               printf 'artifact_source=%s\n' "$artifact_source"
+              printf 'build=%s\n' "$build"
               printf 'external=true\n'
               printf 'external_snapshot_artifact=external-release-%s\n' "$GITHUB_RUN_ID"
               printf 'image_release=%s\n' "$image_release"
@@ -200,6 +219,7 @@ jobs:
               printf 'upstream_image_repository=%s\n' "$upstream_image_repository"
               printf 'upstream_asset_sha256=\n'
               printf 'upstream_asset_url=\n'
+              printf 'validation_only=%s\n' "$VALIDATION_ONLY"
             } >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -306,15 +326,21 @@ jobs:
           image_repository="ghcr.io/$(
             printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]'
           )/cli/$SERVICE"
-          publish=true
-          if [[ "$FORCE" != "true" ]] && gh release view "$release_tag" >/dev/null 2>&1; then
-            publish=false
-            printf 'release %s already exists; skipping (use force=true to replace it)\n' "$release_tag"
+          release_exists=false
+          if gh release view "$release_tag" >/dev/null 2>&1; then
+            release_exists=true
+            if [[ "$VALIDATION_ONLY" != "true" && "$FORCE" != "true" ]]; then
+              printf 'release %s already exists; skipping (use force=true to replace it)\n' "$release_tag"
+            fi
           fi
+          decision_json="$(scripts/release-workflow-decision.sh "$VALIDATION_ONLY" "$FORCE" "$release_exists")"
+          build="$(python3 -c 'import json,sys; print(str(json.loads(sys.argv[1])["build"]).lower())' "$decision_json")"
+          publish="$(python3 -c 'import json,sys; print(str(json.loads(sys.argv[1])["publish"]).lower())' "$decision_json")"
 
           matrix='{"include":[{"target_os":"linux","arch":"arm64","platform_dir":"linux-arm64","runner":"large-linux-arm"},{"target_os":"linux","arch":"amd64","platform_dir":"linux-amd64","runner":"large-linux-x86"},{"target_os":"darwin","arch":"arm64","platform_dir":"darwin-arm64","runner":"macos-14-xlarge"}]}'
           {
             printf 'artifact_source=%s\n' "$artifact_source"
+            printf 'build=%s\n' "$build"
             printf 'external=false\n'
             printf 'external_snapshot_artifact=\n'
             printf 'image_release=%s\n' "$image_release"
@@ -326,6 +352,7 @@ jobs:
             printf 'upstream_image_repository=%s\n' "$upstream_image_repository"
             printf 'upstream_asset_sha256=%s\n' "$upstream_asset_sha256"
             printf 'upstream_asset_url=%s\n' "$upstream_asset_url"
+            printf 'validation_only=%s\n' "$VALIDATION_ONLY"
           } >> "$GITHUB_OUTPUT"
 
       - name: Upload external release snapshot
@@ -340,7 +367,7 @@ jobs:
   build:
     name: ${{ inputs.service }} ${{ matrix.target_os }}/${{ matrix.arch }}
     needs: plan
-    if: needs.plan.outputs.publish == 'true'
+    if: needs.plan.outputs.build == 'true'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 240
     strategy:

@@ -48,6 +48,11 @@ jobs:
           scripts/test-dockerhub-release.sh
           scripts/test-poll-service-releases.sh
           scripts/test-portable-audit.sh
+          scripts/test-os-floor.sh
+          scripts/test-portable-node.sh
+          scripts/test-portable-beam.sh
+          scripts/test-portable-postgres.sh
+          scripts/test-portable-postgrest.sh
           scripts/test-identity.sh
 
       - name: Test artifact contracts

@@ -12,8 +12,8 @@ Usage:
   scripts/audit-portable-artifact.sh --linux ROOTFS
 
 Fail if a portable artifact still has unresolved or host-specific runtime
-deps, ships an ELF with a non-standard program interpreter, or exceeds the
-OS floor policy (glibc 2.39 on Linux, macOS 14.0 on darwin; override with
+deps, ships a non-glibc consumer ELF with a non-standard program interpreter, or exceeds the
+OS floor policy (glibc 2.35 on Linux, macOS 14.0 on darwin; override with
 GLIBC_FLOOR_MAX / MACOS_FLOOR_MAX or SLIM_GLIBC_FLOOR_MAX /
 SLIM_MACOS_FLOOR_MAX).
 EOF
@@ -95,8 +95,16 @@ PY
     require_cmd readelf
     require_cmd python3
     case "$(uname -m)" in
-      aarch64|arm64) allowed_interp="/lib/ld-linux-aarch64.so.1" ;;
-      x86_64|amd64) allowed_interp="/lib64/ld-linux-x86-64.so.2" ;;
+      aarch64|arm64)
+        allowed_interp="/lib/ld-linux-aarch64.so.1"
+        loader_name="ld-linux-aarch64.so.1"
+        multiarch_triplet="aarch64-linux-gnu"
+        ;;
+      x86_64|amd64)
+        allowed_interp="/lib64/ld-linux-x86-64.so.2"
+        loader_name="ld-linux-x86-64.so.2"
+        multiarch_triplet="x86_64-linux-gnu"
+        ;;
       *) fail "unsupported audit architecture: $(uname -m)" ;;
     esac
     # Resolve against the artifact's own library dirs first (including Debian
@@ -106,13 +114,112 @@ PY
     for dir in "$rootfs"/lib/*-linux-gnu* "$rootfs"/usr/lib/*-linux-gnu*; do
       [[ -d "$dir" ]] && lib_path="$lib_path:$dir"
     done
-    bundled_loader=""
-    for candidate in "$rootfs$allowed_interp" "$rootfs/lib/$(basename "$allowed_interp")"; do
-      if [[ -x "$candidate" ]]; then
-        bundled_loader="$candidate"
-        break
+    # Service-native addons may be staged in these artifact-owned closure
+    # directories. Include only directories that exist; never add host paths.
+    for dir in "$rootfs/dylib" "$rootfs/node/dylib"; do
+      [[ -d "$dir" ]] && lib_path="$lib_path:$dir"
+    done
+    canonical_loaders=()
+    canonical_loader_ids=()
+    for candidate in "$rootfs$allowed_interp" "$rootfs/lib/$loader_name"; do
+      [[ -x "$candidate" ]] || continue
+      candidate_id="$(realpath "$candidate" 2>/dev/null || printf '%s' "$candidate")"
+      duplicate=false
+      if ((${#canonical_loader_ids[@]} > 0)); then
+        for selected_id in "${canonical_loader_ids[@]}"; do
+          [[ "$selected_id" == "$candidate_id" ]] && duplicate=true
+        done
+      fi
+      if [[ "$duplicate" != "true" ]]; then
+        canonical_loaders+=("$candidate")
+        canonical_loader_ids+=("$candidate_id")
       fi
     done
+    multiarch_loaders=()
+    multiarch_loader_ids=()
+    mismatched_multiarch_loaders=()
+    for candidate in "$rootfs"/lib/*-linux-gnu*/ld-linux-*; do
+      [[ -x "$candidate" ]] || continue
+      candidate_triplet="$(basename "$(dirname "$candidate")")"
+      candidate_name="$(basename "$candidate")"
+      if [[ "$candidate_triplet" != "$multiarch_triplet" || "$candidate_name" != "$loader_name" ]]; then
+        mismatched_multiarch_loaders+=("$candidate")
+        continue
+      fi
+      candidate_id="$(realpath "$candidate" 2>/dev/null || printf '%s' "$candidate")"
+      duplicate=false
+      if ((${#canonical_loader_ids[@]} > 0)); then
+        for selected_id in "${canonical_loader_ids[@]}"; do
+          [[ "$selected_id" == "$candidate_id" ]] && duplicate=true
+        done
+      fi
+      [[ "$duplicate" == "true" ]] && continue
+      duplicate=false
+      if ((${#multiarch_loader_ids[@]} > 0)); then
+        for selected_id in "${multiarch_loader_ids[@]}"; do
+          [[ "$selected_id" == "$candidate_id" ]] && duplicate=true
+        done
+      fi
+      if [[ "$duplicate" != "true" ]]; then
+        multiarch_loaders+=("$candidate")
+        multiarch_loader_ids+=("$candidate_id")
+      fi
+    done
+    if ((${#mismatched_multiarch_loaders[@]} > 0)); then
+      fail "Linux artifact has mismatched multiarch bundled loaders: ${mismatched_multiarch_loaders[*]}"
+    fi
+    if ((${#canonical_loaders[@]} > 1)); then
+      fail "Linux artifact has ambiguous canonical bundled loaders: ${canonical_loaders[*]}"
+    fi
+    if ((${#multiarch_loaders[@]} > 1)); then
+      fail "Linux artifact has ambiguous multiarch bundled loaders: ${multiarch_loaders[*]}"
+    fi
+    if ((${#canonical_loaders[@]} == 1 && ${#multiarch_loaders[@]} == 1)); then
+      fail "Linux artifact has ambiguous canonical and multiarch bundled loaders"
+    fi
+    bundled_loader=""
+    bundled_lib_path=""
+    if ((${#canonical_loaders[@]} == 1)); then
+      bundled_loader="${canonical_loaders[0]}"
+      canonical_libc_paths=()
+      canonical_libc_ids=()
+      for lib_dir in \
+        "$rootfs/lib" \
+        "$rootfs/lib64" \
+        "$rootfs/usr/lib" \
+        "$rootfs/lib/$multiarch_triplet" \
+        "$rootfs/usr/lib/$multiarch_triplet"
+      do
+        candidate="$lib_dir/libc.so.6"
+        [[ -e "$candidate" ]] || continue
+        candidate_id="$(realpath "$candidate" 2>/dev/null || printf '%s' "$candidate")"
+        duplicate=false
+        if ((${#canonical_libc_ids[@]} > 0)); then
+          for selected_id in "${canonical_libc_ids[@]}"; do
+            [[ "$selected_id" == "$candidate_id" ]] && duplicate=true
+          done
+        fi
+        if [[ "$duplicate" != "true" ]]; then
+          canonical_libc_paths+=("$candidate")
+          canonical_libc_ids+=("$candidate_id")
+        fi
+      done
+      ((${#canonical_libc_paths[@]} == 1)) || {
+        if ((${#canonical_libc_paths[@]} == 0)); then
+          fail "Linux artifact canonical bundled loader has no paired libc"
+        fi
+        fail "Linux artifact has ambiguous canonical bundled libcs: ${canonical_libc_paths[*]}"
+      }
+      bundled_lib_path="$(dirname "${canonical_libc_paths[0]}")"
+      lib_path="$bundled_lib_path:$lib_path"
+    elif ((${#multiarch_loaders[@]} == 1)); then
+      bundled_loader="${multiarch_loaders[0]}"
+      bundled_lib_path="$rootfs/lib/$multiarch_triplet"
+      [[ -e "$bundled_lib_path/libc.so.6" ]] || {
+        fail "Linux artifact multiarch bundled loader has no paired libc: $bundled_lib_path/libc.so.6"
+      }
+      lib_path="$bundled_lib_path:$lib_path"
+    fi
     [[ -n "$bundled_loader" ]] || require_cmd ldd
     unresolved="$(
       find "$rootfs" -type f 2>/dev/null \
@@ -166,15 +273,34 @@ PY
       printf '%s\n' "$unresolved" >&2
       fail "Linux artifact has unresolved shared-library dependencies"
     fi
-    # Every ELF must request the standard system loader for the target arch.
-    # Anything else — a /nix/store loader (build-machine leak, resolves only
-    # where that store exists) or a musl loader on a glibc target — breaks
-    # the moment the archive lands on a clean host. (Real leak class seen:
-    # a bundled Nix store subtree whose ELFs kept their store interpreters.)
+    # Every non-glibc consumer ELF must request the standard system loader for
+    # the target arch. Bundled glibc implementation objects retain their own
+    # interpreter metadata and are entered through the validated paired
+    # loader above. Anything else — a /nix/store loader (build-machine leak,
+    # resolves only where that store exists) or a musl loader on a glibc target
+    # — breaks the moment the archive lands on a clean host. (Real leak class
+    # seen: a bundled Nix store subtree whose consumer ELFs kept their store
+    # interpreters.)
+    is_bundled_glibc_object() {
+      local file_path="$1"
+      local file_name="${file_path##*/}"
+      [[ -n "$bundled_lib_path" && "$file_path" == "$bundled_lib_path/"* ]] || return 1
+      case "$file_name" in
+        ld-linux*.so*|libc.so.6|libc-*.so.*|libm.so.6|libm-*.so.*|libmvec.so.1|libmvec-*.so.*|libpthread.so.0|libpthread-*.so.*|libdl.so.2|libdl-*.so.*|libresolv.so.2|libresolv-*.so.*|librt.so.1|librt-*.so.*|libutil.so.1|libutil-*.so.*|libanl.so.1|libanl-*.so.*|libBrokenLocale.so.1|libBrokenLocale-*.so.*|libthread_db.so.1|libthread_db-*.so.*|libnss_*.so.*|libnsl.so.1|libnsl-*.so.*)
+          return 0
+          ;;
+        *)
+          return 1
+          ;;
+      esac
+    }
     bad_interps="$(
       find "$rootfs" -type f 2>/dev/null \
         | while IFS= read -r file_path; do
             if file "$file_path" | grep -q 'ELF'; then
+              if is_bundled_glibc_object "$file_path"; then
+                continue
+              fi
               readelf -l "$file_path" 2>/dev/null \
                 | awk -v file="$file_path" -v ok="$allowed_interp" '
                     /Requesting program interpreter/ {
@@ -198,14 +324,18 @@ PY
     floor_json="$("$ROOT_DIR/scripts/os-floor.sh" --linux "$rootfs")" \
       || fail "os-floor scan failed for $rootfs"
     log "linux floor: $floor_json"
-    glibc_floor_max="${GLIBC_FLOOR_MAX:-${SLIM_GLIBC_FLOOR_MAX:-2.39}}"
-    python3 - "$floor_json" "$glibc_floor_max" <<'PY' || fail "Linux artifact exceeds the glibc floor policy"
+    glibc_floor_max="${GLIBC_FLOOR_MAX:-${SLIM_GLIBC_FLOOR_MAX:-2.35}}"
+    python3 - "$floor_json" "$glibc_floor_max" "$([[ -n "$bundled_loader" ]] && printf true || printf false)" <<'PY' || fail "Linux artifact exceeds the glibc floor policy"
 import json
 import sys
 
 info = json.loads(sys.argv[1])
 limit = tuple(int(x) for x in sys.argv[2].split("."))
+bundled_loader_present = sys.argv[3] == "true"
 if info.get("bundled_glibc"):
+    if not bundled_loader_present:
+        print("[slim] ERROR: artifact reports bundled glibc but no executable bundled loader", file=sys.stderr)
+        raise SystemExit(1)
     print(f"[slim] glibc floor gate skipped: artifact bundles its own glibc"
           f" (measured floor {info.get('floor')})")
     raise SystemExit(0)

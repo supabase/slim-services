@@ -11,7 +11,7 @@ Usage: scripts/floor-check-linux.sh SERVICE ROOTFS
 
 Execution proof at the supported glibc floor: run the service's
 FLOOR_CHECK_CMD (from services/SERVICE/recipe.env) inside a container whose
-glibc IS the floor (default ubuntu:24.04 = glibc 2.39; override with
+glibc IS the floor (default ubuntu:22.04 = glibc 2.35; override with
 SLIM_FLOOR_IMAGE). The command sees the artifact at $ROOTFS (read-only) and
 must exercise the main binary far enough to prove the dynamic loader
 resolves everything: exec + link + NIF/dlopen load. No network is available.
@@ -36,7 +36,7 @@ if [[ -z "${FLOOR_CHECK_CMD:-}" ]]; then
 fi
 
 require_cmd docker
-floor_image="${SLIM_FLOOR_IMAGE:-ubuntu:24.04}"
+floor_image="${SLIM_FLOOR_IMAGE:-ubuntu:22.04}"
 rootfs_abs="$(cd "$rootfs" && pwd)"
 
 log "floor check: $service in $floor_image"

@@ -59,6 +59,15 @@ NIX_BUILD_MODE="${NIX_BUILD_MODE:-flake}"
 NIX_BUILD_COMMAND_TEMPLATE="${NIX_BUILD_COMMAND_TEMPLATE:-}"
 NIX_PACKAGE_OVERLAY="${NIX_PACKAGE_OVERLAY:-}"
 NIX_PACKAGE_OVERLAY_DEST="${NIX_PACKAGE_OVERLAY_DEST:-}"
+# Optional additional source trees copied into the temporary local build
+# export. Each array item is `source:destination` (or source-only, which uses
+# nix/<basename>), allowing shared package assets without service hardcoding.
+nix_auxiliary_overlays=()
+if declare -p NIX_AUXILIARY_OVERLAYS >/dev/null 2>&1; then
+  if ((${#NIX_AUXILIARY_OVERLAYS[@]} > 0)); then
+    nix_auxiliary_overlays=("${NIX_AUXILIARY_OVERLAYS[@]}")
+  fi
+fi
 NIX_DERIVE_MIX_DEPS_HASH="${NIX_DERIVE_MIX_DEPS_HASH:-false}"
 
 external_source=0
@@ -251,10 +260,28 @@ fi
 
 nix_flake_for_build="$NIX_FLAKE"
 build_dir=""
-if [[ "$resolved_nix_runner" == "local" && -n "$NIX_PACKAGE_OVERLAY" && "$external_source" == "0" ]]; then
-  overlay_abs="$ROOT_DIR/$NIX_PACKAGE_OVERLAY"
-  [[ -e "$overlay_abs" ]] || fail "Nix package overlay not found: $NIX_PACKAGE_OVERLAY"
-  NIX_PACKAGE_OVERLAY_DEST="${NIX_PACKAGE_OVERLAY_DEST:-nix/$(basename "$NIX_PACKAGE_OVERLAY")}"
+apply_nix_overlay() {
+  local source_path="$1" destination_path="$2"
+  local overlay_abs="$ROOT_DIR/$source_path"
+  [[ -n "$source_path" && -n "$destination_path" ]] || fail "Nix auxiliary overlay requires source and destination"
+  [[ "$source_path" != /* && "$destination_path" != /* ]] || fail "Nix auxiliary overlay paths must be relative"
+  [[ "$source_path" != *".."* && "$destination_path" != *".."* ]] || fail "Nix auxiliary overlay paths may not contain .."
+  [[ -e "$overlay_abs" ]] || fail "Nix auxiliary overlay not found: $source_path"
+  log "applying Nix auxiliary overlay $source_path -> $destination_path"
+  if [[ -d "$overlay_abs" ]]; then
+    mkdir -p "$build_src/$destination_path"
+    cp -R "$overlay_abs/." "$build_src/$destination_path/"
+  else
+    mkdir -p "$(dirname "$build_src/$destination_path")"
+    cp "$overlay_abs" "$build_src/$destination_path"
+  fi
+}
+
+needs_local_overlay=false
+if [[ -n "$NIX_PACKAGE_OVERLAY" || ${#nix_auxiliary_overlays[@]} -gt 0 ]]; then
+  needs_local_overlay=true
+fi
+if [[ "$resolved_nix_runner" == "local" && "$needs_local_overlay" == "true" && "$external_source" == "0" ]]; then
   build_dir="$(mktemp -d "${TMPDIR:-/tmp}/slim-images-$service-$TARGET_OS-$ARCH.XXXXXX")"
   build_dir="$(cd "$build_dir" && pwd -P)"
   build_src="$build_dir/src"
@@ -263,13 +290,31 @@ if [[ "$resolved_nix_runner" == "local" && -n "$NIX_PACKAGE_OVERLAY" && "$extern
   log "exporting $SOURCE_DIR@$actual_ref to temporary Nix build tree"
   git -C "$source_abs" archive HEAD | tar -C "$build_src" -xf -
 
-  log "applying Nix package overlay $NIX_PACKAGE_OVERLAY -> $NIX_PACKAGE_OVERLAY_DEST"
-  if [[ -d "$overlay_abs" ]]; then
-    mkdir -p "$build_src/$NIX_PACKAGE_OVERLAY_DEST"
-    cp -R "$overlay_abs/." "$build_src/$NIX_PACKAGE_OVERLAY_DEST/"
-  else
-    mkdir -p "$(dirname "$build_src/$NIX_PACKAGE_OVERLAY_DEST")"
-    cp "$overlay_abs" "$build_src/$NIX_PACKAGE_OVERLAY_DEST"
+  if [[ -n "$NIX_PACKAGE_OVERLAY" ]]; then
+    overlay_abs="$ROOT_DIR/$NIX_PACKAGE_OVERLAY"
+    [[ -e "$overlay_abs" ]] || fail "Nix package overlay not found: $NIX_PACKAGE_OVERLAY"
+    NIX_PACKAGE_OVERLAY_DEST="${NIX_PACKAGE_OVERLAY_DEST:-nix/$(basename "$NIX_PACKAGE_OVERLAY")}"
+
+    log "applying Nix package overlay $NIX_PACKAGE_OVERLAY -> $NIX_PACKAGE_OVERLAY_DEST"
+    if [[ -d "$overlay_abs" ]]; then
+      mkdir -p "$build_src/$NIX_PACKAGE_OVERLAY_DEST"
+      cp -R "$overlay_abs/." "$build_src/$NIX_PACKAGE_OVERLAY_DEST/"
+    else
+      mkdir -p "$(dirname "$build_src/$NIX_PACKAGE_OVERLAY_DEST")"
+      cp "$overlay_abs" "$build_src/$NIX_PACKAGE_OVERLAY_DEST"
+    fi
+  fi
+  # Bash 3 (the system shell on macOS runners) raises an unbound-variable
+  # error when expanding an empty array under `set -u`. Guard the expansion
+  # so recipes with only a package overlay can still use the local export path.
+  if ((${#nix_auxiliary_overlays[@]} > 0)); then
+    for auxiliary_overlay in "${nix_auxiliary_overlays[@]}"; do
+      if [[ "$auxiliary_overlay" == *:* ]]; then
+        apply_nix_overlay "${auxiliary_overlay%%:*}" "${auxiliary_overlay#*:}"
+      else
+        apply_nix_overlay "$auxiliary_overlay" "nix/$(basename "$auxiliary_overlay")"
+      fi
+    done
   fi
   nix_flake_for_build="$build_src"
 fi
@@ -464,6 +509,11 @@ fi
 
 portable="$(portable_flag)"
 assumed_host_libs_json="$(portable_host_libs_json)"
+if ((${#nix_auxiliary_overlays[@]} > 0)); then
+  nix_auxiliary_overlays_json="$(printf '%s\n' "${nix_auxiliary_overlays[@]}" | python3 -c 'import json,sys; print(json.dumps([line.rstrip("\n") for line in sys.stdin if line.rstrip("\n")]))')"
+else
+  nix_auxiliary_overlays_json='[]'
+fi
 
 # The build command template and derived hash JSON may contain quotes; pass
 # them via the environment rather than interpolating them into Python source.
@@ -472,6 +522,7 @@ NIX_BUILD_COMMAND_TEMPLATE_ENV="$NIX_BUILD_COMMAND_TEMPLATE" \
 NIX_SOURCE_METADATA_ENV="$source_metadata_json" \
 NIX_SOURCE_REPOSITORY_ENV="$source_repository" \
 NIX_SOURCE_ARGS_ENV="$nix_source_args_json" \
+NIX_AUXILIARY_OVERLAYS_ENV="$nix_auxiliary_overlays_json" \
 python3 - "$manifest" "$archive" "$archive_bytes" <<PY
 import json
 import os
@@ -483,6 +534,7 @@ archive_bytes = int(archive_bytes_raw) if archive_bytes_raw else None
 nix_derived_hashes = json.loads(os.environ.get("NIX_DERIVED_HASHES_ENV", "{}"))
 source_metadata = json.loads(os.environ.get("NIX_SOURCE_METADATA_ENV", "{}") or "{}")
 source_args = json.loads(os.environ.get("NIX_SOURCE_ARGS_ENV", "{}") or "{}")
+auxiliary_overlays = json.loads(os.environ.get("NIX_AUXILIARY_OVERLAYS_ENV", "[]") or "[]")
 
 manifest = {
     "service": "$service",
@@ -514,6 +566,7 @@ manifest = {
     "host_nix_system": "$host_nix_system",
     "nix_package_overlay": "$NIX_PACKAGE_OVERLAY",
     "nix_package_overlay_dest": "$NIX_PACKAGE_OVERLAY_DEST",
+    "nix_auxiliary_overlays": auxiliary_overlays,
     "nix_derived_hashes": nix_derived_hashes,
     "mix_deps_hash": nix_derived_hashes.get("mix_deps_hash"),
     "nix_copy_paths": ${NIX_COPY_PATHS_JSON:-[]},

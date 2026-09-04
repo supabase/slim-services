@@ -95,12 +95,17 @@ Linux. It is a glibc-based Linux ARM64 artifact validated against the chosen
 Distroless base.
 
 That contract now has a number: shipped ELFs may reference at most
-`GLIBC_2.39` (the floor of the shared nixpkgs pin's toolchain output — e.g.
-the BEAM services' bundled libsystemd requires exactly 2.39).
+`GLIBC_2.35` from the host. Bundled-glibc artifacts are hermetic and instead
+prove their matching loader/libc pair with the floor-container execution
+check.
 `scripts/os-floor.sh --linux` measures it, the portable audit gates it, and
 `scripts/floor-check-linux.sh` proves it by executing the launcher inside
-ubuntu:24.04. Raising the shared pin can raise this floor silently — the gate
-exists to catch exactly that.
+ubuntu:22.04. Raising the shared pin can raise this floor silently — the gate
+exists to catch exactly that; artifacts that carry their own glibc bypass the
+host ceiling only after the bundled loader resolves every audited ELF.
+The generic audit proves this loader/libc closure; each service recipe remains
+responsible for its relocatable launcher, which `FLOOR_CHECK_CMD` executes at
+the Jammy floor.
 
 For Edge Runtime, we intentionally excluded core system libraries:
 

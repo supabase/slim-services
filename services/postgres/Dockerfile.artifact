@@ -20,6 +20,7 @@ COPY ${SOURCE_DIR}/ ./
 # the same through a temporary source export; the Docker runner must do it
 # here).
 COPY services/postgres/nix/packages/ nix/packages/
+COPY nix/portable-postgres/ nix/portable-postgres/
 # The submodule's .git pointer references the host worktree; drop it so the
 # flake is used as a plain path.
 RUN rm -rf .git

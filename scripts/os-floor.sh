@@ -18,7 +18,9 @@ across every ELF in ROOTFS, read from the .gnu.version_r (Verneed) tables —
 the exact contract the dynamic loader enforces at exec time. Files that are
 themselves part of a bundled glibc (libc.so*, ld-linux*, libm.so*, ...) are
 excluded from the floor: they are the bundle, not consumers of host glibc.
-bundled_glibc reports whether the rootfs ships its own libc + loader pair.
+When a valid executable loader and matching libc pair is bundled, floor and
+offender are null because the artifact does not consume the host glibc;
+bundled_glibc reports that hermetic contract.
 
 --darwin reports the highest Mach-O deployment target (LC_BUILD_VERSION
 minos, or legacy LC_VERSION_MIN_MACOSX version) across ROOTFS. Requires
@@ -116,8 +118,39 @@ def vkey(v):
 floor = None
 offender = None
 scanned = 0
-saw_libc = False
-saw_loader = False
+libc_candidates = []
+loader_candidates = []
+
+
+def elf_machine(data):
+    """Return the ELF machine id for a 64-bit little-endian ELF."""
+    if len(data) < 20 or data[:4] != b"\x7fELF" or data[4] != 2 or data[5] != 1:
+        return None
+    return struct.unpack_from("<H", data, 18)[0]
+
+
+def has_common_library_root(loader_path, libc_path):
+    """Match canonical /lib{,64} and multiarch sibling library layouts."""
+    loader_dir = os.path.dirname(loader_path)
+    libc_dir = os.path.dirname(libc_path)
+    if loader_dir == libc_dir:
+        return True
+    loader_parts = os.path.relpath(loader_dir, rootfs).split(os.sep)
+    libc_parts = os.path.relpath(libc_dir, rootfs).split(os.sep)
+    if len(loader_parts) < 1 or len(libc_parts) < 1:
+        return False
+    # A canonical loader may live in lib64 while libc is in lib (or vice
+    # versa), including a Debian-style multiarch libc below either directory.
+    canonical_dirs = {"lib", "lib64"}
+    if loader_parts[0] not in canonical_dirs:
+        return False
+    if len(libc_parts) == 1:
+        return libc_parts[0] in canonical_dirs
+    return (
+        len(libc_parts) == 2
+        and libc_parts[0] in {"lib", "usr"}
+        and libc_parts[1].endswith("-linux-gnu")
+    )
 
 for dirpath, _dirs, files in os.walk(rootfs):
     for fname in files:
@@ -131,10 +164,11 @@ for dirpath, _dirs, files in os.walk(rootfs):
         except OSError:
             continue
         scanned += 1
-        if fname.startswith("libc.so"):
-            saw_libc = True
-        if fname.startswith("ld-linux"):
-            saw_loader = True
+        machine = elf_machine(data)
+        if fname == "libc.so.6" and machine is not None:
+            libc_candidates.append((path, machine))
+        if fname.startswith("ld-linux") and machine is not None and os.access(path, os.X_OK):
+            loader_candidates.append((path, machine))
         if GLIBC_OWN.match(fname):
             continue
         # A malformed/truncated ELF must never crash the scan; treat it as
@@ -154,12 +188,25 @@ for dirpath, _dirs, files in os.walk(rootfs):
         except (struct.error, ValueError, IndexError):
             continue
 
+bundled_glibc = any(
+    loader_machine == libc_machine
+    and has_common_library_root(loader_path, libc_path)
+    for loader_path, loader_machine in loader_candidates
+    for libc_path, libc_machine in libc_candidates
+)
+if bundled_glibc:
+    # The Verneed values above describe consumers of the bundled libc, not
+    # requirements imposed on the host. The host-floor field is therefore
+    # intentionally absent for a hermetic artifact.
+    floor = None
+    offender = None
+
 print(json.dumps({
     "kind": "glibc",
     "floor": floor,
     "offender": offender,
     "scanned": scanned,
-    "bundled_glibc": bool(saw_libc and saw_loader),
+    "bundled_glibc": bundled_glibc,
 }))
 PY
     ;;

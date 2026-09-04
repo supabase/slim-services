@@ -1,7 +1,8 @@
 # glibc runtime side-data design
 
-Date: 2026-07-09. This document records the decisions behind the current
-portable glibc runtime layout.
+Date: 2026-07-09 (original investigation). This document preserves the
+evidence and decisions behind the original portable glibc runtime layout;
+the current contract is recorded below.
 
 ## Goal
 
@@ -11,7 +12,27 @@ or loud, or the data must be bundled. Bundling is a last resort — only for dat
 that is genuinely absent on floor-compliant hosts and has no glibc-version
 coupling.
 
-## Evidence (empirical, reproducible)
+## Current runtime decision (2026-09-04)
+
+The supported Linux host floor is now Ubuntu 22.04 with glibc 2.35. The
+Ubuntu 24.04/glibc 2.39 material below is retained as the original
+2026-07-09 investigation and is historical evidence, not the current floor.
+
+Services that consume host glibc are checked against the 2.35 floor:
+edge-runtime and Mailpit. Auth is statically linked and Vector is musl.
+Postgres, imgproxy, the BEAM trio (realtime, pooler, analytics), and the Node
+services (storage, pgmeta, Studio) bundle a matched loader+glibc runtime;
+PostgREST does so on its dynamic Linux path (its amd64 static path needs no
+glibc). Their launchers select the artifact-owned loader and libc, so those
+services do not consume the host glibc version and are proven in an Ubuntu
+22.04 floor image. Bundled runtimes carry matching NSS/gconv/locale pieces as
+needed by their libc; host-glibc artifacts continue to use host side data.
+
+The sections headed “Original” below preserve the dated Ubuntu 24.04 tests,
+measurements, and decisions that led to this layout. Where they describe a
+former host-glibc-only design, the current decision above takes precedence.
+
+## Original evidence (empirical, reproducible; Ubuntu 24.04, 2026-07-09)
 
 All verified on bare `ubuntu:24.04` (glibc 2.39-0ubuntu8.7 — exactly the Linux
 floor and the floor-check image):
@@ -48,7 +69,7 @@ Corrections to the handoff's premises, established from the tree:
 - Postgrest (linux-arm64, `SPLIT_BUNDLED_GLIBC`) is the only bundled-glibc
   artifact and already carries `libnss_*` in the split glibc family.
 
-## Decisions (user-approved)
+## Original decisions (user-approved; 2026-07-09)
 
 1. **No NSS bundling anywhere.** Built into libc at the floor; bundling
    nix-built modules for the *host* libc to dlopen would add cross-glibc
@@ -67,7 +88,7 @@ Corrections to the handoff's premises, established from the tree:
    without a NIF), Node uses ICU, PG uses its own conversion tables, GHC's
    default UTF-8 path uses libc built-in conversions.
 
-## Design
+## Original design (2026-07-09)
 
 ### 1. tzdata + TZDIR for the BEAM trio
 
@@ -142,7 +163,7 @@ CLI — per the standing decision.
   ignores `LOCALE_ARCHIVE` (Nix patch) and `LOCPATH` can't read archives;
   Erlang never calls glibc iconv.
 
-## Validation
+## Original validation (2026-07-09)
 
 - BEAM trio: build linux-arm64 artifacts locally (docker nix path) and run
   `scripts/floor-check-linux.sh` — must prove resolution + TZ delta with the
@@ -163,7 +184,7 @@ CLI — per the standing decision.
 - `bash -n` every touched script; bash-3.2 rules apply to anything CI runs on
   macOS.
 
-## Non-goals
+## Original non-goals (2026-07-09)
 
 - NSS/locale bundling (evidence-based; see Decisions). gconv: revised for
   postgrest only — its artifact ships the source image's own gconv modules
@@ -172,7 +193,7 @@ CLI — per the standing decision.
 - Darwin side-data work, musl targets, studio (standing non-goals).
 - BEAM floor 2.39 → 2.38 (that is PR 3).
 
-## Sweep results (2026-07-09)
+## Original sweep results (2026-07-09; Ubuntu 24.04)
 
 Ran the verification sweep from Design §3 against the four linux-arm64 rootfs
 trees available (`artifacts/{pooler,realtime,analytics,postgrest}/*/linux-arm64/rootfs`;
@@ -314,7 +335,7 @@ Nix expression but unwired (no `LOCALE_ARCHIVE`/`LOCPATH` env anywhere under
 - Postgres needs nothing further: it owns its own tzdata and never wires
   `glibcLocalesMinimal` into anything glibc would read.
 
-## Risks
+## Original risks (2026-07-09)
 
 - Erlang `native` lookup assumption: `:inet.gethostbyname` must go through
   getaddrinfo. No `ERL_INETRC` exists in these releases; verified at execution

@@ -321,7 +321,17 @@ a host process (with runtime.env applied), audit clean, and record runtime
 metrics in the manifest — then untar the archive into a scratch directory and
 run the same smoke against it to prove relocatability.
 
-## Host Floor Contract (2026-07)
+## Historical Host Floor Contract (2026-07; superseded)
+
+> **Superseded by the 2026-09 Ubuntu 22.04 runtime update.** The historical
+> contract below recorded a glibc 2.39 / Ubuntu 24.04 floor before the native
+> Linux runtimes were made portable. The current contract is glibc 2.35 /
+> Ubuntu 22.04: edge-runtime and Mailpit consume host glibc and therefore use
+> that floor; Postgres, PostgREST (dynamic Linux builds), imgproxy, the BEAM
+> trio, and the Node services bundle a matched loader+glibc runtime and are
+> verified in Ubuntu 22.04. Auth is static and Vector is musl. The 2.39 text
+> that follows is retained as dated implementation history, not as a current
+> host requirement.
 
 Decision: archives must be as portable as possible out of the box — no
 CLI-side relocation/patching. Since an ELF interpreter path is absolute and

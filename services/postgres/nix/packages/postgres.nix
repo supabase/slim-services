@@ -313,9 +313,10 @@
         };
       };
 
-      # PG15 portable output is owned by this overlay. The pinned source's
-      # default module still exports the repo-owned, Nix-built PG17 portable
-      # artifact through its historical `psql_17_cli` call.
+      # PG15 portable output is added by this overlay. The pinned source's
+      # default package module already exports psql_17_cli_portable; because
+      # this overlay replaces its postgres-portable.nix, both major paths use
+      # the same matched-loader/glibc fixup.
       portablePackages = {
         psql_15_cli_portable = pkgs.callPackage ./postgres-portable.nix {
           psql_cli = cliPackages.psql_15_cli;
