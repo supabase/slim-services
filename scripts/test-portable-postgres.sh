@@ -400,8 +400,16 @@ class PortablePostgresLauncherTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         trace_text = trace.read_text(encoding="utf-8") if trace.exists() else ""
         self.assertIn(f"strip --strip-unneeded {nested_extension}", trace_text)
-        self.assertIn(f"patchelf --set-rpath", trace_text)
+        self.assertIn(
+            f"patchelf --set-rpath $ORIGIN/.. {nested_extension}", trace_text
+        )
         self.assertIn(f"audit {nested_extension}", trace_text)
+        self.assertNotIn(
+            f"strip --strip-unneeded {rootfs / 'lib' / 'libc.so.6'}", trace_text
+        )
+        self.assertNotIn(
+            f"audit {rootfs / 'lib' / 'ld-linux-x86-64.so.2'}", trace_text
+        )
 
     def test_entrypoint_fixup_executable_seam_creates_public_launchers(self):
         rootfs = self.temp / "entrypoint-rootfs"

@@ -486,14 +486,17 @@ in (import ./nix/portable-node/default.nix { pkgs = fakePkgs; nodeMajor = 24; })
         public_wrapper = image_root / "node" / "bin" / "node"
         worker_code = (
             "const { Worker } = require('node:worker_threads');\n"
+            "let received = false;\n"
             "const worker = new Worker(\"const { parentPort } = require('node:worker_threads'); parentPort.postMessage({ execPath: process.execPath, argv0: process.argv[0] });\", { eval: true });\n"
             "worker.once('message', ({ execPath, argv0 }) => {\n"
+            "  received = true;\n"
             "  if (execPath !== process.env.EXPECTED_WRAPPER || argv0 !== process.env.EXPECTED_WRAPPER) {\n"
             "    console.error(JSON.stringify({ execPath, argv0, expected: process.env.EXPECTED_WRAPPER }));\n"
             "    process.exitCode = 2;\n"
             "  }\n"
             "});\n"
             "worker.once('error', (error) => { console.error(error.stack || error.message); process.exitCode = 3; });\n"
+            "process.on('exit', () => { if (!received && !process.exitCode) process.exitCode = 4; });\n"
         )
         # Keep --require in process.execArgv: worker_threads inherits it, so
         # the preload applies the same wrapper identity inside worker code.
