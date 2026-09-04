@@ -5,7 +5,8 @@ FROM debian:trixie-slim AS tools
 RUN apt-get update -y && apt-get install -y --no-install-recommends busybox \
   && mkdir -p /out/usr/bin \
   && cp /usr/bin/busybox /out/usr/bin/busybox \
-  && for applet in sh wget; do ln -sf busybox "/out/usr/bin/${applet}"; done
+  && for applet in sh wget; do ln -sf busybox "/out/usr/bin/${applet}"; done \
+  && ln -s /slim-runtime/node /out/node
 
 FROM ${BASE_IMAGE}
 ARG ARTIFACT_ROOT
@@ -15,7 +16,8 @@ ENV NODE_ENV=production \
     PATH="/node/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 COPY --from=tools /out/ /
 COPY ${ARTIFACT_ROOT}/app/ /app/
-COPY ${ARTIFACT_ROOT}/node/ /node/
+COPY ${ARTIFACT_ROOT}/node/ /slim-runtime/node/
+COPY ${ARTIFACT_ROOT}/lib/ /slim-runtime/lib/
 EXPOSE 3000
 # Next's standalone server.js binds to $HOSTNAME, and Docker injects the
 # container ID as HOSTNAME, so without this the server listens only on the

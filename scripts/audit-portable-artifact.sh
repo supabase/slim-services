@@ -12,7 +12,7 @@ Usage:
   scripts/audit-portable-artifact.sh --linux ROOTFS
 
 Fail if a portable artifact still has unresolved or host-specific runtime
-deps, ships an ELF with a non-standard program interpreter, or exceeds the
+deps, ships a non-glibc consumer ELF with a non-standard program interpreter, or exceeds the
 OS floor policy (glibc 2.35 on Linux, macOS 14.0 on darwin; override with
 GLIBC_FLOOR_MAX / MACOS_FLOOR_MAX or SLIM_GLIBC_FLOOR_MAX /
 SLIM_MACOS_FLOOR_MAX).
@@ -268,15 +268,34 @@ PY
       printf '%s\n' "$unresolved" >&2
       fail "Linux artifact has unresolved shared-library dependencies"
     fi
-    # Every ELF must request the standard system loader for the target arch.
-    # Anything else — a /nix/store loader (build-machine leak, resolves only
-    # where that store exists) or a musl loader on a glibc target — breaks
-    # the moment the archive lands on a clean host. (Real leak class seen:
-    # a bundled Nix store subtree whose ELFs kept their store interpreters.)
+    # Every non-glibc consumer ELF must request the standard system loader for
+    # the target arch. Bundled glibc implementation objects retain their own
+    # interpreter metadata and are entered through the validated paired
+    # loader above. Anything else — a /nix/store loader (build-machine leak,
+    # resolves only where that store exists) or a musl loader on a glibc target
+    # — breaks the moment the archive lands on a clean host. (Real leak class
+    # seen: a bundled Nix store subtree whose consumer ELFs kept their store
+    # interpreters.)
+    is_bundled_glibc_object() {
+      local file_path="$1"
+      local file_name="${file_path##*/}"
+      [[ -n "$bundled_lib_path" && "$file_path" == "$bundled_lib_path/"* ]] || return 1
+      case "$file_name" in
+        ld-linux*.so*|libc.so.6|libc-*.so.*|libm.so.6|libm-*.so.*|libmvec.so.1|libmvec-*.so.*|libpthread.so.0|libpthread-*.so.*|libdl.so.2|libdl-*.so.*|libresolv.so.2|libresolv-*.so.*|librt.so.1|librt-*.so.*|libutil.so.1|libutil-*.so.*|libanl.so.1|libanl-*.so.*|libBrokenLocale.so.1|libBrokenLocale-*.so.*|libthread_db.so.1|libthread_db-*.so.*|libnss_*.so.*|libnsl.so.1|libnsl-*.so.*)
+          return 0
+          ;;
+        *)
+          return 1
+          ;;
+      esac
+    }
     bad_interps="$(
       find "$rootfs" -type f 2>/dev/null \
         | while IFS= read -r file_path; do
             if file "$file_path" | grep -q 'ELF'; then
+              if is_bundled_glibc_object "$file_path"; then
+                continue
+              fi
               readelf -l "$file_path" 2>/dev/null \
                 | awk -v file="$file_path" -v ok="$allowed_interp" '
                     /Requesting program interpreter/ {

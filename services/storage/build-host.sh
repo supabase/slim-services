@@ -88,8 +88,19 @@ log "bundling portable node runtime (nix/portable-node)"
 export SLIM_NODE_MAJOR="$node_major"
 node_bundle="$(nixpkgs_build_file "$ROOT_DIR/nix/portable-node/default.nix")"
 mkdir -p "$ROOTFS/node"
-cp -R "$node_bundle"/. "$ROOTFS/node/"
+cp -R "$node_bundle/node"/. "$ROOTFS/node/"
+if [[ "$TARGET_OS" == "linux" ]]; then
+  mkdir -p "$ROOTFS/lib"
+  cp -R "$node_bundle/lib"/. "$ROOTFS/lib/"
+fi
+if [[ -d "$node_bundle/share/licenses" ]]; then
+  mkdir -p "$ROOTFS/share/licenses"
+  cp -R "$node_bundle/share/licenses"/. "$ROOTFS/share/licenses/"
+fi
 chmod -R u+w "$ROOTFS/node"
+if [[ "$TARGET_OS" == "linux" ]]; then
+  chmod -R u+w "$ROOTFS/lib"
+fi
 if [[ "$TARGET_OS" == "darwin" ]]; then
   # Nix sandbox codesigning can emit signatures that fail OFF the build
   # machine (the libiconv incident); verify and repair with the host's real

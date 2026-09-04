@@ -13,6 +13,7 @@ RUN apt-get update -y && apt-get install -y --no-install-recommends busybox \
   && mkdir -p /out/usr/bin /out/usr/local/bin \
   && cp /usr/bin/busybox /out/usr/bin/busybox \
   && for applet in sh wget mkdir chown chmod stat; do ln -sf busybox "/out/usr/bin/${applet}"; done \
+  && ln -s /slim-runtime/node /out/node \
   && printf 'set -e\nmkdir -p /mnt\nchown %s:%s /mnt\nchmod %s /mnt\n' \
     "$DROP_TO_UID" "$DROP_TO_GID" "$VOLUME_MODE" \
     > /out/usr/local/bin/fix-mnt-mode \
@@ -26,7 +27,8 @@ WORKDIR /app
 ENV NODE_ENV=production \
     PATH="/node/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 COPY ${ARTIFACT_ROOT}/app/ /app/
-COPY ${ARTIFACT_ROOT}/node/ /node/
+COPY ${ARTIFACT_ROOT}/node/ /slim-runtime/node/
+COPY ${ARTIFACT_ROOT}/lib/ /slim-runtime/lib/
 EXPOSE 5000
 # Exec-form probe — Docker uses it when the stack omits --health-cmd; node -e
 # reads process.env (same SERVER_PORT → PORT order as storage-api's config),

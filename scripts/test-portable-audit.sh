@@ -58,7 +58,15 @@ class PortableAuditTest(unittest.TestCase):
             "#!/usr/bin/env bash\n"
             "case $1 in\n"
             "  -d) exit 0 ;;\n"
-            "  -l) printf '%s\\n' '      [Requesting program interpreter: /lib64/ld-linux-x86-64.so.2]' ;;\n"
+            "  -l)\n"
+            "    readelf_target=\"${2:-}\"\n"
+            "    readelf_name=\"${readelf_target##*/}\"\n"
+            "    if [[ \"${FAKE_NIX_INTERP:-0}\" == 1 && ( \"$readelf_name\" == libc.so.6 || \"$readelf_name\" == consumer ) ]]; then\n"
+            "      printf '%s\\n' '      [Requesting program interpreter: /nix/store/glibc-2.40/lib/ld-linux-x86-64.so.2]'\n"
+            "    else\n"
+            "      printf '%s\\n' '      [Requesting program interpreter: /lib64/ld-linux-x86-64.so.2]'\n"
+            "    fi\n"
+            "    ;;\n"
             "esac\n",
             encoding="utf-8",
         )
@@ -118,6 +126,7 @@ class PortableAuditTest(unittest.TestCase):
         floor_json=None,
         loader_layout="canonical",
         paired_libc=True,
+        nix_interpreter=False,
     ):
         loader = self.loader_path(loader_layout)
         if bundled:
@@ -128,6 +137,8 @@ class PortableAuditTest(unittest.TestCase):
             loader.unlink(missing_ok=True)
         if floor_json is not None:
             result_env["FAKE_FLOOR_JSON"] = floor_json
+        if nix_interpreter:
+            result_env["FAKE_NIX_INTERP"] = "1"
         return subprocess.run(
             ["bash", str(self.audit_root / "audit-portable-artifact.sh"), "--linux", str(self.rootfs)],
             cwd=ROOT_DIR,
@@ -146,6 +157,17 @@ class PortableAuditTest(unittest.TestCase):
         self.assertNotIn("ldd", trace)
         self.assertIn("--library-path", trace)
         self.assertIn("--list", trace)
+
+    def test_bundled_glibc_object_may_keep_nix_interpreter(self):
+        result = self.run_audit(nix_interpreter=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_non_glibc_consumer_with_nix_interpreter_is_rejected(self):
+        (self.rootfs / "bin" / "consumer").write_text("fixture", encoding="utf-8")
+        result = self.run_audit(nix_interpreter=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("consumer", result.stderr)
+        self.assertIn("non-standard program interpreters", result.stderr)
 
     def test_bundled_loader_failure_is_loud(self):
         (self.rootfs / "bin" / "app").write_text("fixture", encoding="utf-8")
