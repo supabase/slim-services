@@ -302,13 +302,18 @@ if [[ "$resolved_nix_runner" == "local" && "$needs_local_overlay" == "true" && "
       cp "$overlay_abs" "$build_src/$NIX_PACKAGE_OVERLAY_DEST"
     fi
   fi
-  for auxiliary_overlay in "${nix_auxiliary_overlays[@]}"; do
-    if [[ "$auxiliary_overlay" == *:* ]]; then
-      apply_nix_overlay "${auxiliary_overlay%%:*}" "${auxiliary_overlay#*:}"
-    else
-      apply_nix_overlay "$auxiliary_overlay" "nix/$(basename "$auxiliary_overlay")"
-    fi
-  done
+  # Bash 3 (the system shell on macOS runners) raises an unbound-variable
+  # error when expanding an empty array under `set -u`. Guard the expansion
+  # so recipes with only a package overlay can still use the local export path.
+  if ((${#nix_auxiliary_overlays[@]} > 0)); then
+    for auxiliary_overlay in "${nix_auxiliary_overlays[@]}"; do
+      if [[ "$auxiliary_overlay" == *:* ]]; then
+        apply_nix_overlay "${auxiliary_overlay%%:*}" "${auxiliary_overlay#*:}"
+      else
+        apply_nix_overlay "$auxiliary_overlay" "nix/$(basename "$auxiliary_overlay")"
+      fi
+    done
+  fi
   nix_flake_for_build="$build_src"
 fi
 

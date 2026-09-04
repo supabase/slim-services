@@ -352,6 +352,125 @@ tar -xOf "$1" "$notice_member" > "$2"
         )
         self.assertEqual(manifest["nix_auxiliary_overlays"], ["nix/portable-beam:nix/portable-beam"])
 
+    def test_local_package_overlay_skips_empty_auxiliary_array_under_nounset(self):
+        """Exercise local export with a package overlay and no auxiliary array."""
+        fixture_root = self.temp / "local-empty-aux-repo"
+        (fixture_root / "scripts").mkdir(parents=True)
+        for name in (
+            "build-artifact-from-nix.sh",
+            "lib.sh",
+            "prune-runtime-tree.sh",
+            "generate-artifact-sbom.sh",
+            "generate-artifact-sbom.py",
+            "measure-artifact.sh",
+        ):
+            shutil.copy2(ROOT_DIR / "scripts" / name, fixture_root / "scripts" / name)
+        for name in ("LICENSE", "THIRD_PARTY_NOTICES.md"):
+            shutil.copy2(ROOT_DIR / name, fixture_root / name)
+
+        package_overlay = fixture_root / "nix" / "package-overlay"
+        package_overlay.mkdir(parents=True)
+        (package_overlay / "marker.txt").write_text("package overlay\n", encoding="utf-8")
+        service_dir = fixture_root / "services" / "vector"
+        service_dir.mkdir(parents=True)
+        (service_dir / "recipe.env").write_text(
+            'SOURCE_DIR="sources/vector"\n'
+            'SOURCE_REF="${SOURCE_REF:-fixture}"\n'
+            'ARTIFACT_BACKEND="nix"\n'
+            'BASE_IMAGE="scratch"\n'
+            "ENTRYPOINT_JSON='[]'\n"
+            "CMD_JSON='[]'\n"
+            'NIX_FLAKE="."\n'
+            'NIX_ATTR="fixture"\n'
+            'NIX_BUILD_MODE="nix-build"\n'
+            'NIX_EXPRESSION="."\n'
+            'NIX_RUNNER="${NIX_RUNNER:-auto}"\n'
+            'NIX_OUTPUT_KIND="rootfs"\n'
+            "NIX_COPY_PATHS_JSON='[]'\n"
+            'NIX_PACKAGE_OVERLAY="nix/package-overlay"\n'
+            'NIX_PACKAGE_OVERLAY_DEST="nix/package-overlay"\n'
+            'PORTABLE="true"\n',
+            encoding="utf-8",
+        )
+
+        source_dir = fixture_root / "sources" / "vector"
+        source_dir.mkdir(parents=True)
+        (source_dir / "fixture.txt").write_text("source fixture\n", encoding="utf-8")
+        subprocess.run(["git", "init", "-q"], cwd=source_dir, check=True)
+        subprocess.run(["git", "config", "user.email", "fixture@example.invalid"], cwd=source_dir, check=True)
+        subprocess.run(["git", "config", "user.name", "Empty Auxiliary Fixture"], cwd=source_dir, check=True)
+        subprocess.run(["git", "add", "fixture.txt"], cwd=source_dir, check=True)
+        subprocess.run(["git", "commit", "-qm", "fixture"], cwd=source_dir, check=True)
+        source_ref = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=source_dir, text=True
+        ).strip()
+
+        fake_bin = fixture_root / "fake-bin"
+        fake_bin.mkdir()
+        nix = fake_bin / "nix"
+        nix.write_text(
+            "#!/usr/bin/env bash\n"
+            "if [[ ${1:-} == eval ]]; then printf '%s\\n' aarch64-darwin; exit 0; fi\n"
+            "exit 1\n",
+            encoding="utf-8",
+        )
+        nix_build = fake_bin / "nix-build"
+        nix_build.write_text(
+            "#!/usr/bin/env bash\n"
+            "set -euo pipefail\n"
+            'build_root="${1:?missing build root}"\n'
+            '[ -f "$build_root/nix/package-overlay/marker.txt" ]\n'
+            'out=""\n'
+            'while [[ $# -gt 0 ]]; do\n'
+            '  if [[ $1 == --out-link ]]; then out=$2; shift 2; else shift; fi\n'
+            'done\n'
+            '[[ -n "$out" ]]\n'
+            'mkdir -p "$out/bin"\n'
+            "printf 'fixture\\n' > \"$out/bin/vector\"\n"
+            'chmod 0755 "$out/bin/vector"\n',
+            encoding="utf-8",
+        )
+        for command in (nix, nix_build):
+            command.chmod(0o755)
+        bash_env = fixture_root / "bash-env"
+        bash_env.write_text(
+            "nix() {\n"
+            "  if [[ ${1:-} == eval ]]; then printf '%s\\n' aarch64-darwin; return 0; fi\n"
+            "  return 1\n"
+            "}\n"
+            'nix-build() { "$FAKE_NIX_BUILD" "$@"; }\n',
+            encoding="utf-8",
+        )
+
+        version = f"local-empty-aux-{os.getpid()}"
+        environment = {
+            **os.environ,
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "BASH_ENV": str(bash_env),
+            "FAKE_NIX_BUILD": str(nix_build),
+            "SOURCE_REF": source_ref,
+            "TARGET_OS": "darwin",
+            "ARCH": "arm64",
+            "NIX_RUNNER": "local",
+            "ARTIFACT_ARCHIVE_ON_BUILD": "0",
+        }
+        environment.pop("NIX_AUXILIARY_OVERLAYS", None)
+        result = subprocess.run(
+            ["bash", str(fixture_root / "scripts" / "build-artifact-from-nix.sh"), "vector", version],
+            cwd=fixture_root,
+            env=environment,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        manifest = json.loads(
+            (fixture_root / "artifacts" / "vector" / version / "darwin-arm64" / "manifest.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(manifest["nix_auxiliary_overlays"], [])
+
     def test_fixup_generates_nested_launcher_with_artifact_root(self):
         """Run the shared fixup seam and execute its generated ERTS wrapper."""
         rootfs = self.temp / "generated-rootfs"
