@@ -111,10 +111,14 @@ recorded in the manifest). Local rebuilds can preview table changes with
 `scripts/update-results-tables.sh --host-native-only` (darwin) or `--merge`;
 published release manifests remain the source of truth for this snapshot.
 
-Linux archives are glibc artifacts with a measured, CI-gated host floor
-(glibc >= 2.39: Ubuntu 24.04+, Debian 13+, Fedora 40+ — see CI_MATRIX.md);
-macOS archives require macOS 14+. The manifest records the exact floor as
-`os_floor`.
+Linux archives share a measured, CI-gated Ubuntu 22.04/glibc 2.35 floor (see
+CI_MATRIX.md); macOS archives require macOS 14+. Artifacts that consume host
+glibc (currently edge-runtime and Mailpit) are checked against that floor.
+Postgres, PostgREST (dynamic Linux builds), imgproxy, the BEAM trio, and the
+Node services (storage, pgmeta, and Studio) carry a matched loader+glibc
+runtime and are proven in Ubuntu 22.04, so their execution does not depend on
+the host glibc version. Auth is statically linked and Vector uses musl. The
+manifest records the applicable floor as `os_floor`.
 
 <!-- generated:host-native:begin -->
 | Service | Version | Archive | rootfs | Idle RSS | Idle CPU | Portable | Sources |
