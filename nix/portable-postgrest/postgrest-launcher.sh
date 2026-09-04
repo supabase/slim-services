@@ -1,4 +1,4 @@
-#!/usr/bin/sh
+#!/bin/sh
 set -eu
 
 # A generated wrapper lives beside the real PostgREST ELF.  Resolve the

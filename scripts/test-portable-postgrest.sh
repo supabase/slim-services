@@ -80,7 +80,10 @@ class PortablePostgrestFixupTest(unittest.TestCase):
             "LOCALE_ARCHIVE": "/host/locale-archive",
         }
         wrapper = root / "bin" / "postgrest"
-        command = [str(wrapper)] if pathlib.Path("/usr/bin/sh").exists() else ["/bin/sh", str(wrapper)]
+        # Execute the generated file directly so its /bin/sh shebang is part
+        # of the host portability contract; never mask a missing image shell
+        # by selecting another host path.
+        command = [str(wrapper)]
         return subprocess.run(
             [*command, "--example"],
             cwd=ROOT_DIR,
@@ -143,6 +146,25 @@ class PortablePostgrestFixupTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(binary.read_bytes(), before)
         self.assertFalse((self.rootfs / "bin" / ".postgrest-portable-real").exists())
+
+    def test_scratch_image_stages_the_static_shell_used_by_launcher(self):
+        dockerfile = (ROOT_DIR / "services" / "postgrest" / "Dockerfile.slim").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("FROM busybox:1.36.1-musl AS busybox", dockerfile)
+        self.assertIn("COPY --from=busybox /bin/busybox /tmp/busybox", dockerfile)
+        self.assertIn("ln -sf busybox /out/bin/sh", dockerfile)
+        self.assertIn("COPY --from=shell /out/ /", dockerfile)
+        self.assertEqual(LAUNCHER.read_text(encoding="utf-8").splitlines()[0], "#!/bin/sh")
+
+    def test_recipe_carries_nss_modules_for_both_linux_multiarch_layouts(self):
+        recipe = (ROOT_DIR / "services" / "postgrest" / "recipe.env").read_text(
+            encoding="utf-8"
+        )
+        for prefix in ("aarch64-linux-gnu", "x86_64-linux-gnu"):
+            for base in ("/lib", "/usr/lib"):
+                for module in ("libnss_dns.so.2", "libnss_files.so.2"):
+                    self.assertIn(f'"{base}/{prefix}/{module}"', recipe)
 
     def test_image_builder_invokes_real_postprocess_hook(self):
         fixture_bin = TRUE_BIN

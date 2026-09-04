@@ -38,7 +38,7 @@ if [[ ! -x "$loader" ]]; then
   loader=""
   while IFS= read -r candidate; do
     if [[ -x "$candidate" ]]; then loader="$candidate"; break; fi
-  done < <(find "$rootfs" -type f -name "$loader_name" -print 2>/dev/null)
+  done < <(find "$rootfs" \( -type f -o -type l \) -name "$loader_name" -print 2>/dev/null)
 fi
 [[ -n "$loader" ]] || { echo "portable-postgrest: bundled loader not found: $loader_name" >&2; exit 1; }
 loader_rel="$(python3 -c 'import os,sys; print(os.path.relpath(sys.argv[1], sys.argv[2]))' "$loader" "$rootfs")"
