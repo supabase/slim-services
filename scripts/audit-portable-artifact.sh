@@ -114,6 +114,11 @@ PY
     for dir in "$rootfs"/lib/*-linux-gnu* "$rootfs"/usr/lib/*-linux-gnu*; do
       [[ -d "$dir" ]] && lib_path="$lib_path:$dir"
     done
+    # Service-native addons may be staged in these artifact-owned closure
+    # directories. Include only directories that exist; never add host paths.
+    for dir in "$rootfs/dylib" "$rootfs/node/dylib"; do
+      [[ -d "$dir" ]] && lib_path="$lib_path:$dir"
+    done
     canonical_loaders=()
     canonical_loader_ids=()
     for candidate in "$rootfs$allowed_interp" "$rootfs/lib/$loader_name"; do

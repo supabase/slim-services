@@ -158,6 +158,26 @@ class PortableAuditTest(unittest.TestCase):
         self.assertIn("--library-path", trace)
         self.assertIn("--list", trace)
 
+    def test_bundled_loader_library_path_includes_nested_artifact_dylibs(self):
+        (self.rootfs / "bin" / "app").write_text("fixture", encoding="utf-8")
+        (self.rootfs / "dylib").mkdir()
+        (self.rootfs / "node" / "dylib").mkdir(parents=True)
+        (self.fake_bin / "ldd").unlink()
+        result = self.run_audit()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        trace = self.trace.read_text(encoding="utf-8")
+        self.assertIn(str(self.rootfs / "dylib"), trace)
+        self.assertIn(str(self.rootfs / "node" / "dylib"), trace)
+
+    def test_bundled_loader_library_path_omits_absent_nested_dylibs(self):
+        (self.rootfs / "bin" / "app").write_text("fixture", encoding="utf-8")
+        (self.fake_bin / "ldd").unlink()
+        result = self.run_audit()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        trace = self.trace.read_text(encoding="utf-8")
+        self.assertNotIn(str(self.rootfs / "dylib"), trace)
+        self.assertNotIn(str(self.rootfs / "node" / "dylib"), trace)
+
     def test_bundled_glibc_object_may_keep_nix_interpreter(self):
         result = self.run_audit(nix_interpreter=True)
         self.assertEqual(result.returncode, 0, result.stderr)
