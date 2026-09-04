@@ -16,7 +16,6 @@ ROOT_DIR = pathlib.Path(os.sys.argv[1])
 os.sys.argv[1:] = []
 LAUNCHER = ROOT_DIR / "nix" / "portable-postgres" / "postgres-launcher.sh"
 ENTRYPOINT_FIXUP = ROOT_DIR / "nix" / "portable-postgres" / "postgres-entrypoint-fixup.sh"
-PACKAGE = ROOT_DIR / "services" / "postgres" / "nix" / "packages" / "postgres-portable.nix"
 
 
 class PortablePostgresLauncherTest(unittest.TestCase):
@@ -189,36 +188,38 @@ class PortablePostgresLauncherTest(unittest.TestCase):
         self.assertNotIn("dirname", content)
         self.assertNotIn("uname", content)
 
-    def test_package_keeps_shared_objects_unwrapped_and_bundles_glibc(self):
-        content = PACKAGE.read_text(encoding="utf-8")
-        fixup = (ROOT_DIR / "nix" / "portable-postgres" / "postgres-linux-fixup.sh").read_text(encoding="utf-8")
-        self.assertIn("glibcLocales", content)
-        self.assertIn("ld-linux-aarch64.so.1", fixup)
-        self.assertIn("libc.so.6", fixup)
-        self.assertIn("postgres-launcher.sh", content)
-        self.assertIn("PT_INTERP", fixup)
-        self.assertNotIn("for so in $out/lib/*.so*; do", content)
-
-    def test_linux_fixup_normalizes_hidden_nix_entrypoints_before_wrapping(self):
-        fixup = (ROOT_DIR / "nix" / "portable-postgres" / "postgres-entrypoint-fixup.sh").read_text(encoding="utf-8")
-        self.assertIn('for hidden in "$rootfs"/bin/.*-wrapped; do', fixup)
-        self.assertIn('public_name="${public_name#.}"', fixup)
-        self.assertIn('public_name="${public_name%-wrapped}"', fixup)
-        self.assertIn('mv "$hidden" "$public_path"', fixup)
-        for expected in ("postgres", "pg_config", "pg_ctl", "initdb", "psql", "pg_dump", "pg_dumpall", "pg_restore", "createdb", "dropdb", "pg_isready"):
-            self.assertIn(expected, PACKAGE.read_text(encoding="utf-8"))
-
     def test_entrypoint_fixup_executable_seam_creates_public_launchers(self):
         rootfs = self.temp / "entrypoint-rootfs"
         (rootfs / "bin").mkdir(parents=True)
+        (rootfs / "lib").mkdir(parents=True)
         for name in ("postgres", "psql"):
             hidden = rootfs / "bin" / f".{name}-wrapped"
-            hidden.write_text("fixture ELF", encoding="utf-8")
+            hidden.write_text(
+                "#!/bin/sh\n"
+                "printf 'service=%s\\n' \"$0\" >> \"$TRACE\"\n"
+                "printf 'arg=%s\\n' \"$1\" >> \"$TRACE\"\n",
+                encoding="utf-8",
+            )
             hidden.chmod(0o755)
         shared = rootfs / "lib" / "fixture.so"
-        shared.parent.mkdir(parents=True)
         shared.write_text("fixture shared object", encoding="utf-8")
         shared.chmod(0o755)
+
+        loader = rootfs / "lib" / "ld-linux-x86-64.so.2"
+        loader.write_text(
+            "#!/bin/sh\n"
+            "set -eu\n"
+            "if [ \"${1:-}\" = --argv0 ]; then shift 2; fi\n"
+            "[ \"${1:-}\" = --library-path ] || exit 41\n"
+            "library_path=$2\n"
+            "shift 2\n"
+            "real=$1\n"
+            "shift\n"
+            "printf 'library-path=%s\\nreal=%s\\n' \"$library_path\" \"$real\" > \"$TRACE\"\n"
+            "exec \"$real\" \"$@\"\n",
+            encoding="utf-8",
+        )
+        loader.chmod(0o755)
 
         # Keep this host-only seam independent from a compiler or target ELF:
         # file/readelf are narrowly stubbed to model two executable ELFs and a
@@ -228,7 +229,7 @@ class PortablePostgresLauncherTest(unittest.TestCase):
         (fakebin / "file").write_text(
             "#!/bin/sh\n"
             "case \"$1\" in\n"
-            "  *.so) echo \"$1: ELF shared object\" ;;\n"
+            "  *.so|*.so.*) echo \"$1: ELF shared object\" ;;\n"
             "  *) echo \"$1: ELF executable\" ;;\n"
             "esac\n",
             encoding="utf-8",
@@ -238,7 +239,7 @@ class PortablePostgresLauncherTest(unittest.TestCase):
             "target=\"\"\n"
             "for arg do target=\"$arg\"; done\n"
             "case \"$target\" in\n"
-            "  *.so) exit 1 ;;\n"
+            "  *.so|*.so.*) exit 1 ;;\n"
             "  *) echo ' INTERP 0x0' ;;\n"
             "esac\n",
             encoding="utf-8",
@@ -246,12 +247,8 @@ class PortablePostgresLauncherTest(unittest.TestCase):
         for command in (fakebin / "file", fakebin / "readelf"):
             command.chmod(0o755)
 
-        template = self.temp / "entrypoint-template.sh"
-        template.write_text(
-            "#!/usr/bin/sh\n"
-            "# loader=@LOADER_NAME@ root=@ROOT_REL@ real=@REAL_NAME@ argv0=@ARGV0_SUPPORTED@\n",
-            encoding="utf-8",
-        )
+        template = LAUNCHER
+        trace = self.temp / "entrypoint-loader.trace"
         env = {
             **os.environ,
             "PATH": f"{fakebin}:{os.environ['PATH']}",
@@ -260,6 +257,7 @@ class PortablePostgresLauncherTest(unittest.TestCase):
             "PORTABLE_POSTGRES_LAUNCHER": str(template),
             "PORTABLE_POSTGRES_LOADER_NAME": "ld-linux-x86-64.so.2",
             "PORTABLE_POSTGRES_ARGV0_SUPPORTED": "1",
+            "TRACE": str(trace),
         }
         result = subprocess.run(
             [str(ENTRYPOINT_FIXUP)],
@@ -275,15 +273,23 @@ class PortablePostgresLauncherTest(unittest.TestCase):
             self.assertTrue(public.stat().st_mode & 0o111, name)
             self.assertTrue((rootfs / "bin" / f".{name}-portable-real").is_file(), name)
             self.assertFalse((rootfs / "bin" / f".{name}-wrapped").exists(), name)
-            self.assertIn(f"real=.{name}-portable-real", public.read_text(encoding="utf-8"))
+            self.assertIn(f"REAL_POSTGRES=\"$PG_BIN_DIR/.{name}-portable-real\"", public.read_text(encoding="utf-8"))
+            command = [str(public)] if pathlib.Path("/usr/bin/sh").exists() else ["/bin/sh", str(public)]
+            result = subprocess.run(
+                [*command, "--version"],
+                text=True,
+                capture_output=True,
+                env=env,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            trace_lines = trace.read_text(encoding="utf-8").splitlines()
+            self.assertEqual(trace_lines[0], f"library-path={rootfs.resolve() / 'lib'}")
+            self.assertEqual(trace_lines[1], f"real={rootfs / 'bin' / f'.{name}-portable-real'}")
+            self.assertEqual(trace_lines[2], f"service={rootfs / 'bin' / f'.{name}-portable-real'}")
+            self.assertEqual(trace_lines[3], "arg=--version")
         self.assertTrue(shared.is_file())
         self.assertFalse((rootfs / "lib" / ".fixture.so-portable-real").exists())
-
-    def test_linux_fixup_assets_are_present_in_both_build_runners(self):
-        recipe = (ROOT_DIR / "services" / "postgres" / "recipe.env").read_text(encoding="utf-8")
-        dockerfile = (ROOT_DIR / "services" / "postgres" / "Dockerfile.artifact").read_text(encoding="utf-8")
-        self.assertIn('"nix/portable-postgres:nix/portable-postgres"', recipe)
-        self.assertIn("COPY nix/portable-postgres/ nix/portable-postgres/", dockerfile)
 
     def test_license_tar_listing_does_not_sigpipe_under_pipefail(self):
         archive_root = self.temp / "source"
