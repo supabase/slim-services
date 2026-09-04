@@ -8,6 +8,11 @@ case "$0" in
   */*) PG_BIN_DIR="${0%/*}"; [ -n "$PG_BIN_DIR" ] || PG_BIN_DIR=/ ;;
   *) PG_BIN_DIR=. ;;
 esac
+# PostgreSQL derives its share/config paths from argv[0].  Resolve the
+# wrapper directory before constructing argv0 and the real executable path so
+# a launcher invoked as `./artifacts/.../bin/postgres` remains valid after the
+# server changes directory during startup.
+PG_BIN_DIR="$(CDPATH= cd "$PG_BIN_DIR" && pwd -P)"
 
 PG_ROOT="$(CDPATH= cd "$PG_BIN_DIR/@ROOT_REL@" && pwd -P)"
 PG_NAME="${0##*/}"

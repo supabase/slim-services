@@ -119,9 +119,9 @@ class PortablePostgresLauncherTest(unittest.TestCase):
         result = self.run_launcher(args=("--version",))
         self.assertEqual(result.returncode, 0, result.stderr)
         trace = self.trace.read_text(encoding="utf-8").splitlines()
-        self.assertEqual(trace[0], f"argv0={self.rootfs / 'bin' / 'postgres'}")
+        self.assertEqual(trace[0], f"argv0={self.rootfs.resolve() / 'bin' / 'postgres'}")
         self.assertEqual(trace[1], f"library-path={self.rootfs.resolve() / 'lib'}")
-        self.assertEqual(trace[2], f"real={self.bin_dir / '.postgres-portable-real'}")
+        self.assertEqual(trace[2], f"real={self.bin_dir.resolve() / '.postgres-portable-real'}")
 
         relocated = self.temp / "relocated root"
         shutil.copytree(self.rootfs, relocated)
@@ -242,10 +242,16 @@ class PortablePostgresLauncherTest(unittest.TestCase):
         rootfs = self.temp / "entrypoint-rootfs"
         (rootfs / "bin").mkdir(parents=True)
         (rootfs / "lib").mkdir(parents=True)
+        (rootfs / "share").mkdir(parents=True)
+        (rootfs / "share" / "sql_features.txt").write_text("fixture share data", encoding="utf-8")
         for name in ("postgres", "psql"):
             hidden = rootfs / "bin" / f".{name}-wrapped"
             hidden.write_text(
                 "#!/bin/sh\n"
+                "cd /\n"
+                "share_dir=\"$(CDPATH= cd \"${0%/*}/../share\" && pwd -P)\"\n"
+                "[ -f \"$share_dir/sql_features.txt\" ] || exit 73\n"
+                "printf 'share=%s\\n' \"$share_dir\" >> \"$TRACE\"\n"
                 "printf 'service=%s\\n' \"$0\" >> \"$TRACE\"\n"
                 "printf 'arg=%s\\n' \"$1\" >> \"$TRACE\"\n",
                 encoding="utf-8",
@@ -324,20 +330,23 @@ class PortablePostgresLauncherTest(unittest.TestCase):
             self.assertTrue((rootfs / "bin" / f".{name}-portable-real").is_file(), name)
             self.assertFalse((rootfs / "bin" / f".{name}-wrapped").exists(), name)
             self.assertIn(f"REAL_POSTGRES=\"$PG_BIN_DIR/.{name}-portable-real\"", public.read_text(encoding="utf-8"))
-            command = [str(public)] if pathlib.Path("/usr/bin/sh").exists() else ["/bin/sh", str(public)]
+            relative_public = public.relative_to(self.temp)
+            command = [str(relative_public)] if pathlib.Path("/usr/bin/sh").exists() else ["/bin/sh", str(relative_public)]
             result = subprocess.run(
                 [*command, "--version"],
                 text=True,
                 capture_output=True,
                 env=env,
+                cwd=self.temp,
                 check=False,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             trace_lines = trace.read_text(encoding="utf-8").splitlines()
             self.assertEqual(trace_lines[0], f"library-path={rootfs.resolve() / 'lib'}")
-            self.assertEqual(trace_lines[1], f"real={rootfs / 'bin' / f'.{name}-portable-real'}")
-            self.assertEqual(trace_lines[2], f"service={rootfs / 'bin' / f'.{name}-portable-real'}")
-            self.assertEqual(trace_lines[3], "arg=--version")
+            self.assertEqual(trace_lines[1], f"real={rootfs.resolve() / 'bin' / f'.{name}-portable-real'}")
+            self.assertEqual(trace_lines[2], f"share={rootfs.resolve() / 'share'}")
+            self.assertEqual(trace_lines[3], f"service={rootfs.resolve() / 'bin' / f'.{name}-portable-real'}")
+            self.assertEqual(trace_lines[4], "arg=--version")
         self.assertTrue(shared.is_file())
         self.assertFalse((rootfs / "lib" / ".fixture.so-portable-real").exists())
 
