@@ -127,23 +127,17 @@ EOF
     # Native addons staged by service builds use these compiler runtime
     # libraries (for example Sentry's CPU profiler). Seed their SONAME names
     # before closure discovery so the final bundled-loader audit covers them.
-    copy_compiler_runtime() {
-      local runtime_name="$1"
-      local runtime_file=""
-      for compiler_root in "${compilerRuntimeLib}" "${compilerRuntimeLibgcc}"; do
-        [ -d "$compiler_root" ] || continue
-        runtime_file="$(find "$compiler_root" \( -type f -o -type l \) -name "$runtime_name" -print -quit 2>/dev/null)"
-        [ -n "$runtime_file" ] && break
-      done
-      [ -n "$runtime_file" ] || {
-        echo "missing pinned compiler runtime $runtime_name under ${compilerRuntimeLib}" >&2
-        exit 1
-      }
-      cp -L "$runtime_file" "$dylib_dir/$runtime_name"
-      chmod u+w "$dylib_dir/$runtime_name"
-    }
-    copy_compiler_runtime "libstdc++.so.6"
-    copy_compiler_runtime "libgcc_s.so.1"
+    # Select compiler runtimes by real ELF type and target machine. Some
+    # stdenv outputs expose linker scripts at SONAME paths, which cannot be
+    # loaded by the bundled glibc runtime.
+    export PORTABLE_NODE_RUNTIME_ARCH="$(uname -m)"
+    . ${./node-compiler-runtime.sh}
+    portable_node_copy_compiler_runtime \
+      "$dylib_dir" "libstdc++.so.6" \
+      "${compilerRuntimeLib}" "${compilerRuntimeLibgcc}"
+    portable_node_copy_compiler_runtime \
+      "$dylib_dir" "libgcc_s.so.1" \
+      "${compilerRuntimeLib}" "${compilerRuntimeLibgcc}"
 
     is_elf() {
       file "$1" 2>/dev/null | grep -q "ELF"

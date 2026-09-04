@@ -33,6 +33,10 @@ if [ ! -x "$REAL_POSTGRES" ]; then
   echo "portable-postgres: real PostgreSQL executable is missing or not executable: $REAL_POSTGRES" >&2
   exit 127
 fi
+if [ ! -f "$LIB_DIR/locale/locale-archive" ]; then
+  echo "portable-postgres: bundled locale archive is missing: $LIB_DIR/locale/locale-archive" >&2
+  exit 127
+fi
 
 # The explicit loader path is the complete runtime search path. Do not allow a
 # host environment to inject a different glibc family or its side data.
@@ -48,9 +52,7 @@ export LC_ALL=en_US.UTF-8
 if [ -d "$LIB_DIR/gconv" ]; then
   export GCONV_PATH="$LIB_DIR/gconv"
 fi
-if [ -f "$LIB_DIR/locale/locale-archive" ]; then
-  export LOCALE_ARCHIVE="$LIB_DIR/locale/locale-archive"
-fi
+export LOCALE_ARCHIVE="$LIB_DIR/locale/locale-archive"
 
 if [ "@ARGV0_SUPPORTED@" = 1 ]; then
   exec "$LOADER" \

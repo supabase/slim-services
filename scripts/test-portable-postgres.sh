@@ -17,6 +17,7 @@ os.sys.argv[1:] = []
 LAUNCHER = ROOT_DIR / "nix" / "portable-postgres" / "postgres-launcher.sh"
 ENTRYPOINT_FIXUP = ROOT_DIR / "nix" / "portable-postgres" / "postgres-entrypoint-fixup.sh"
 COMPILER_RUNTIME = ROOT_DIR / "nix" / "portable-postgres" / "postgres-compiler-runtime.sh"
+LINUX_FIXUP = ROOT_DIR / "nix" / "portable-postgres" / "postgres-linux-fixup.sh"
 
 
 class PortablePostgresLauncherTest(unittest.TestCase):
@@ -155,13 +156,53 @@ class PortablePostgresLauncherTest(unittest.TestCase):
         )
 
         shutil.rmtree(self.lib_dir / "gconv")
-        (self.lib_dir / "locale" / "locale-archive").unlink()
         result = self.run_launcher(args=("--no-side-data",))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(
             self.real_env["postgres"].read_text(encoding="utf-8").splitlines(),
-            ["unset", "unset", "unset", "unset", "unset", "unset", "unset", "unset", str(self.lib_dir.resolve())],
+            [
+                "unset",
+                "unset",
+                "unset",
+                "unset",
+                "unset",
+                str((self.lib_dir / "locale" / "locale-archive").resolve()),
+                "unset",
+                "unset",
+                str(self.lib_dir.resolve()),
+            ],
         )
+
+    def test_launcher_requires_bundled_locale_archive(self):
+        (self.lib_dir / "locale" / "locale-archive").unlink()
+        result = self.run_launcher(args=("--version",))
+        self.assertEqual(result.returncode, 127)
+        self.assertIn("bundled locale archive is missing", result.stderr)
+
+    def test_linux_fixup_requires_bundled_locale_archive(self):
+        locale_source = self.temp / "locale-source"
+        locale_source.mkdir()
+        env = {
+            **os.environ,
+            "PORTABLE_POSTGRES_ROOTFS": str(self.rootfs),
+            "PORTABLE_POSTGRES_GLIBC_LIB": str(self.lib_dir),
+            "PORTABLE_POSTGRES_LOCALE_LIB": str(locale_source),
+            "PORTABLE_POSTGRES_COMPILER_LIB": str(self.lib_dir),
+            "PORTABLE_POSTGRES_COMPILER_LIBGCC": str(self.lib_dir),
+            "PORTABLE_POSTGRES_COMPILER_SRC": str(self.temp / "compiler.tar"),
+            "PORTABLE_POSTGRES_LAUNCHER": str(LAUNCHER),
+            "PORTABLE_POSTGRES_ENTRYPOINT_HELPER": str(self.temp / "entrypoint.sh"),
+            "PORTABLE_POSTGRES_COMPILER_HELPER": str(self.temp / "compiler.sh"),
+        }
+        result = subprocess.run(
+            ["bash", str(LINUX_FIXUP)],
+            text=True,
+            capture_output=True,
+            env=env,
+            check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("bundled locale archive is required", result.stderr)
 
     def test_launcher_pins_process_locale_to_bundled_en_us(self):
         result = self.run_launcher(
@@ -262,6 +303,8 @@ class PortablePostgresLauncherTest(unittest.TestCase):
         rootfs = self.temp / "entrypoint-rootfs"
         (rootfs / "bin").mkdir(parents=True)
         (rootfs / "lib").mkdir(parents=True)
+        (rootfs / "lib" / "locale").mkdir()
+        (rootfs / "lib" / "locale" / "locale-archive").write_text("fixture", encoding="utf-8")
         (rootfs / "share").mkdir(parents=True)
         (rootfs / "share" / "sql_features.txt").write_text("fixture share data", encoding="utf-8")
         for name in ("postgres", "psql"):

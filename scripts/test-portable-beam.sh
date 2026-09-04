@@ -216,6 +216,105 @@ tar -xOf "$1" "$notice_member" > "$2"
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(extracted.read_text(encoding="utf-8"), "tzdata fixture license\n")
 
+    def test_nested_glibc_named_app_nif_is_not_excluded_by_fixup(self):
+        rootfs = self.temp / "nested-rootfs"
+        (rootfs / "lib" / "libutil-fixture").mkdir(parents=True)
+        nested_nif = rootfs / "lib" / "libutil-fixture" / "nif.so"
+        nested_nif.write_text("ELF fixture NIF\n", encoding="utf-8")
+
+        glibc_source = self.temp / "glibc-source"
+        glibc_source.mkdir()
+        loader = glibc_source / "ld-linux-x86-64.so.2"
+        loader.write_text(
+            "#!/bin/sh\n"
+            "case \"${1:-}\" in\n"
+            "  --help) printf '%s\\n' --argv0 ;;\n"
+            "  --list) exit 0 ;;\n"
+            "esac\n",
+            encoding="utf-8",
+        )
+        loader.chmod(0o755)
+        (glibc_source / "libc.so.6").write_text("ELF fixture libc\n", encoding="utf-8")
+        locale_source = self.temp / "locale-source"
+        locale_source.mkdir()
+        (locale_source / "locale-archive").write_text("locale fixture\n", encoding="utf-8")
+
+        def make_archive(path, members):
+            with tarfile.open(path, "w") as archive:
+                for name, payload in members.items():
+                    info = tarfile.TarInfo(name)
+                    encoded = payload.encode("utf-8")
+                    info.size = len(encoded)
+                    archive.addfile(info, io.BytesIO(encoded))
+
+        glibc_archive = self.temp / "glibc.tar"
+        compiler_archive = self.temp / "compiler.tar"
+        tzdata_archive = self.temp / "tzdata.tar"
+        make_archive(glibc_archive, {"COPYING.LIB": "glibc license\n"})
+        make_archive(
+            compiler_archive,
+            {"COPYING.RUNTIME": "runtime license\n", "COPYING3": "gpl license\n"},
+        )
+        make_archive(tzdata_archive, {"LICENSE": "tzdata license\n"})
+        tzdata_source = self.temp / "tzdata-source"
+        tzdata_source.mkdir()
+        (tzdata_source / "UTC").write_text("zoneinfo fixture\n", encoding="utf-8")
+        launcher_template = self.temp / "beam-launcher.sh"
+        launcher_template.write_text("#!/bin/sh\n", encoding="utf-8")
+
+        fakebin = self.temp / "fixup-bin"
+        fakebin.mkdir()
+        (fakebin / "uname").write_text("#!/bin/sh\nprintf '%s\\n' x86_64\n", encoding="utf-8")
+        (fakebin / "file").write_text(
+            "#!/bin/sh\n"
+            "case \"$1\" in\n"
+            "  */ld-linux-x86-64.so.2|*/libc.so.6|*/libutil-fixture/nif.so) echo \"$1: ELF 64-bit\" ;;\n"
+            "  *) echo \"$1: ASCII text\" ;;\n"
+            "esac\n",
+            encoding="utf-8",
+        )
+        (fakebin / "ldd").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        (fakebin / "readelf").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        (fakebin / "strip").write_text(
+            "#!/bin/sh\nprintf 'strip %s\\n' \"$*\" >> \"$TRACE\"\n",
+            encoding="utf-8",
+        )
+        (fakebin / "patchelf").write_text(
+            "#!/bin/sh\nprintf 'patchelf %s\\n' \"$*\" >> \"$TRACE\"\nexit 0\n",
+            encoding="utf-8",
+        )
+        for command in fakebin.iterdir():
+            command.chmod(0o755)
+
+        trace = self.temp / "fixup.trace"
+        env = {
+            **os.environ,
+            "PATH": f"{fakebin}:{os.environ['PATH']}",
+            "TRACE": str(trace),
+            "PORTABLE_BEAM_ROOTFS": str(rootfs),
+            "PORTABLE_BEAM_GLIBC_LIB": str(glibc_source),
+            "PORTABLE_BEAM_GLIBC_SRC": str(glibc_archive),
+            "PORTABLE_BEAM_COMPILER_SRC": str(compiler_archive),
+            "PORTABLE_BEAM_TZDATA": str(tzdata_source),
+            "PORTABLE_BEAM_TZDATA_SRC": str(tzdata_archive),
+            "PORTABLE_BEAM_LOCALE_LIB": str(locale_source),
+            "PORTABLE_BEAM_LAUNCHER": str(launcher_template),
+        }
+        result = subprocess.run(
+            ["bash", str(FIXUP)],
+            text=True,
+            capture_output=True,
+            env=env,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        trace_text = trace.read_text(encoding="utf-8") if trace.exists() else ""
+        self.assertIn(
+            f"strip --strip-unneeded {nested_nif}",
+            trace_text,
+            f"fixup stdout={result.stdout!r}, stderr={result.stderr!r}",
+        )
+
     def test_shared_seam_is_wired_into_local_and_docker_nix_exports(self):
         self.assertTrue(FIXUP.is_file())
         build_text = BUILD.read_text(encoding="utf-8")

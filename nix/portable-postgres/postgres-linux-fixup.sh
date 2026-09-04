@@ -15,6 +15,12 @@ launcher_template="${PORTABLE_POSTGRES_LAUNCHER:?missing PORTABLE_POSTGRES_LAUNC
 entrypoint_helper="${PORTABLE_POSTGRES_ENTRYPOINT_HELPER:?missing PORTABLE_POSTGRES_ENTRYPOINT_HELPER}"
 compiler_runtime_helper="${PORTABLE_POSTGRES_COMPILER_HELPER:?missing PORTABLE_POSTGRES_COMPILER_HELPER}"
 
+locale_archive="$locale_source/locale-archive"
+[ -f "$locale_archive" ] || {
+  echo "portable-postgres: bundled locale archive is required: $locale_archive" >&2
+  exit 1
+}
+
 # Keep hidden-entrypoint normalization and launcher generation in one
 # executable seam so host tests can exercise the exact public-name contract.
 . "$entrypoint_helper"
@@ -51,10 +57,8 @@ if [ -d "$glibc_source/gconv" ]; then
   mkdir -p "$runtime_dir/gconv"
   cp -RL "$glibc_source/gconv/." "$runtime_dir/gconv/"
 fi
-if [ -d "$locale_source" ]; then
-  mkdir -p "$runtime_dir/locale"
-  cp -RL "$locale_source/." "$runtime_dir/locale/"
-fi
+mkdir -p "$runtime_dir/locale"
+cp -RL "$locale_archive" "$runtime_dir/locale/locale-archive"
 
 # Keep exact license texts for manually staged runtime inputs. The source
 # archives are derivation inputs from the pinned nixpkgs, so this is fail-loud

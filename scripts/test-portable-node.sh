@@ -19,6 +19,7 @@ os.sys.argv[1:] = []
 LAUNCHER = ROOT_DIR / "nix" / "portable-node" / "node-launcher.sh"
 PRELOAD = ROOT_DIR / "nix" / "portable-node" / "node-execpath.cjs"
 NOTICE_HELPER = ROOT_DIR / "nix" / "portable-node" / "copy-source-notice.sh"
+COMPILER_RUNTIME = ROOT_DIR / "nix" / "portable-node" / "node-compiler-runtime.sh"
 
 
 class PortableNodeLauncherTest(unittest.TestCase):
@@ -229,6 +230,82 @@ in (import ./nix/portable-node/default.nix { pkgs = fakePkgs; nodeMajor = 24; })
         self.assertIn("COPYING3", result.stdout)
         self.assertIn("copy-source-notice.sh", result.stdout)
 
+    def test_compiler_runtime_selector_rejects_linker_scripts(self):
+        compiler_root = self.temp / "compiler" / "lib"
+        compiler_root.mkdir(parents=True)
+        (compiler_root / "libstdc++.so.6").write_text("GNU ld script", encoding="utf-8")
+        (compiler_root / "libstdc++.so.6.0.32").write_text("ELF wrong machine", encoding="utf-8")
+        (compiler_root / "libstdc++.so.6.0.33").write_text("ELF fixture libstdc++", encoding="utf-8")
+        (compiler_root / "libgcc_s.so.1.0.0").write_text("ELF fixture libgcc", encoding="utf-8")
+        (compiler_root / "libgcc_s.so.1").symlink_to("libgcc_s.so.1.0.0")
+
+        fakebin = self.temp / "runtime-fake-bin"
+        fakebin.mkdir()
+        (fakebin / "file").write_text(
+            "#!/bin/sh\n"
+            "if grep -q ELF \"$1\" 2>/dev/null; then echo \"$1: ELF executable\"; else echo \"$1: ASCII text\"; fi\n",
+            encoding="utf-8",
+        )
+        (fakebin / "readelf").write_text(
+            "#!/bin/sh\n"
+            "target=\"\"\n"
+            "for arg do target=\"$arg\"; done\n"
+            "if grep -q 'wrong machine' \"$target\"; then echo '  Machine: AArch64'; else echo '  Machine: Advanced Micro Devices X86-64'; fi\n",
+            encoding="utf-8",
+        )
+        for command in (fakebin / "file", fakebin / "readelf"):
+            command.chmod(0o755)
+
+        destination = self.temp / "runtime-out"
+        env = {
+            **os.environ,
+            "PATH": f"{fakebin}:{os.environ['PATH']}",
+            "PORTABLE_NODE_COMPILER_RUNTIME_STANDALONE": "1",
+            "PORTABLE_NODE_RUNTIME_ARCH": "x86_64",
+            "PORTABLE_NODE_RUNTIME_DEST": str(destination),
+            "PORTABLE_NODE_RUNTIME_NAME": "libstdc++.so.6",
+            "PORTABLE_NODE_COMPILER_LIB": str(compiler_root),
+            "PORTABLE_NODE_COMPILER_LIBGCC": str(compiler_root),
+        }
+        result = subprocess.run(
+            ["bash", str(COMPILER_RUNTIME)],
+            text=True,
+            capture_output=True,
+            env=env,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            (destination / "libstdc++.so.6").read_text(encoding="utf-8"),
+            "ELF fixture libstdc++",
+        )
+
+        env["PORTABLE_NODE_RUNTIME_NAME"] = "libgcc_s.so.1"
+        result = subprocess.run(
+            ["bash", str(COMPILER_RUNTIME)],
+            text=True,
+            capture_output=True,
+            env=env,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            (destination / "libgcc_s.so.1").read_text(encoding="utf-8"),
+            "ELF fixture libgcc",
+        )
+
+        (compiler_root / "libstdc++.so.6.0.33").unlink()
+        env["PORTABLE_NODE_RUNTIME_NAME"] = "libstdc++.so.6"
+        result = subprocess.run(
+            ["bash", str(COMPILER_RUNTIME)],
+            text=True,
+            capture_output=True,
+            env=env,
+            check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("no matching ELF libstdc++.so.6", result.stderr)
+
     def test_notice_copy_consumes_complete_tar_stream_under_pipefail(self):
         archive = self.temp / "notice.tar"
         with tarfile.open(archive, "w") as tar:
@@ -366,12 +443,15 @@ in (import ./nix/portable-node/default.nix { pkgs = fakePkgs; nodeMajor = 24; })
         )
         wrapper.chmod(0o755)
         child = self.temp / "child.cjs"
-        child.write_text("process.send({execPath: process.execPath});\n", encoding="utf-8")
+        child.write_text(
+            "process.send({execPath: process.execPath, argv0: process.argv[0], original: process.argv0});\n",
+            encoding="utf-8",
+        )
         parent = (
             "const cp = require('node:child_process');"
             "const child = cp.fork(process.argv[1], [], {stdio: ['ignore', 'ignore', 'pipe', 'ipc']});"
             "child.on('message', (m) => {"
-            "  if (m.execPath !== process.env.SLIM_NODE_WRAPPER) process.exitCode = 2;"
+            "  if (m.execPath !== process.env.SLIM_NODE_WRAPPER || m.argv0 !== process.env.SLIM_NODE_WRAPPER) process.exitCode = 2;"
             "});"
             "child.on('exit', (code) => { if (code) process.exitCode = code; });"
         )

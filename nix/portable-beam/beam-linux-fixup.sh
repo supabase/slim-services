@@ -110,21 +110,27 @@ elf_files() {
 # BEAM app/NIF ELFs below lib/ remain part of the closure.
 is_bundled_glibc() {
   case "$1" in
-    "$glibc_dir"/ld-linux*|"$glibc_dir"/libc.so*|"$glibc_dir"/libc-*|\
-    "$glibc_dir"/libm.so*|"$glibc_dir"/libm-*|"$glibc_dir"/libmvec.so*|\
-    "$glibc_dir"/libmvec-*|"$glibc_dir"/libdl.so*|"$glibc_dir"/libdl-*|\
-    "$glibc_dir"/libpthread.so*|"$glibc_dir"/libpthread-*|\
-    "$glibc_dir"/libresolv.so*|"$glibc_dir"/libresolv-*|\
-    "$glibc_dir"/librt.so*|"$glibc_dir"/librt-*|"$glibc_dir"/libutil.so*|\
-    "$glibc_dir"/libutil-*|"$glibc_dir"/libanl.so*|"$glibc_dir"/libanl-*|\
-    "$glibc_dir"/libBrokenLocale.so*|"$glibc_dir"/libBrokenLocale-*|\
-    "$glibc_dir"/libthread_db.so*|"$glibc_dir"/libthread_db-*|\
-    "$glibc_dir"/libnss_*|"$glibc_dir"/libnsl.so*|"$glibc_dir"/libnsl-*|\
-    "$glibc_dir"/gconv/*|\
-    "$glibc_dir"/locale/*)
-      return 0 ;;
+    "$glibc_dir"/gconv/*|"$glibc_dir"/locale/*)
+      return 0
+      ;;
+  esac
+
+  # Match glibc object names only at the runtime directory's first level.
+  # Shell '*' also matches '/', so putting the directory prefix directly in
+  # these patterns would incorrectly classify nested app/NIF paths such as
+  # lib/libutil-foo/nif.so as bundled glibc.
+  [ "${1%/*}" = "$glibc_dir" ] || return 1
+  case "${1##*/}" in
+    ld-linux*|libc.so*|libc-*|libm.so*|libm-*|libmvec.so*|libmvec-*|\
+    libdl.so*|libdl-*|libpthread.so*|libpthread-*|libresolv.so*|\
+    libresolv-*|librt.so*|librt-*|libutil.so*|libutil-*|libanl.so*|\
+    libanl-*|libBrokenLocale.so*|libBrokenLocale-*|libthread_db.so*|\
+    libthread_db-*|libnss_*|libnsl.so*|libnsl-*)
+      return 0
+      ;;
     *)
-      return 1 ;;
+      return 1
+      ;;
   esac
 }
 

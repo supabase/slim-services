@@ -17,10 +17,9 @@ ARG DROP_TO_NAME
 ARG VOLUME_MODE
 RUN test -n "$DROP_TO_UID" && test -n "$DROP_TO_GID" && test -n "$DROP_TO_NAME" && test -n "$VOLUME_MODE"
 RUN apt-get update -y && apt-get install -y --no-install-recommends busybox bash ca-certificates locales \
-  # The shared recipe pins lc_* = en_US.UTF-8 (docker.io parity). The bundle's
-  # binaries run against the SYSTEM glibc (nix glibc's LOCALE_ARCHIVE patch
-  # does not apply), so generate the locale with THIS Debian release's own
-  # localedef — same glibc as the distroless base — at the system path.
+  # Image tooling (busybox/bash) runs against the base image's SYSTEM glibc.
+  # Generate its en_US.UTF-8 archive with THIS Debian release's localedef;
+  # PostgreSQL itself enters the artifact's bundled glibc and locale archive.
   && localedef -i en_US -f UTF-8 en_US.UTF-8 \
   && mkdir -p /out/usr/bin /out/usr/lib /out/usr/local/bin /out/etc/ssl/certs /out/usr/lib/locale \
     /out/etc/postgresql /out/etc/postgresql-custom /out/docker-entrypoint-initdb.d \
@@ -78,9 +77,9 @@ COPY --chown=${DROP_TO_UID}:${DROP_TO_GID} ${ARTIFACT_ROOT}/ /opt/postgres/
 COPY services/postgres/overlay/entry.sh /usr/local/bin/entry.sh
 COPY services/postgres/overlay/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN ["/usr/bin/busybox", "sh", "/usr/local/bin/fix-pg-identity"]
-# LANG/LC_ALL mirror Dockerfile-supabase so initdb's libc locale fields match
-# the docker.io image; the locale itself resolves via the system archive the
-# tools stage generated (see stage-shared-config.sh for the native fallback).
+# LANG/LC_ALL mirror Dockerfile-supabase so initdb's locale fields match the
+# docker.io image. PostgreSQL's launcher resolves en_US.UTF-8 through the
+# bundled artifact archive; image tooling uses the system archive above.
 ENV PGDATA=/var/lib/postgresql/data \
     POSTGRES_USER=supabase_admin \
     POSTGRES_DB=postgres \
