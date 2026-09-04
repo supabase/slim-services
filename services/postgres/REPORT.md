@@ -2,41 +2,36 @@
 
 ## Summary
 
-`supabase/postgres` is a Nix-based image: the entire runtime lives in
-`/nix/store` (~1.3 GiB uncompressed), including many extensions that local
-development rarely needs. This service prunes the published upstream image
-(no source build) into a local-development profile.
+`supabase/postgres` is a Nix-based image: the entire runtime comes from the
+repo-owned portable artifact for the selected PostgreSQL major (15 or 17),
+including the extension set shipped by that major's upstream Dockerfile.
 
 ## Build Contract
 
-- Backend: `docker-image` — `Dockerfile.artifact` starts `FROM $SOURCE_IMAGE`
-  and runs `prune.sh` inside the upstream image, writing a reduced rootfs.
-- `prune.sh` walks the Nix reference graph (`nix-store --query --references`)
-  from real roots (`/usr/local/bin`, `/bin`, `/usr/lib/postgresql`, `/etc`,
-  `/docker-entrypoint-initdb.d`, the active profile) and copies only the
-  reachable store paths. **Every extension the upstream image ships is kept**
-  — this is the `supabase/postgres` flavour; users can `CREATE EXTENSION`
-  anything Supabase supports locally. Only non-runtime content is dropped:
-  - Nix tooling (`nix`, `nix-store`, ...) and `.drv` build derivations
-  - store paths unreachable from the runtime roots (the upstream image ships
-    ~6,700 store paths; the runtime closure is a few hundred)
-- Version-switch developer scripts (`switch_*_version`) are removed before the
-  walk so ALTERNATE extension versions do not enter the closure; the default
-  version of every extension stays. Dangling symlinks are swept.
-- Local-dev config overlay at `/etc/postgresql-custom/conf.d/99-local-dev.conf`
-  (loaded through the stock `include_dir`), all values overridable via
+- Backend: `nix` — `Dockerfile.artifact` evaluates the pinned source tree with
+  the repo-owned package overlay and exports the selected
+  `psql_15_cli_portable` or `psql_17_cli_portable` rootfs.
+- The artifact is built from the exact source commit resolved from the
+  requested Docker Hub tag; no upstream portable package is consumed.
+- PG15 keeps the full `ourExtensions` set (including TimescaleDB and plv8).
+  PG17 uses the matching filtered set because those two extensions are not
+  compatible with that major. Extensions are installed; preload behavior
+  follows the matching upstream image configuration.
+- Portable packaging uses latest-only extension outputs and bundles the
+  minimal glibc locale archive on Linux; copied libraries are patched to
+  relative paths so the rootfs remains relocatable.
+- Local-dev settings from `nix/packages/local-dev.conf` are appended to the
+  bundled `postgresql.conf.template`; all values remain overridable via
   `postgres -c`:
   `shared_buffers=32MB`, `effective_cache_size=128MB`,
   `maintenance_work_mem=32MB`, `max_connections=100`, `max_wal_size=128MB`,
   `jit=off`, `autovacuum_naptime=60s`, `bgwriter_delay=2000ms`,
   `wal_writer_delay=2000ms`. `wal_level=logical` is left untouched (realtime
   requires it).
-- Gosu, busybox userland, `/etc`, and the init/migration scripts are preserved
-  unchanged. The image entrypoint is a thin wrapper (`slim-entrypoint.sh`) that
-  restores postgres ownership of `/etc/postgresql*` (lost when Docker COPY
-  assembles the scratch image) and then execs the stock
-  `docker-entrypoint.sh`, so the CLI's `docker run` contract is otherwise
-  identical to the upstream image.
+- The derived image provides a small busybox/bash tools stage, the bundle at
+  `/opt/postgres`, and the repo-owned entrypoint that performs initdb,
+  migrations, and Docker networking setup using the UID/GID generated from
+  the digest-pinned upstream identity.
 
 ## What still works (smoke-verified)
 
@@ -46,15 +41,16 @@ development rarely needs. This service prunes the published upstream image
   pg_net, pg_cron, vector, hypopg, index_advisor, pg_jsonschema, pg_hashids,
   http, pgaudit, pg_tle, rum, pgsodium, supabase_vault, pgtap, pgmq,
   pg_partman, pg_repack, plpgsql_check, postgis, postgis_topology,
-  address_standardizer, pgrouting, pgroonga, wrappers.
+  address_standardizer, pgrouting, pgroonga, wrappers. PG15 additionally
+  exercises TimescaleDB and plv8; those extensions are omitted from the PG17
+  package because they are incompatible with that major.
 
 ## What is intentionally dropped
 
 Only non-runtime content: Nix tooling and build derivations, store paths not
 reachable from the runtime roots, alternate switchable extension versions
 (defaults stay), kernel firmware/apk leftovers under `/lib`. No extension is
-removed. (plv8/pljava/plcoffee/plls/timescaledb are not present in the
-upstream arm64 image to begin with.)
+removed from the selected major's upstream extension set.
 
 ## Measurements (17.6.1.143, linux/arm64, full extension set, 2026-07)
 
@@ -86,10 +82,11 @@ ever wanted alongside the full flavour, that deny list is in git history
 
 Reversal of the plan's original non-goal (user directive): this repo now owns
 the self-contained postgres too. `sources/postgres` is pinned to the same tag
-as the Docker image, and the artifact is upstream's own relocatable package —
-`psql_17_cli_portable` from `nix/packages/postgres-portable.nix`, the exact
-build the Supabase CLI ships — with a repo-owned overlay
-(`services/postgres/nix/packages/`) making two changes:
+as the Docker image, and the artifact is our relocatable package —
+`psql_15_cli_portable` or `psql_17_cli_portable` from
+`nix/packages/postgres-portable.nix` — with a repo-owned overlay
+(`services/postgres/nix/packages/`) keeping each major's upstream extension
+set and portable layout in sync:
 
 - **pgvector added to the CLI extension set** (the documented parity gap in
   the CLI's postgres distribution).
@@ -109,8 +106,8 @@ tooling now:
   for the same class of issue.
 
 Smoke (host process, no Docker anywhere): initdb → pg_ctl with the preload
-set (`pg_stat_statements,pg_cron,pg_net`) → `CREATE EXTENSION` for pgcrypto,
-pg_stat_statements, **vector**, pg_net, pg_cron → a pgvector
+set (`pg_stat_statements,pg_cron,pg_net`, plus TimescaleDB on PG15) →
+`CREATE EXTENSION` for the selected major's compatible set → a pgvector
 nearest-neighbour round-trip. Re-run from an untarred archive in a scratch
 directory (relocatable). pgsodium/supabase_vault ship in the artifact but
 need the CLI's getkey config to exercise; that belongs to the CLI's smoke.
@@ -122,7 +119,7 @@ committed recipe includes it; CI builds it via upstream's binary cache).
 
 | Metric | Value |
 |---|---:|
-| Archive (`postgres-17.6.1.143-darwin-arm64.tar.zst`) | `30.4 MiB` |
+| Archive (PG17 example, `postgres-17.6.1.143-darwin-arm64.tar.zst`) | `30.4 MiB` |
 | rootfs | `110.2 MiB` |
 | Steady-state RSS (host process, idle, 60s settle) | `34.0 MiB` |
 | Idle CPU | `0.0 %` |
@@ -132,15 +129,12 @@ committed recipe includes it; CI builds it via upstream's binary cache).
 The portable artifact is now the basis for the Docker image too, on every
 target — an accepted divergence from upstream supabase/postgres bundling:
 
-- The artifact and image ship the **full PG17 extension set** — everything
-  the upstream image supports (timescaledb/plv8 are PG17-incompatible
-  upstream). Installed is not enabled: only the minimal
-  `shared_preload_libraries` set (pg_stat_statements, pg_cron, pg_net,
-  pgsodium, supabase_vault, supautils) is on by default, so the measured
-  footprint is unchanged; pgaudit/pg_stat_monitor/pg_tle need a preload
-  opt-in to CREATE. Disk grows accordingly (~30 -> ~250-300 MiB archive
-  expected). (Preload set superseded by the shared-recipe section below:
-  the bundle now ships the docker.io set.)
+- The artifact and image ship the **full extension set for the selected major**
+  — everything the matching upstream image supports. PG15 includes
+  TimescaleDB/plv8; PG17 omits them because they are incompatible. Extensions
+  are installed, and the bundle follows the matching upstream image's
+  `shared_preload_libraries` configuration. Disk grows accordingly (~30 ->
+  ~250-300 MiB archive expected).
 - `Dockerfile.artifact` is a nixos/nix flake builder producing the same
   portable rootfs as darwin (upstream's binary cache is enabled by explicit
   `--extra-substituters`/`--extra-trusted-public-keys` flags, mirroring
@@ -155,9 +149,10 @@ target — an accepted divergence from upstream supabase/postgres bundling:
   `supabase-postgres-init.sh`, then appends the docker network settings
   and starts postgres after dropping to the probed uid.
 - The image smoke checks the broad preload-free set (29 creates including
-  postgis/pgroonga/wrappers, a pgsodium/vault round-trip through the getkey
-  wiring, and a pgvector nearest-neighbour query); the host smoke creates
-  the same subset minus the getkey-dependent pair.
+  postgis/pgroonga/wrappers and, on PG15, TimescaleDB/plv8; PG17 omits those
+  incompatible extensions to match its upstream image), a pgsodium/vault round-trip through the
+  getkey wiring, and a pgvector nearest-neighbour query; the host smoke
+  creates the same subset minus the getkey-dependent pair.
 
 Verification happens in CI (`service-artifacts.yml`) per the directive —
 no local build for this step; the portable artifact underneath is the one
@@ -184,10 +179,10 @@ declarative sync) whenever webhooks are enabled. The docker.io image gets
 these settings from `ansible/files/postgresql_config/supautils.conf.j2`; the
 overlay's `configBundle` now appends that same file (from the exact source
 checkout being built, so the lists cannot drift) to the bundled template,
-fixing both the derived image and native host use of the artifact. The
-PG17-incompatible timescaledb/plv8 entries are stripped the same way
-upstream's Dockerfile-17 strips them, and the build refuses the append if
-the `.j2` ever grows real Jinja templating. Smokes:
+fixing both the derived image and native host use of the artifact. For PG17,
+the incompatible timescaledb/plv8 entries are stripped the same
+way upstream's Dockerfile-17 strips them; PG15 retains both values. The build
+refuses the append if the `.j2` ever grows real Jinja templating. Smokes:
 the host smoke asserts the shipped template carries the allowlist; the image
 smoke creates `pg_net` live as the demoted `postgres` role (the CLI
 shadow-db path). Everything the appended block references exists on slim

@@ -61,7 +61,9 @@ PY
     LOGFLARE_DB_ENCRYPTION_KEY="$db_encryption_key"
     PHX_HTTP_PORT="$port"
     PHX_SECRET_KEY_BASE="$secret_key_base"
+    RELEASE_DISTRIBUTION=none
   )
+  smoke_beam_release_distribution "$logflare_bin" "${analytics_env[@]}"
 
   log "running analytics migrations"
   if ! env "${analytics_env[@]}" "$logflare_bin" eval Logflare.Release.migrate >"$analytics_log" 2>&1; then
@@ -72,7 +74,7 @@ PY
   log "smoke testing analytics host process on port $port"
   start_host_service analytics "$analytics_log" \
     "${analytics_env[@]}" \
-    -- "$logflare_bin" start --sname logflare
+    -- "$logflare_bin" start
 
   if ! wait_for_http_code_host "http://127.0.0.1:$port/health" "200" 180 "$host_service_pid" "$analytics_log"; then
     fail "analytics /health did not return 200"
@@ -87,6 +89,16 @@ ensure_image "$image"
 log "checking wget is on PATH (CLI healthcheck)"
 docker run --rm --entrypoint /usr/bin/wget "$image" --help >/dev/null \
   || fail "analytics image is missing wget"
+
+# The CLI drives this image and docker.io supabase/logflare with one spec:
+# `sh -c` from the image WORKDIR, writing a run.sh there and calling
+# ./logflare, with gcloud.json bound into that same cwd.
+log "checking the CLI cwd contract (WORKDIR, ./logflare, writable cwd)"
+workdir="$(docker image inspect --format '{{.Config.WorkingDir}}' "$image")"
+[[ "$workdir" == "/opt/app/rel/logflare/bin" ]] \
+  || fail "analytics WORKDIR is $workdir, expected /opt/app/rel/logflare/bin"
+docker run --rm --entrypoint sh "$image" -c 'test -x ./logflare && : > run.sh' \
+  || fail "analytics WORKDIR lacks an executable ./logflare or is not writable"
 
 container="analytics-smoke-$RUN_ID"
 run_container \

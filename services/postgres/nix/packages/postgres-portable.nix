@@ -8,14 +8,23 @@
   file,
   python3,
   binutils,
-  psql_17_cli,
+  psql_cli ? null,
+  psql_17_cli ? null,
+  postgres_major ? "17",
 }:
+assert psql_cli != null || psql_17_cli != null;
 let
   configDir = ./cli-config;
   glibcLocalesMinimal = glibcLocales.override {
     allLocales = false;
     locales = [ "en_US.UTF-8/UTF-8" ];
   };
+
+  selectedCli = if psql_cli != null then psql_cli else psql_17_cli;
+
+  extensionNames = builtins.filter (
+    name: name != "recurseForDerivations" && !(lib.hasSuffix "-pkgs" name)
+  ) (builtins.attrNames selectedCli.exts);
 
   # slim-services overlay — shared config recipe. Upstream's hand-written CLI
   # template (nix/packages/cli-config/) drifted from the docker.io image's
@@ -38,39 +47,10 @@ let
     destination = "/receipt.json";
     text = builtins.toJSON {
       variant = "cli";
-      psql-version = psql_17_cli.bin.version;
-      # slim-services overlay: the full PG17 extension set (see postgres.nix).
-      extensions = [
-        "rum"
-        "pgroonga"
-        "index_advisor"
-        "wal2json"
-        "pgmq"
-        "pg_repack"
-        "safeupdate"
-        "plpgsql_check"
-        "pgjwt"
-        "pgaudit"
-        "postgis"
-        "pgrouting"
-        "pgtap"
-        "pg_cron"
-        "http"
-        "plan_filter"
-        "pg_net"
-        "pg_hashids"
-        "pgsodium"
-        "pg_graphql"
-        "pg_stat_monitor"
-        "pg_jsonschema"
-        "pg_partman"
-        "vector"
-        "supabase_vault"
-        "hypopg"
-        "pg_tle"
-        "wrappers"
-        "supautils"
-      ];
+      psql-version = selectedCli.bin.version;
+      # Keep receipt-version=1's consumed list-of-strings schema; names are
+      # derived from the selected major's package rather than hardcoded.
+      extensions = extensionNames;
       receipt-version = "1";
     };
   };
@@ -136,10 +116,13 @@ let
         -e "s|^data_directory = |#data_directory = |" \
         -e "s|^hba_file = |#hba_file = |" \
         -e "s|^ident_file = |#ident_file = |" \
-        -e "s/ timescaledb,//g" \
-        -e "s/ plv8,//g" \
         -e "s/db_user_namespace = off/#db_user_namespace = off/g" \
         $conf
+      # Dockerfile-17 removes extensions incompatible with that major. PG15
+      # retains the source tree's TimescaleDB/plv8 preload values.
+      if [ "${postgres_major}" = "17" ]; then
+        sed -i -e "s/ timescaledb,//g" -e "s/ plv8,//g" $conf
+      fi
       for want in \
         "^session_preload_libraries = 'supautils'" \
         "^include = 'supautils.conf'" \
@@ -156,7 +139,12 @@ let
           exit 1
         }
       done
-      if grep "^shared_preload_libraries" $conf | grep -q "timescaledb\|plv8"; then
+      if [ "${postgres_major}" = "15" ]; then
+        grep "^shared_preload_libraries" $conf | grep -q timescaledb || {
+          echo "PG15 source config lost TimescaleDB preload" >&2
+          exit 1
+        }
+      elif grep "^shared_preload_libraries" $conf | grep -q "timescaledb\|plv8"; then
         echo "PG17-incompatible extension left in shared_preload_libraries" >&2
         exit 1
       fi
@@ -174,8 +162,13 @@ let
       install -m 0644 ${ansibleConfig}/custom_walg.conf $cfg/wal-g.conf
       install -m 0644 ${ansibleConfig}/custom_read_replica.conf $cfg/read-replica.conf
       install -m 0644 ${ansibleConfig}/conf.d/*.conf $cfg/conf.d/
-      # Same PG17 strip Dockerfile-supabase applies to supautils.conf.
-      sed 's/ timescaledb,//g; s/ plv8,//g' ${supautilsConf} > $cfg/supautils.conf
+      # Dockerfile-17 strips TimescaleDB/plv8 from supautils.conf; PG15 keeps
+      # the exact source-tree values.
+      if [ "${postgres_major}" = "17" ]; then
+        sed 's/ timescaledb,//g; s/ plv8,//g' ${supautilsConf} > $cfg/supautils.conf
+      else
+        cp ${supautilsConf} $cfg/supautils.conf
+      fi
       grep -q "^supautils.privileged_extensions = " $cfg/supautils.conf || {
         echo "supautils.conf lost its allowlist" >&2
         exit 1
@@ -234,8 +227,8 @@ let
   };
 in
 stdenv.mkDerivation {
-  name = "psql_17_cli_portable";
-  version = psql_17_cli.bin.version;
+  name = "psql_${postgres_major}_cli_portable";
+  version = selectedCli.bin.version;
 
   dontUnpack = true;
   dontPatchShebangs = true;
@@ -279,12 +272,13 @@ stdenv.mkDerivation {
       echo "$result"
     }
 
-    # Helper function to get the library file pattern based on platform
-    get_lib_pattern() {
+    # Helper function to list library files based on platform. Darwin
+    # extensions are Mach-O .so files as well as .dylib files.
+    find_library_files() {
       if [ "$(uname)" = "Darwin" ]; then
-        echo "*.dylib*"
+        find "$out/lib" -type f \( -name "*.dylib*" -o -name "*.so*" \)
       else
-        echo "*.so*"
+        find "$out/lib" -type f -name "*.so*"
       fi
     }
 
@@ -323,8 +317,8 @@ stdenv.mkDerivation {
 
     # Copy binaries (resolve all wrappers to get actual binaries)
     for bin in $binaries; do
-      if [ -f ${psql_17_cli.bin}/bin/$bin ] || [ -L ${psql_17_cli.bin}/bin/$bin ]; then
-        actual_binary=$(resolve_binary ${psql_17_cli.bin}/bin/$bin)
+      if [ -f ${selectedCli.bin}/bin/$bin ] || [ -L ${selectedCli.bin}/bin/$bin ]; then
+        actual_binary=$(resolve_binary ${selectedCli.bin}/bin/$bin)
         if [ -n "$actual_binary" ] && [ -f "$actual_binary" ]; then
           cp "$actual_binary" $out/bin/.$bin-wrapped 2>/dev/null || true
         fi
@@ -332,8 +326,8 @@ stdenv.mkDerivation {
     done
 
     # Copy all shared libraries from PostgreSQL
-    if [ -d ${psql_17_cli.bin}/lib ]; then
-      cp -rL ${psql_17_cli.bin}/lib/* $out/lib/ 2>/dev/null || true
+    if [ -d ${selectedCli.bin}/lib ]; then
+      cp -rL ${selectedCli.bin}/lib/* $out/lib/ 2>/dev/null || true
     fi
 
     # Copy all runtime dependencies (shared libraries) from binaries
@@ -357,11 +351,10 @@ stdenv.mkDerivation {
 
     # Second pass: recursively check libraries for their dependencies (e.g., libicuuc -> libicudata -> libcharset)
     # Run multiple iterations until no new libraries are found
-    lib_pattern=$(get_lib_pattern)
     for iteration in {1..5}; do
-      before_count=$(ls $out/lib/$lib_pattern 2>/dev/null | wc -l || echo "0")
-      # Use find instead of glob to avoid bash errors when pattern doesn't match
-      libs=$(find $out/lib -name "$lib_pattern" -type f 2>/dev/null || true)
+      before_count=$(find_library_files 2>/dev/null | wc -l || echo "0")
+      # Use find instead of globs to avoid bash errors when a pattern does not match.
+      libs=$(find_library_files 2>/dev/null || true)
       if [ -n "$libs" ]; then
         echo "$libs" | while read lib; do
           if [ -f "$lib" ]; then
@@ -384,7 +377,7 @@ stdenv.mkDerivation {
           fi
         done
       fi
-      after_count=$(ls $out/lib/$lib_pattern 2>/dev/null | wc -l || echo "0")
+      after_count=$(find_library_files 2>/dev/null | wc -l || echo "0")
       if [ "$before_count" -eq "$after_count" ]; then
         echo "No new dependencies found after $iteration iterations"
         break
@@ -424,8 +417,8 @@ stdenv.mkDerivation {
     fi
 
     # Copy share directory
-    if [ -d ${psql_17_cli.bin}/share ]; then
-      cp -rL ${psql_17_cli.bin}/share/* $out/share/ 2>/dev/null || true
+    if [ -d ${selectedCli.bin}/share ]; then
+      cp -rL ${selectedCli.bin}/share/* $out/share/ 2>/dev/null || true
     fi
 
     # Add the CLI config bundle wholesale (config/ including conf.d, bin/,
@@ -533,8 +526,10 @@ stdenv.mkDerivation {
         fi
       done
 
-      # Patch dylibs to use @rpath for their dependencies
-      for lib in $out/lib/*.dylib*; do
+      # Patch Mach-O libraries to use @rpath for their dependencies. Darwin
+      # extension modules use the .so suffix, while system libraries use
+      # .dylib, so process both.
+      for lib in $out/lib/*.dylib* $out/lib/*.so*; do
         if [ -f "$lib" ] && file "$lib" | grep -q "Mach-O"; then
           # First, fix the library's own ID to use @rpath
           libname=$(basename "$lib")
@@ -582,10 +577,10 @@ stdenv.mkDerivation {
       # (e.g. the ICU dylibs), which fails the portable audit. Delete Nix
       # store rpaths and re-sign — but ONLY on files actually mutated: the
       # sandbox codesign shim produces invalid signatures on some special
-      # dylibs (reexport stubs like libiconv.dylib), which macOS then
+      # Mach-O libraries (reexport stubs like libiconv.dylib), which macOS then
       # SIGKILLs at load. scripts/audit-portable-artifact.sh verifies every
       # signature with the host codesign afterwards.
-      for macho in $out/bin/.*-wrapped $out/lib/*.dylib*; do
+      for macho in $out/bin/.*-wrapped $out/lib/*.dylib* $out/lib/*.so*; do
         [ -f "$macho" ] || continue
         [ -L "$macho" ] && continue
         file "$macho" | grep -q "Mach-O" || continue

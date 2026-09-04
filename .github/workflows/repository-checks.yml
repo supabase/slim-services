@@ -64,4 +64,5 @@ jobs:
           scripts/test-oci-mirror.sh
           scripts/test-upstream-runtime.sh
           scripts/test-studio-artifact.sh
+          scripts/test-beam-release-env.sh
           services/vector/test-smoke.sh

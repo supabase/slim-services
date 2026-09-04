@@ -1,9 +1,9 @@
 # syntax=docker/dockerfile:1.7
 # Docker-hosted Nix build for linux targets (used when the host Nix system
 # does not match the target, e.g. building linux artifacts from macOS; CI
-# linux runners use local Nix). The artifact is the same portable rootfs the
-# darwin build produces — upstream's psql_17_cli_portable with the
-# slim-services overlay — and the final image is derived from it via
+# linux runners use local Nix). The artifact is the same major-specific
+# portable rootfs the darwin build produces — psql_{15,17}_cli_portable with
+# the slim-services overlay — and the final image is derived from it via
 # Dockerfile.slim.
 ARG SOURCE_DIR=sources/postgres
 ARG NIX_ATTR=psql_17_cli_portable

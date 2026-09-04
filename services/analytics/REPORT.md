@@ -166,6 +166,16 @@ are pinned per target
 image smoke green — RSS 479.7 MiB (was 546.7) and 58.4 MiB gzip (was 89.7,
 no npm assets + tighter pruning). disksup disabled via `vm.args`.
 
+## docker.io path parity (2026-08)
+
+The release root moved from `/app` to `/opt/app/rel/logflare` and WORKDIR to
+its `bin/`, matching docker.io `supabase/logflare`. Logflare's `runtime.exs`
+reads `gcloud.json` from the cwd, so the CLI's BigQuery bind and its
+`sh -c` start script (`cat > run.sh`, `./logflare`) are now one spec for both
+images instead of a slim-only branch. The overlay entry script stays beside
+the release root (`/opt/app/rel/logflare/entry.sh`) so it cannot collide with
+the `run.sh` that script writes into the cwd.
+
 ## CLI healthcheck (2026-08)
 
 Curl stays out of the portable artifact. The derived image exposes busybox
