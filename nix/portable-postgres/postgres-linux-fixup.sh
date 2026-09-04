@@ -125,20 +125,27 @@ elf_files() {
 # libstdc++, extensions, and any nested shared objects remain auditable users.
 is_bundled_glibc() {
   case "$1" in
-    "$runtime_dir"/ld-linux*|"$runtime_dir"/libc.so*|"$runtime_dir"/libc-*|\
-    "$runtime_dir"/libm.so*|"$runtime_dir"/libm-*|"$runtime_dir"/libmvec.so*|\
-    "$runtime_dir"/libmvec-*|"$runtime_dir"/libdl.so*|"$runtime_dir"/libdl-*|\
-    "$runtime_dir"/libpthread.so*|"$runtime_dir"/libpthread-*|\
-    "$runtime_dir"/libresolv.so*|"$runtime_dir"/libresolv-*|\
-    "$runtime_dir"/librt.so*|"$runtime_dir"/librt-*|"$runtime_dir"/libutil.so*|\
-    "$runtime_dir"/libutil-*|"$runtime_dir"/libanl.so*|"$runtime_dir"/libanl-*|\
-    "$runtime_dir"/libBrokenLocale.so*|"$runtime_dir"/libBrokenLocale-*|\
-    "$runtime_dir"/libthread_db.so*|"$runtime_dir"/libthread_db-*|\
-    "$runtime_dir"/libnss_*|"$runtime_dir"/libnsl.so.1|"$runtime_dir"/libnsl-*.so.*|\
     "$runtime_dir"/gconv/*|"$runtime_dir"/locale/*)
-      return 0 ;;
+      return 0
+      ;;
+  esac
+
+  # Match glibc object names only at the runtime directory's first level.
+  # Shell '*' also matches '/', so putting the directory prefix directly in
+  # these patterns would incorrectly classify nested extension paths such as
+  # lib/libutil-foo/extension.so as bundled glibc.
+  [ "${1%/*}" = "$runtime_dir" ] || return 1
+  case "${1##*/}" in
+    ld-linux*|libc.so*|libc-*|libm.so*|libm-*|libmvec.so*|libmvec-*|\
+    libdl.so*|libdl-*|libpthread.so*|libpthread-*|libresolv.so*|\
+    libresolv-*|librt.so*|librt-*|libutil.so*|libutil-*|libanl.so*|\
+    libanl-*|libBrokenLocale.so*|libBrokenLocale-*|libthread_db.so*|\
+    libthread_db-*|libnss_*|libnsl.so*|libnsl-*)
+      return 0
+      ;;
     *)
-      return 1 ;;
+      return 1
+      ;;
   esac
 }
 

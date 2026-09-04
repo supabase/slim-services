@@ -5,9 +5,11 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 python3 - "$ROOT_DIR" <<'PY'
 import os
+import io
 import pathlib
 import shutil
 import subprocess
+import tarfile
 import tempfile
 import unittest
 
@@ -298,6 +300,108 @@ class PortablePostgresLauncherTest(unittest.TestCase):
         result = subprocess.run([str(COMPILER_RUNTIME)], text=True, capture_output=True, env=env, check=False)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("no matching ELF libstdc++.so.6", result.stderr)
+
+    def test_nested_glibc_named_extension_is_not_excluded_by_fixup(self):
+        rootfs = self.temp / "nested-rootfs"
+        (rootfs / "lib" / "libutil-fixture").mkdir(parents=True)
+        nested_extension = rootfs / "lib" / "libutil-fixture" / "extension.so"
+        nested_extension.write_text("ELF fixture extension\n", encoding="utf-8")
+
+        glibc_source = self.temp / "glibc-source"
+        glibc_source.mkdir()
+        loader = glibc_source / "ld-linux-x86-64.so.2"
+        loader.write_text(
+            "#!/bin/sh\n"
+            "if [ \"${1:-}\" = --help ]; then printf '%s\\n' --argv0; exit 0; fi\n"
+            "if [ \"${3:-}\" = --list ]; then printf 'audit %s\\n' \"$4\" >> \"$TRACE\"; fi\n",
+            encoding="utf-8",
+        )
+        loader.chmod(0o755)
+        (glibc_source / "libc.so.6").write_text("ELF fixture libc\n", encoding="utf-8")
+        locale_source = self.temp / "locale-source"
+        locale_source.mkdir()
+        (locale_source / "locale-archive").write_text("locale fixture\n", encoding="utf-8")
+        compiler_root = self.temp / "compiler" / "lib"
+        compiler_root.mkdir(parents=True)
+        (compiler_root / "libstdc++.so.6").write_text("ELF fixture libstdc++\n", encoding="utf-8")
+        (compiler_root / "libgcc_s.so.1").write_text("ELF fixture libgcc\n", encoding="utf-8")
+
+        def make_archive(path, members):
+            with tarfile.open(path, "w") as archive:
+                for name, payload in members.items():
+                    info = tarfile.TarInfo(name)
+                    encoded = payload.encode("utf-8")
+                    info.size = len(encoded)
+                    archive.addfile(info, io.BytesIO(encoded))
+
+        glibc_archive = self.temp / "glibc.tar"
+        compiler_archive = self.temp / "compiler.tar"
+        make_archive(glibc_archive, {"glibc/COPYING.LIB": "glibc license\n"})
+        make_archive(
+            compiler_archive,
+            {
+                "gcc/COPYING.RUNTIME": "runtime license\n",
+                "gcc/COPYING3": "gpl license\n",
+            },
+        )
+        launcher_template = self.temp / "postgres-launcher.sh"
+        launcher_template.write_text("#!/bin/sh\n", encoding="utf-8")
+
+        fakebin = self.temp / "fixup-bin"
+        fakebin.mkdir()
+        (fakebin / "uname").write_text("#!/bin/sh\nprintf '%s\\n' x86_64\n", encoding="utf-8")
+        (fakebin / "file").write_text(
+            "#!/bin/sh\n"
+            "case \"$1\" in\n"
+            "  */ld-linux-x86-64.so.2|*/libc.so.6|*/libstdc++.so.6|*/libgcc_s.so.1|*/libutil-fixture/extension.so) echo \"$1: ELF 64-bit\" ;;\n"
+            "  *) echo \"$1: ASCII text\" ;;\n"
+            "esac\n",
+            encoding="utf-8",
+        )
+        (fakebin / "ldd").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        (fakebin / "readelf").write_text(
+            "#!/bin/sh\nprintf '%s\\n' '  Machine: Advanced Micro Devices X86-64'\n",
+            encoding="utf-8",
+        )
+        (fakebin / "strip").write_text(
+            "#!/bin/sh\nprintf 'strip %s\\n' \"$*\" >> \"$TRACE\"\n",
+            encoding="utf-8",
+        )
+        (fakebin / "patchelf").write_text(
+            "#!/bin/sh\nprintf 'patchelf %s\\n' \"$*\" >> \"$TRACE\"\nexit 0\n",
+            encoding="utf-8",
+        )
+        for command in fakebin.iterdir():
+            command.chmod(0o755)
+
+        trace = self.temp / "fixup.trace"
+        env = {
+            **os.environ,
+            "PATH": f"{fakebin}:{os.environ['PATH']}",
+            "TRACE": str(trace),
+            "PORTABLE_POSTGRES_ROOTFS": str(rootfs),
+            "PORTABLE_POSTGRES_GLIBC_LIB": str(glibc_source),
+            "PORTABLE_POSTGRES_GLIBC_SRC": str(glibc_archive),
+            "PORTABLE_POSTGRES_LOCALE_LIB": str(locale_source),
+            "PORTABLE_POSTGRES_COMPILER_LIB": str(compiler_root),
+            "PORTABLE_POSTGRES_COMPILER_LIBGCC": str(compiler_root),
+            "PORTABLE_POSTGRES_COMPILER_SRC": str(compiler_archive),
+            "PORTABLE_POSTGRES_LAUNCHER": str(launcher_template),
+            "PORTABLE_POSTGRES_ENTRYPOINT_HELPER": str(ENTRYPOINT_FIXUP),
+            "PORTABLE_POSTGRES_COMPILER_HELPER": str(COMPILER_RUNTIME),
+        }
+        result = subprocess.run(
+            ["bash", str(LINUX_FIXUP)],
+            text=True,
+            capture_output=True,
+            env=env,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        trace_text = trace.read_text(encoding="utf-8") if trace.exists() else ""
+        self.assertIn(f"strip --strip-unneeded {nested_extension}", trace_text)
+        self.assertIn(f"patchelf --set-rpath", trace_text)
+        self.assertIn(f"audit {nested_extension}", trace_text)
 
     def test_entrypoint_fixup_executable_seam_creates_public_launchers(self):
         rootfs = self.temp / "entrypoint-rootfs"

@@ -469,6 +469,42 @@ in (import ./nix/portable-node/default.nix { pkgs = fakePkgs; nodeMajor = 24; })
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(self.trace.read_text(encoding="utf-8").strip())
 
+    def test_worker_thread_inherits_public_wrapper_identity(self):
+        node_command = shutil.which("node")
+        if not node_command:
+            self.skipTest("a host Node executable is required for the worker proof")
+        node_result = subprocess.run(
+            [node_command, "-p", "process.execPath"],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        node = node_result.stdout.strip()
+        if node_result.returncode or not node or not pathlib.Path(node).is_file():
+            self.skipTest("a host Node executable is required for the worker proof")
+        image_root, _runtime_root = self.make_symlink_image(real_node=node)
+        public_wrapper = image_root / "node" / "bin" / "node"
+        worker_code = (
+            "const { Worker } = require('node:worker_threads');\n"
+            "const worker = new Worker(\"const { parentPort } = require('node:worker_threads'); parentPort.postMessage({ execPath: process.execPath, argv0: process.argv[0] });\", { eval: true });\n"
+            "worker.once('message', ({ execPath, argv0 }) => {\n"
+            "  if (execPath !== process.env.EXPECTED_WRAPPER || argv0 !== process.env.EXPECTED_WRAPPER) {\n"
+            "    console.error(JSON.stringify({ execPath, argv0, expected: process.env.EXPECTED_WRAPPER }));\n"
+            "    process.exitCode = 2;\n"
+            "  }\n"
+            "});\n"
+            "worker.once('error', (error) => { console.error(error.stack || error.message); process.exitCode = 3; });\n"
+        )
+        # Keep --require in process.execArgv: worker_threads inherits it, so
+        # the preload applies the same wrapper identity inside worker code.
+        result = self.run_launcher(
+            image_root,
+            args=("--eval", worker_code),
+            extra_env={"EXPECTED_WRAPPER": str(public_wrapper)},
+        )
+        trace_text = self.trace.read_text(encoding="utf-8") if self.trace.exists() else ""
+        self.assertEqual(result.returncode, 0, result.stderr + f"\nloader trace={trace_text!r}")
+
     def test_symlink_image_fork_reenters_public_wrapper(self):
         node_command = shutil.which("node")
         if not node_command:
