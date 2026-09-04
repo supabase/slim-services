@@ -311,7 +311,6 @@ tar -xOf "$1" "$notice_member" > "$2"
             command.chmod(0o755)
         bash_env = fixture_root / "bash-env"
         bash_env.write_text(
-            "NIX_AUXILIARY_OVERLAYS=()\n"
             "nix() {\n"
             "  if [[ ${1:-} == eval ]]; then printf '%s\\n' aarch64-darwin; return 0; fi\n"
             "  return 1\n"
@@ -435,6 +434,7 @@ tar -xOf "$1" "$notice_member" > "$2"
             command.chmod(0o755)
         bash_env = fixture_root / "bash-env"
         bash_env.write_text(
+            "NIX_AUXILIARY_OVERLAYS=()\n"
             "nix() {\n"
             "  if [[ ${1:-} == eval ]]; then printf '%s\\n' aarch64-darwin; return 0; fi\n"
             "  return 1\n"
