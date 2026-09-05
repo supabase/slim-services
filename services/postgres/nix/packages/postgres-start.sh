@@ -4,8 +4,9 @@
 # The caller supplies instance state (PGDATA, credentials and server options).
 # This command owns the immutable bundle's first-boot and migration contract:
 # initialize an empty cluster, run the bundled migrations in an isolated
-# temporary server, atomically record success, and then replace itself with
-# the long-lived server.  It never removes a data directory.
+# temporary server, remove the pending witness at the commit point, and then
+# replace itself with the long-lived server.  It never removes a data
+# directory.
 set -eu
 
 script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P)
@@ -28,7 +29,8 @@ getkey_script="$bundle_dir/share/supabase-cli/config/pgsodium_getkey.sh"
 
 socket_dir=
 migration_log=
-temp_server_started=0
+active_pid=
+temp_server_pid=
 init_attempted=0
 
 # Keep command discovery deterministic for migrate.sh and user init scripts.
@@ -36,25 +38,13 @@ export PATH="$bin_dir${PATH:+:$PATH}"
 
 restore_schema() {
   if [ -n "$schema_file" ] && [ -n "$schema_backup" ] && [ -s "$schema_backup" ]; then
-    cp "$schema_backup" "$schema_file" || return 1
+    # Overwrite the existing inode in place: the image path can be a bind
+    # mount, and BusyBox cp refuses a destination that already exists.
+    cat "$schema_backup" >"$schema_file" || return 1
     # Keep the backup when unlinking fails; the restored source remains
     # recoverable and the next cleanup/start can retry the unlink.
     rm -f "$schema_backup" || return 1
   fi
-}
-
-temp_server_owned() {
-  [ "$temp_server_started" = 1 ] || return 1
-  [ -n "$socket_dir" ] || return 1
-  if [ -f "$PGDATA/postmaster.opts" ] \
-    && grep -F -q -- "$socket_dir" "$PGDATA/postmaster.opts"; then
-    return 0
-  fi
-  if [ -f "$PGDATA/postmaster.pid" ] \
-    && grep -F -q -- "$socket_dir" "$PGDATA/postmaster.pid"; then
-    return 0
-  fi
-  return 1
 }
 
 write_pending_if_partial_init() {
@@ -64,17 +54,74 @@ write_pending_if_partial_init() {
   fi
 }
 
+run_phase() {
+  "$@" &
+  active_pid=$!
+  phase_status=0
+  wait "$active_pid" || phase_status=$?
+  active_pid=
+  return "$phase_status"
+}
+
+stop_active_phase() {
+  if [ -n "$active_pid" ]; then
+    kill -TERM "$active_pid" >/dev/null 2>&1 || true
+    wait "$active_pid" >/dev/null 2>&1 || true
+    active_pid=
+  fi
+}
+
+start_temp_server() {
+  # Keep the actual postgres process as the tracked child. Unlike pg_ctl,
+  # postgres stays in the foreground, so cancellation cannot orphan a server
+  # or confuse an already-running server in this PGDATA.
+  "$bin_dir/postgres" -D "$PGDATA" \
+    -c 'listen_addresses=' -c "port=5432" \
+    -c "unix_socket_directories=$socket_dir" \
+    -c "unix_socket_permissions=0700" >"$migration_log" 2>&1 &
+  temp_server_pid=$!
+
+  readiness_started=$(date +%s)
+  while ! "$bin_dir/pg_isready" -h "$socket_dir" -p 5432 -t 1 \
+    -U "$POSTGRES_USER" -d "$POSTGRES_DB" >/dev/null 2>&1; do
+    if ! kill -0 "$temp_server_pid" >/dev/null 2>&1; then
+      temp_status=0
+      wait "$temp_server_pid" || temp_status=$?
+      temp_server_pid=
+      [ "$temp_status" -ne 0 ] || temp_status=1
+      return "$temp_status"
+    fi
+    readiness_now=$(date +%s)
+    if [ "$((readiness_now - readiness_started))" -ge 60 ]; then
+      echo "supabase-postgres: temporary server did not become ready" >&2
+      return 1
+    fi
+    sleep 1
+  done
+}
+
+stop_temp_server() {
+  if [ -n "$temp_server_pid" ]; then
+    if kill -0 "$temp_server_pid" >/dev/null 2>&1; then
+      kill -INT "$temp_server_pid" >/dev/null 2>&1 || true
+    fi
+    temp_status=0
+    wait "$temp_server_pid" || temp_status=$?
+    temp_server_pid=
+    [ "$temp_status" -eq 0 ] || return "$temp_status"
+  fi
+}
+
 cleanup() {
   status=$?
   trap - 0 HUP INT TERM
   cleanup_error=0
+  stop_active_phase
 
-  # A signal can arrive while pg_ctl -w start is still blocked. The command
-  # is considered ours only when PostgreSQL recorded our unique socket path;
-  # this protects an already-running server in the same PGDATA.
-  if temp_server_owned; then
-    "$bin_dir/pg_ctl" -D "$PGDATA" -m fast -w stop >/dev/null 2>&1 \
-      || cleanup_error=1
+  # Any temporary server here is the foreground child started by this
+  # process. Stop that exact child; no daemon ownership heuristic is needed.
+  if ! stop_temp_server; then
+    cleanup_error=1
   fi
 
   if ! restore_schema; then
@@ -140,9 +187,19 @@ if [ "$initialized" = 0 ]; then
   # The upstream init script's final postgres exec is intentionally converted
   # into a config probe. This keeps its initdb/config/password behavior in the
   # versioned PostgreSQL source tree while leaving startup to this command.
-  bash "$init_script" -C max_connections >/dev/null
+  run_phase bash "$init_script" -C max_connections >/dev/null
   initialized=1
   fresh=1
+fi
+
+# A PG_VERSION without the pending witness is an established cluster. It must
+# still have the server's durable startup record; otherwise initdb was
+# interrupted before any temporary server could be started. Do not guess or
+# mutate such a data directory.
+if [ "$initialized" = 1 ] && [ "$fresh" = 0 ] \
+  && [ ! -s "$PGDATA/postmaster.opts" ]; then
+  echo "supabase-postgres: initialized data has no postmaster.opts; refusing to start incomplete $PGDATA" >&2
+  exit 1
 fi
 
 # PG_VERSION can be written before a first-boot process is interrupted. Keep
@@ -175,32 +232,24 @@ if [ "$fresh" = 1 ]; then
   socket_dir=$(mktemp -d /tmp/supabase-pg.XXXXXX)
   migration_log="$socket_dir/postgres.log"
   chmod 700 "$socket_dir"
-  # Set this before -w start: SIGTERM can interrupt pg_ctl while PostgreSQL
-  # has already written its ownership record.
-  temp_server_started=1
 
   echo "supabase-postgres: running bundled migrations"
-  if ! "$bin_dir/pg_ctl" -D "$PGDATA" -l "$migration_log" \
-    -o "-c listen_addresses='' -c port=5432 -c unix_socket_directories='$socket_dir' -c unix_socket_permissions=0700" \
-    -w start; then
+  if ! start_temp_server; then
     cat "$migration_log" >&2 2>/dev/null || true
     exit 1
   fi
-  if ! temp_server_owned; then
-    echo "supabase-postgres: could not prove ownership of the temporary server; refusing to continue" >&2
-    exit 1
-  fi
 
-  # The migration and init-script environments intentionally stay in their
-  # subshells; final server options must retain the caller's values.
-  # shellcheck disable=SC2030,SC2031
-  if ! (
+  # The migration environment intentionally stays in its subshell; final
+  # server options must retain the caller's values. exec keeps the tracked
+  # background PID attached to the actual migration process for cancellation.
+  run_migrations() {
     cd "$bundle_dir/share/supabase-cli/migrations"
     export POSTGRES_HOST="$socket_dir" POSTGRES_PORT=5432
     export PGHOST="$socket_dir" PGPORT=5432 PGDATABASE="$POSTGRES_DB"
     export PGPASSWORD="$POSTGRES_PASSWORD"
-    sh "$migration_script"
-  ); then
+    exec sh "$migration_script"
+  }
+  if ! run_phase run_migrations; then
     cat "$migration_log" >&2 2>/dev/null || true
     restore_schema
     exit 1
@@ -214,9 +263,8 @@ if [ "$fresh" = 1 ]; then
 
   # Docker's initdb.d is an optional consumer input. It runs after the
   # immutable Supabase migrations, matching the official image contract.
-  if [ "$fresh" = 1 ] && [ "$has_init_files" = 1 ]; then
-    # shellcheck disable=SC2031
-    (
+  if [ "$has_init_files" = 1 ]; then
+    run_initdb_files() {
       export POSTGRES_HOST="$socket_dir" POSTGRES_PORT=5432
       export PGHOST="$socket_dir" PGPORT=5432 PGDATABASE="$POSTGRES_DB"
       export PGPASSWORD="$POSTGRES_PASSWORD"
@@ -244,27 +292,27 @@ if [ "$fresh" = 1 ]; then
             ;;
         esac
       done
-    ) || {
+    }
+    if ! run_phase run_initdb_files; then
       restore_schema
       exit 1
-    }
+    fi
   fi
 
-  # pg_ctl owns the temporary server only for the migration window. Stop it
-  # before removing the pending witness; the final exec below replaces this
-  # shell, so an EXIT trap cannot perform this cleanup after a successful start.
-  if ! "$bin_dir/pg_ctl" -D "$PGDATA" -m fast -w stop; then
+  # Stop the foreground temporary server before removing the pending witness;
+  # the final exec below replaces this shell, so an EXIT trap cannot perform
+  # this cleanup after a successful start.
+  if ! stop_temp_server; then
     cat "$migration_log" >&2 2>/dev/null || true
     exit 1
   fi
-  temp_server_started=0
   rm -rf "$socket_dir"
 
   # Removing the pending witness is the commit point. All fresh bootstrap
   # work and schema restoration have completed, so an interrupted final exec
   # can safely use the existing-cluster path on the next start.
-  rm -f "$init_pending"
   init_attempted=0
+  rm -f "$init_pending"
   trap - 0 HUP INT TERM
 fi
 

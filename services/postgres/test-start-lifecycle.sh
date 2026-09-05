@@ -27,69 +27,79 @@ setup_fixture() {
   cp "$HELPER" "$bundle/bin/supabase-postgres-start"
 
   cat >"$bundle/bin/postgres" <<'EOF'
-#!/bin/sh
-set -eu
-if [ -n "${POSTGRES_EXEC_LOG:-}" ]; then
-  printf '%s\n' "$*" >>"$POSTGRES_EXEC_LOG"
-fi
-exit "${POSTGRES_EXIT:-0}"
+#!/usr/bin/env python3
+import os
+import signal
+import sys
+import time
+
+args = sys.argv[1:]
+exec_log = os.environ.get("POSTGRES_EXEC_LOG")
+if exec_log:
+    with open(exec_log, "a", encoding="utf-8") as stream:
+        stream.write("%s\n" % " ".join(args))
+if args and args[0] == "-C":
+    raise SystemExit(int(os.environ.get("POSTGRES_EXIT", "0")))
+
+data = os.environ["PGDATA"]
+socket = ""
+for index, arg in enumerate(args[:-1]):
+    if arg == "-c" and args[index + 1].startswith("unix_socket_directories="):
+        socket = args[index + 1].split("=", 1)[1]
+
+if not socket:
+    raise SystemExit(int(os.environ.get("POSTGRES_EXIT", "0")))
+
+with open(os.environ["PGCTL_EVENT_LOG"], "a", encoding="utf-8") as stream:
+    stream.write("start\n")
+if os.environ.get("PGCTL_EXISTING") == "1":
+    with open(os.path.join(data, "postmaster.opts"), "w", encoding="utf-8") as stream:
+        stream.write("existing server\n")
+    raise SystemExit(1)
+
+with open(os.path.join(data, "postmaster.opts"), "w", encoding="utf-8") as stream:
+    stream.write("unix_socket_directories=%s\n" % socket)
+with open(os.path.join(data, "postmaster.pid"), "w", encoding="utf-8") as stream:
+    stream.write("%s\n" % socket)
+with open(os.environ["PGCTL_SOCKET_LOG"], "w", encoding="utf-8") as stream:
+    stream.write("%s\n" % socket)
+ready = os.environ.get("PGCTL_READY")
+if ready:
+    open(ready, "a", encoding="utf-8").close()
+
+def stop(_signum, _frame):
+    with open(os.environ["PGCTL_EVENT_LOG"], "a", encoding="utf-8") as stream:
+        stream.write("stop\n")
+    try:
+        os.unlink(os.path.join(data, "postmaster.pid"))
+    except FileNotFoundError:
+        pass
+    stop_request = os.environ.get("PGCTL_STOP_REQUEST")
+    if stop_request:
+        open(stop_request, "a", encoding="utf-8").close()
+    raise SystemExit(0)
+
+for signal_number in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM):
+    signal.signal(signal_number, stop)
+while True:
+    time.sleep(1)
 EOF
 
-  cat >"$bundle/bin/pg_ctl" <<'EOF'
+  cat >"$bundle/bin/pg_isready" <<'EOF'
 #!/bin/sh
 set -eu
-data="${PGDATA:?}"
-opts=
-mode=
+socket=
 expect=
 for arg do
   if [ -n "$expect" ]; then
-    case "$expect" in
-      data) data="$arg" ;;
-      log) : ;;
-      opts) opts="$arg" ;;
-    esac
+    [ "$expect" = host ] && socket="$arg"
     expect=
     continue
   fi
-  case "$arg" in
-    -D) expect=data ;;
-    -l) expect=log ;;
-    -o) expect=opts ;;
-    start|stop) mode="$arg" ;;
-  esac
+  [ "$arg" = -h ] && expect=host
 done
-mkdir -p "$data"
-printf '%s\n' "$mode" >>"${PGCTL_EVENT_LOG:?}"
-case "$mode" in
-  start)
-    if [ "${PGCTL_EXISTING:-0}" = 1 ]; then
-      printf 'existing server\n' >"$data/postmaster.opts"
-      exit 1
-    fi
-    socket="$(printf '%s\n' "$opts" | sed -n "s/.*unix_socket_directories='\([^']*\)'.*/\1/p")"
-    printf '%s\n' "$opts" >"$data/postmaster.opts"
-    printf '%s\n' "$socket" >"$data/postmaster.pid"
-    printf '%s\n' "$socket" >"${PGCTL_SOCKET_LOG:?}"
-    if [ -n "${PGCTL_READY:-}" ]; then
-      : >"$PGCTL_READY"
-    fi
-    if [ "${PGCTL_BLOCK:-0}" = 1 ]; then
-      i=0
-      while [ ! -e "${PGCTL_STOP_REQUEST:?}" ] && [ "$i" -lt 3 ]; do
-        sleep 1
-        i=$((i + 1))
-      done
-      exit 143
-    fi
-    ;;
-  stop)
-    if [ -n "${PGCTL_STOP_REQUEST:-}" ]; then
-      : >"$PGCTL_STOP_REQUEST"
-    fi
-    rm -f "$data/postmaster.pid"
-    ;;
-esac
+[ -n "$socket" ] && [ -e "${PGDATA:?}/postmaster.pid" ] \
+  && [ "$(cat "$PGDATA/postmaster.pid")" = "$socket" ]
 EOF
 
   cat >"$bundle/share/supabase-cli/bin/supabase-postgres-init.sh" <<'EOF'
@@ -112,13 +122,21 @@ EOF
   cat >"$bundle/share/supabase-cli/migrations/migrate.sh" <<'EOF'
 #!/bin/sh
 set -eu
+trap 'exit 143' HUP INT TERM
 printf '%s\n' migrate >>"${EVENT_LOG:?}"
 if [ "${MIGRATE_FAIL:-0}" = 1 ]; then
   exit 17
 fi
+if [ "${MIGRATE_BLOCK:-0}" = 1 ]; then
+  i=0
+  while [ "$i" -lt "${MIGRATE_BLOCK_SECONDS:-30}" ]; do
+    sleep 1
+    i=$((i + 1))
+  done
+fi
 EOF
 
-  chmod 0755 "$bundle/bin/postgres" "$bundle/bin/pg_ctl" \
+  chmod 0755 "$bundle/bin/postgres" "$bundle/bin/pg_isready" \
     "$bundle/share/supabase-cli/bin/supabase-postgres-init.sh" \
     "$bundle/share/supabase-cli/migrations/migrate.sh"
   : >"$event_log"
@@ -129,7 +147,8 @@ EOF
   export EVENT_LOG="$event_log" PGCTL_EVENT_LOG="$pgctl_event_log"
   export PGCTL_SOCKET_LOG="$socket_log" POSTGRES_EXEC_LOG="$postgres_exec_log"
   export PATH="/usr/bin:/bin"
-  unset INIT_FAIL MIGRATE_FAIL PGCTL_EXISTING PGCTL_BLOCK PGCTL_READY PGCTL_STOP_REQUEST
+  unset INIT_FAIL MIGRATE_FAIL MIGRATE_BLOCK MIGRATE_BLOCK_SECONDS \
+    PGCTL_EXISTING PGCTL_READY PGCTL_STOP_REQUEST
   unset SUPABASE_POSTGRES_CONFIG_DIR SUPABASE_POSTGRES_INITDB_DIR
   unset SUPABASE_POSTGRES_SCHEMA_FILE SUPABASE_POSTGRES_SCHEMA_BACKUP
 }
@@ -151,9 +170,21 @@ assert_pending() {
 printf 'test existing unmarked cluster skips bootstrap\n'
 setup_fixture existing-unmarked
 printf '17\n' >"$data/PG_VERSION"
+printf 'existing server\n' >"$data/postmaster.opts"
 run_start -p 6543 || fail "existing unmarked cluster did not start"
 [ "$(count_event init)" = 0 ] || fail "existing cluster reran upstream init"
 [ "$(count_event migrate)" = 0 ] || fail "existing cluster reran bundled migrations"
+
+printf 'test initialized data without startup record fails closed\n'
+setup_fixture interrupted-unwitnessed
+printf '17\n' >"$data/PG_VERSION"
+printf 'valuable data\n' >"$data/valuable-data"
+if run_start; then
+  fail "unwitnessed initialized data unexpectedly started"
+fi
+[ -e "$data/valuable-data" ] || fail "unwitnessed data was deleted"
+[ "$(count_event init)" = 0 ] || fail "unwitnessed data reran upstream init"
+[ "$(count_event migrate)" = 0 ] || fail "unwitnessed data reran bundled migrations"
 
 printf 'test fresh migration failure blocks retry\n'
 setup_fixture migration-failure
@@ -217,9 +248,9 @@ fi
 unset PGCTL_EXISTING SUPABASE_POSTGRES_SCHEMA_FILE SUPABASE_POSTGRES_SCHEMA_BACKUP
 [ -e "$schema_backup" ] || fail "failed schema restore discarded backup"
 
-printf 'test TERM during start stops only the owned temporary server\n'
+printf 'test TERM during start stops only the owned temporary server before deadline\n'
 setup_fixture term-start
-export PGCTL_BLOCK=1 PGCTL_READY="$fixture_dir/ready" PGCTL_STOP_REQUEST="$fixture_dir/stop"
+export PGCTL_READY="$fixture_dir/ready"
 "$bundle/bin/supabase-postgres-start" >"$fixture_dir/output" 2>&1 &
 helper_pid=$!
 for _ in $(seq 1 50); do
@@ -229,6 +260,18 @@ done
 [ -e "$fixture_dir/ready" ] || fail "fixture pg_ctl did not enter start window"
 kill -TERM "$helper_pid"
 set +e
+for _ in $(seq 1 50); do
+  if ! kill -0 "$helper_pid" 2>/dev/null; then
+    break
+  fi
+  sleep 0.1
+done
+if kill -0 "$helper_pid" 2>/dev/null; then
+  kill -KILL "$helper_pid" 2>/dev/null || true
+  wait "$helper_pid" 2>/dev/null || true
+  set -e
+  fail "TERM during start did not exit before deadline"
+fi
 wait "$helper_pid"
 helper_status=$?
 set -e
@@ -239,6 +282,40 @@ assert_pending
 socket_path="$(cat "$socket_log")"
 [ -n "$socket_path" ] && [ ! -e "$socket_path" ] \
   || fail "TERM cleanup leaked temporary socket directory"
+
+printf 'test TERM during migration exits before deadline\n'
+setup_fixture term-migration
+export MIGRATE_BLOCK=1 MIGRATE_BLOCK_SECONDS=30
+"$bundle/bin/supabase-postgres-start" >"$fixture_dir/output" 2>&1 &
+helper_pid=$!
+for _ in $(seq 1 50); do
+  if grep -q '^migrate$' "$event_log"; then
+    break
+  fi
+  sleep 0.1
+done
+grep -q '^migrate$' "$event_log" || fail "fixture migration did not enter start window"
+kill -TERM "$helper_pid"
+set +e
+for _ in $(seq 1 50); do
+  if ! kill -0 "$helper_pid" 2>/dev/null; then
+    break
+  fi
+  sleep 0.1
+done
+if kill -0 "$helper_pid" 2>/dev/null; then
+  kill -KILL "$helper_pid" 2>/dev/null || true
+  wait "$helper_pid" 2>/dev/null || true
+  set -e
+  fail "TERM during migration did not exit before deadline"
+fi
+wait "$helper_pid"
+helper_status=$?
+set -e
+[ "$helper_status" -ne 0 ] || fail "TERM during migration unexpectedly succeeded"
+grep -q '^stop$' "$pgctl_event_log" \
+  || fail "TERM during migration did not stop temporary server"
+assert_pending
 
 printf 'test existing server is never stopped when ownership is unproven\n'
 setup_fixture existing-server

@@ -43,16 +43,18 @@ fi
 
 # CLI --from-backup writes schema.sql and a restore that runs it again.
 # Truncate+chown while root: no mv applet, and postgres cannot rename in /etc.
+export SUPABASE_POSTGRES_SCHEMA_FILE="${SUPABASE_POSTGRES_SCHEMA_FILE:-/etc/postgresql.schema.sql}"
+export SUPABASE_POSTGRES_SCHEMA_BACKUP="${SUPABASE_POSTGRES_SCHEMA_BACKUP:-/tmp/slim-schema.sql}"
+export SUPABASE_POSTGRES_INITDB_DIR="${SUPABASE_POSTGRES_INITDB_DIR:-/docker-entrypoint-initdb.d}"
 PGDATA="${PGDATA:-/var/lib/postgresql/data}"
-schema_sql="${SUPABASE_POSTGRES_SCHEMA_FILE:-/etc/postgresql.schema.sql}"
-schema_backup="${SUPABASE_POSTGRES_SCHEMA_BACKUP:-/tmp/slim-schema.sql}"
-initdb_dir="${SUPABASE_POSTGRES_INITDB_DIR:-/docker-entrypoint-initdb.d}"
 if [ "$(id -u)" = "0" ] && [ ! -s "$PGDATA/PG_VERSION" ] \
-  && [ -s "$schema_sql" ] && [ -f "$initdb_dir/migrate.sh" ]; then
-  cp "$schema_sql" "$schema_backup"
-  : > "$schema_sql"
+  && [ -s "$SUPABASE_POSTGRES_SCHEMA_FILE" ] \
+  && [ -f "$SUPABASE_POSTGRES_INITDB_DIR/migrate.sh" ]; then
+  cp "$SUPABASE_POSTGRES_SCHEMA_FILE" "$SUPABASE_POSTGRES_SCHEMA_BACKUP"
+  : > "$SUPABASE_POSTGRES_SCHEMA_FILE"
   # Sticky /tmp: drop-to must own the copy to restore and unlink it.
-  chown "${DROP_TO_UID:-0}:${DROP_TO_GID:-0}" "$schema_backup" "$schema_sql"
+  chown "${DROP_TO_UID:-0}:${DROP_TO_GID:-0}" \
+    "$SUPABASE_POSTGRES_SCHEMA_BACKUP" "$SUPABASE_POSTGRES_SCHEMA_FILE"
 fi
 
 # busybox su -c puts the first operand in $0; a dummy keeps "$@" intact.
