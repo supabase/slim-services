@@ -1,6 +1,16 @@
 {
   description = "Reproducible native artifacts and portable Supabase CLI runtimes";
 
+  # Postgres publishes its source-build closure to this public cache. The
+  # release wrappers accept flake configuration explicitly, so source builds
+  # remain the fallback when a caller opts out or the cache has no match.
+  nixConfig = {
+    extra-substituters = [ "https://nix-postgres-artifacts.s3.amazonaws.com" ];
+    extra-trusted-public-keys = [
+      "nix-postgres-artifacts:dGZlQOvKcNEjvT7QEAJbcV6b6uk7VF/hWMjhYleiaLI="
+    ];
+  };
+
   inputs = {
     # This is the shared build package set. It is deliberately separate from
     # runtime-nixpkgs: the latter supplies versioned interpreter definitions

@@ -1,6 +1,7 @@
-# Repo-owned portable Nix package for the Pooler / Supavisor (darwin
-# host-native artifacts). Same pattern as services/realtime/nix/default.nix;
-# see that file and NIX_PORTABLE_ARTIFACT_PLAYBOOK.md for the packaging notes.
+# Repo-owned portable Nix package for the Pooler / Supavisor. The package is
+# imported with the exact upstream source and dependency hashes for the
+# requested release; see NIX_PORTABLE_ARTIFACT_PLAYBOOK.md for the packaging
+# notes.
 #
 # Adapted from upstream sources/pooler/nix/package.nix (which is stale: it
 # points at native/pgparser/Cargo.lock while the workspace lock lives at

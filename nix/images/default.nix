@@ -594,7 +594,7 @@ pkgs.dockerTools.buildLayeredImage {
       ''
         ${lib.optionalString (service == "postgres") ''
           chown -R ${toString (identity.uid or 0)}:${toString (identity.gid or 0)} opt/postgres
-          chown ${toString (identity.uid or 0)}:${toString (identity.gid or 0)} var/lib/postgresql/data run/postgresql etc/postgresql etc/postgresql/postgresql.conf
+          chown ${toString (identity.uid or 0)}:${toString (identity.gid or 0)} var/lib/postgresql var/lib/postgresql/data run/postgresql etc/postgresql etc/postgresql/postgresql.conf
           chmod ${identity.mode or "0700"} var/lib/postgresql/data
           chmod 2775 run/postgresql
         ''}

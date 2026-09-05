@@ -34,6 +34,13 @@ Shared nixpkgs and runtime-definition pins remain distinct where compatibility
 requires it. Postgres and Edge Runtime retain the selected upstream release's
 own locked dependencies; updating the root lock does not replace those graphs.
 
+The root flake advertises Postgres's public binary cache through `nixConfig`.
+Release commands accept that configuration explicitly; a cache miss or an
+invocation that opts out still falls back to a source build. On multi-user Nix
+installations, configure the same `extra-substituters` and
+`extra-trusted-public-keys` in the daemon's `nix.conf` so builds can use the
+cache. Do not add users to `trusted-users` for this purpose.
+
 ## Automatic releases
 
 The hourly poller and `.github/service-release-sources.json` remain the release

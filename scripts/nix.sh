@@ -9,12 +9,12 @@ nix_release() {
   if [[ -f "$release_dir/source/flake.nix" ]] && python3 -c 'import json,sys; raise SystemExit(0 if json.load(open(sys.argv[1]))["service"] in ("postgres", "edge-runtime") else 1)' "$release_dir/release.json"; then
     input_args+=(--override-input upstream "path:$release_dir/source")
   fi
-  nix --extra-experimental-features 'nix-command flakes' "$operation" \
+  nix --extra-experimental-features 'nix-command flakes' --accept-flake-config "$operation" \
     "$ROOT_DIR#$installable" "${input_args[@]}" "$@"
 }
 
 nix_tool() {
-  nix --extra-experimental-features 'nix-command flakes' build \
+  nix --extra-experimental-features 'nix-command flakes' --accept-flake-config build \
     "$ROOT_DIR#$1^out" --no-write-lock-file --no-link --print-out-paths
 }
 

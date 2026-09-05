@@ -1,8 +1,7 @@
-# Repo-owned portable Nix package for Realtime (darwin host-native artifacts).
+# Repo-owned portable Nix package for Realtime.
 #
-# This file lives outside sources/ so the submodule stays read-only. The
-# artifact build copies services/realtime/nix/ into a temporary export of the
-# submodule (NIX_PACKAGE_OVERLAY) and runs `nix-build nix/ -A realtime`.
+# The package is imported with the exact upstream source and dependency hashes
+# for the requested release; the upstream submodule remains read-only.
 #
 # It builds the upstream mix release with ERTS included, then applies the
 # portable packaging steps from NIX_PORTABLE_ARTIFACT_PLAYBOOK.md:

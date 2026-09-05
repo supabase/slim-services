@@ -380,9 +380,10 @@ not allow the built-in Actions token to create pull requests.
 
 The release workflow rechecks the upstream release policy independently, so a
 manual dispatch cannot publish `main`, another branch, a draft/prerelease, or
-an unsupported tag. A newly triggered build can still fail safely when a
-service's version-specific dependency hashes need to be refreshed; no release
-or image is published unless every build and smoke test passes.
+an unsupported tag. A newly triggered build resolves its version-specific
+dependency hashes from the exact source automatically. Upstream dependency or
+build changes can still fail safely; no release or image is published unless
+every build and smoke test passes.
 
 ## Common Commands
 
@@ -462,7 +463,6 @@ scripts/archive-artifact.sh <artifact-rootfs> [archive-prefix]
 - Upstream submodules stay read-only.
 - Service-specific Nix changes live in this repo, not in `sources/`.
 - Prefer `scratch` when the artifact proves it can run there.
-- Prefer Distroless Debian 13 for glibc services.
 - Avoid Alpine unless musl is validated and wins.
 - Keep optimizations maintainable; do not carry a phase 2 variant for a tiny
   compressed gain.

@@ -1,6 +1,7 @@
-# Repo-owned portable Nix package for Analytics / Logflare (darwin
-# host-native artifacts). Same pattern as services/realtime/nix/default.nix;
-# see that file and NIX_PORTABLE_ARTIFACT_PLAYBOOK.md for the packaging notes.
+# Repo-owned portable Nix package for Analytics / Logflare. The package is
+# imported with the exact upstream source and dependency hashes for the
+# requested release; see NIX_PORTABLE_ARTIFACT_PLAYBOOK.md for the packaging
+# notes.
 #
 # Logflare-specific packaging:
 # - Four in-tree rustler NIF crates (native/*), members of a cargo workspace
@@ -186,16 +187,11 @@ let
 
   explorerNif = pkgs.fetchurl {
     url = "https://github.com/elixir-explorer/explorer/releases/download/v${explorerVersion}/${explorerNifName}";
-    hash =
-      if explorerNifHash != null then
-        explorerNifHash
-      else
-        lib.fakeHash;
+    hash = if explorerNifHash != null then explorerNifHash else lib.fakeHash;
   };
   sqlFmtNif = pkgs.fetchurl {
     url = "https://github.com/akoutmos/sql_fmt/releases/download/v${sqlFmtVersion}/${sqlFmtNifName}";
-    hash =
-      if sqlFmtNifHash != null then sqlFmtNifHash else lib.fakeHash;
+    hash = if sqlFmtNifHash != null then sqlFmtNifHash else lib.fakeHash;
   };
 
   mixDeps = fetchMixDeps {

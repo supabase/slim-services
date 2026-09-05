@@ -1,9 +1,8 @@
 {
-  # Repo-owned portable package overlay for the upstream Edge Runtime flake.
+  # Repo-owned portable package adapter for the upstream Edge Runtime.
   #
-  # This file intentionally lives outside sources/ so the submodule stays
-  # read-only. It is copied over nix/edge-runtime.nix in a temporary source export
-  # before running nix build for portable artifacts.
+  # It is imported with the exact upstream source and dependency hashes for the
+  # requested release; the upstream submodule stays read-only.
   #
   # It tracks the checked-out release's Cargo lockfile and Rusty V8 tag while
   # applying portability fixes:
@@ -68,17 +67,14 @@ let
   v8Archive = fetchurl {
     name = v8ArchiveName;
     url = "${rustyV8ReleaseUrl}/${v8ArchiveName}";
-    hash =
-      if v8ArchiveHash != null then v8ArchiveHash else lib.fakeHash;
+    hash = if v8ArchiveHash != null then v8ArchiveHash else lib.fakeHash;
   };
   v8Binding = fetchurl {
     name = v8BindingName;
     url = "${rustyV8ReleaseUrl}/${v8BindingName}";
-    hash =
-      if v8BindingHash != null then v8BindingHash else lib.fakeHash;
+    hash = if v8BindingHash != null then v8BindingHash else lib.fakeHash;
   };
-  resolvedCargoHash =
-    if cargoHash != null then cargoHash else lib.fakeHash;
+  resolvedCargoHash = if cargoHash != null then cargoHash else lib.fakeHash;
 
   build_step = rustPlatform.buildRustPackage (
     finalAttrs:
