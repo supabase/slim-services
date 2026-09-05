@@ -17,7 +17,7 @@ setup_fixture() {
   bundle="$fixture_dir/bundle"
   data="$fixture_dir/data"
   event_log="$fixture_dir/events"
-  pgctl_event_log="$fixture_dir/pgctl-events"
+  server_event_log="$fixture_dir/server-events"
   socket_log="$fixture_dir/socket"
   postgres_exec_log="$fixture_dir/postgres-exec"
   mkdir -p "$bundle/bin" "$bundle/share/supabase-cli/bin" \
@@ -50,9 +50,9 @@ for index, arg in enumerate(args[:-1]):
 if not socket:
     raise SystemExit(int(os.environ.get("POSTGRES_EXIT", "0")))
 
-with open(os.environ["PGCTL_EVENT_LOG"], "a", encoding="utf-8") as stream:
+with open(os.environ["SERVER_EVENT_LOG"], "a", encoding="utf-8") as stream:
     stream.write("start\n")
-if os.environ.get("PGCTL_EXISTING") == "1":
+if os.environ.get("SERVER_EXISTING") == "1":
     with open(os.path.join(data, "postmaster.opts"), "w", encoding="utf-8") as stream:
         stream.write("existing server\n")
     raise SystemExit(1)
@@ -61,22 +61,19 @@ with open(os.path.join(data, "postmaster.opts"), "w", encoding="utf-8") as strea
     stream.write("unix_socket_directories=%s\n" % socket)
 with open(os.path.join(data, "postmaster.pid"), "w", encoding="utf-8") as stream:
     stream.write("%s\n" % socket)
-with open(os.environ["PGCTL_SOCKET_LOG"], "w", encoding="utf-8") as stream:
+with open(os.environ["SERVER_SOCKET_LOG"], "w", encoding="utf-8") as stream:
     stream.write("%s\n" % socket)
-ready = os.environ.get("PGCTL_READY")
+ready = os.environ.get("SERVER_READY")
 if ready:
     open(ready, "a", encoding="utf-8").close()
 
 def stop(_signum, _frame):
-    with open(os.environ["PGCTL_EVENT_LOG"], "a", encoding="utf-8") as stream:
+    with open(os.environ["SERVER_EVENT_LOG"], "a", encoding="utf-8") as stream:
         stream.write("stop\n")
     try:
         os.unlink(os.path.join(data, "postmaster.pid"))
     except FileNotFoundError:
         pass
-    stop_request = os.environ.get("PGCTL_STOP_REQUEST")
-    if stop_request:
-        open(stop_request, "a", encoding="utf-8").close()
     raise SystemExit(0)
 
 for signal_number in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM):
@@ -99,6 +96,7 @@ for arg do
   [ "$arg" = -h ] && expect=host
 done
 [ -n "$socket" ] && [ -e "${PGDATA:?}/postmaster.pid" ] \
+  && [ "${SERVER_WAIT_FOR_READINESS:-0}" != 1 ] \
   && [ "$(cat "$PGDATA/postmaster.pid")" = "$socket" ]
 EOF
 
@@ -140,15 +138,16 @@ EOF
     "$bundle/share/supabase-cli/bin/supabase-postgres-init.sh" \
     "$bundle/share/supabase-cli/migrations/migrate.sh"
   : >"$event_log"
-  : >"$pgctl_event_log"
+  : >"$server_event_log"
   : >"$postgres_exec_log"
   export PGDATA="$data"
   export POSTGRES_USER=supabase_admin POSTGRES_PASSWORD=postgres POSTGRES_DB=postgres
-  export EVENT_LOG="$event_log" PGCTL_EVENT_LOG="$pgctl_event_log"
-  export PGCTL_SOCKET_LOG="$socket_log" POSTGRES_EXEC_LOG="$postgres_exec_log"
+  export EVENT_LOG="$event_log" SERVER_EVENT_LOG="$server_event_log"
+  export SERVER_SOCKET_LOG="$socket_log" POSTGRES_EXEC_LOG="$postgres_exec_log"
   export PATH="/usr/bin:/bin"
   unset INIT_FAIL MIGRATE_FAIL MIGRATE_BLOCK MIGRATE_BLOCK_SECONDS \
-    PGCTL_EXISTING PGCTL_READY PGCTL_STOP_REQUEST
+    SERVER_EXISTING SERVER_READY
+  unset SERVER_WAIT_FOR_READINESS
   unset SUPABASE_POSTGRES_CONFIG_DIR SUPABASE_POSTGRES_INITDB_DIR
   unset SUPABASE_POSTGRES_SCHEMA_FILE SUPABASE_POSTGRES_SCHEMA_BACKUP
 }
@@ -223,14 +222,14 @@ cp "$schema_file" "$schema_backup"
 : >"$schema_file"
 export SUPABASE_POSTGRES_SCHEMA_FILE="$schema_file"
 export SUPABASE_POSTGRES_SCHEMA_BACKUP="$schema_backup"
-export PGCTL_EXISTING=1
+export SERVER_EXISTING=1
 if run_start; then
   fail "existing-server start failure unexpectedly succeeded"
 fi
-unset PGCTL_EXISTING SUPABASE_POSTGRES_SCHEMA_FILE SUPABASE_POSTGRES_SCHEMA_BACKUP
+unset SERVER_EXISTING SUPABASE_POSTGRES_SCHEMA_FILE SUPABASE_POSTGRES_SCHEMA_BACKUP
 [ "$(cat "$schema_file")" = 'schema-body' ] || fail "schema backup was not restored"
 [ ! -e "$schema_backup" ] || fail "restored schema backup was not removed"
-if grep -q '^stop$' "$pgctl_event_log"; then
+if grep -q '^stop$' "$server_event_log"; then
   fail "existing server was stopped after unowned start failure"
 fi
 
@@ -241,23 +240,23 @@ schema_backup="$fixture_dir/schema.backup"
 printf 'schema-body\n' >"$schema_backup"
 export SUPABASE_POSTGRES_SCHEMA_FILE="$schema_file"
 export SUPABASE_POSTGRES_SCHEMA_BACKUP="$schema_backup"
-export PGCTL_EXISTING=1
+export SERVER_EXISTING=1
 if run_start; then
   fail "schema restore failure fixture unexpectedly succeeded"
 fi
-unset PGCTL_EXISTING SUPABASE_POSTGRES_SCHEMA_FILE SUPABASE_POSTGRES_SCHEMA_BACKUP
+unset SERVER_EXISTING SUPABASE_POSTGRES_SCHEMA_FILE SUPABASE_POSTGRES_SCHEMA_BACKUP
 [ -e "$schema_backup" ] || fail "failed schema restore discarded backup"
 
 printf 'test TERM during start stops only the owned temporary server before deadline\n'
 setup_fixture term-start
-export PGCTL_READY="$fixture_dir/ready"
+export SERVER_READY="$fixture_dir/ready" SERVER_WAIT_FOR_READINESS=1
 "$bundle/bin/supabase-postgres-start" >"$fixture_dir/output" 2>&1 &
 helper_pid=$!
 for _ in $(seq 1 50); do
   [ -e "$fixture_dir/ready" ] && break
   sleep 0.1
 done
-[ -e "$fixture_dir/ready" ] || fail "fixture pg_ctl did not enter start window"
+[ -e "$fixture_dir/ready" ] || fail "fixture postgres did not enter start window"
 kill -TERM "$helper_pid"
 set +e
 for _ in $(seq 1 50); do
@@ -276,7 +275,7 @@ wait "$helper_pid"
 helper_status=$?
 set -e
 [ "$helper_status" -ne 0 ] || fail "TERM during start unexpectedly succeeded"
-grep -q '^stop$' "$pgctl_event_log" \
+grep -q '^stop$' "$server_event_log" \
   || fail "TERM during owned start did not stop temporary server"
 assert_pending
 socket_path="$(cat "$socket_log")"
@@ -313,18 +312,18 @@ wait "$helper_pid"
 helper_status=$?
 set -e
 [ "$helper_status" -ne 0 ] || fail "TERM during migration unexpectedly succeeded"
-grep -q '^stop$' "$pgctl_event_log" \
+grep -q '^stop$' "$server_event_log" \
   || fail "TERM during migration did not stop temporary server"
 assert_pending
 
 printf 'test existing server is never stopped when ownership is unproven\n'
 setup_fixture existing-server
-export PGCTL_EXISTING=1
+export SERVER_EXISTING=1
 if run_start; then
   fail "existing-server conflict unexpectedly succeeded"
 fi
-unset PGCTL_EXISTING
-if grep -q '^stop$' "$pgctl_event_log"; then
+unset SERVER_EXISTING
+if grep -q '^stop$' "$server_event_log"; then
   fail "unowned existing server was stopped"
 fi
 assert_pending
@@ -337,8 +336,8 @@ run_start -p 6543 || fail "successful fixture start failed"
 socket_path="$(cat "$socket_log")"
 [ -n "$socket_path" ] && [ ! -e "$socket_path" ] \
   || fail "successful start leaked temporary socket directory"
-grep -q '^start$' "$pgctl_event_log" || fail "successful start did not start temp server"
-grep -q '^stop$' "$pgctl_event_log" || fail "successful start did not stop temp server"
+grep -q '^start$' "$server_event_log" || fail "successful start did not start temp server"
+grep -q '^stop$' "$server_event_log" || fail "successful start did not stop temp server"
 grep -q 'pgsodium.getkey_script=' "$postgres_exec_log" \
   || fail "final exec omitted pgsodium getkey override"
 
