@@ -437,6 +437,11 @@ stdenv.mkDerivation {
     # Add migration files
     cp -r ${migrationBundle}/share/supabase-cli/migrations $out/share/supabase-cli/
 
+    # Service-owned lifecycle command. It is deliberately a small shell
+    # adapter around the versioned init script and migration bundle so native
+    # artifacts and derived images share exactly one first-boot contract.
+    install -m 0755 ${./postgres-start.sh} $out/bin/supabase-postgres-start
+
     # Add receipt
     cp ${receipt}/receipt.json $out/cli-receipt.json
   '';

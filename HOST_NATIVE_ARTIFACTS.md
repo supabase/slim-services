@@ -79,6 +79,15 @@ upstream image for local CLI behavior. Its `shared_preload_libraries` follows
 the matching `UPSTREAM_IMAGE` policy; the artifact does not substitute a
 smaller preload list for upstream behavior.
 
+Postgres also exposes `bin/supabase-postgres-start`. The CLI and derived image
+call this launcher with `PGDATA`, the `POSTGRES_*` credentials, and the final
+server arguments; it owns first-boot initialization, bundled migrations, the
+`.supabase-stack-migration-complete` marker, and the final `postgres` exec.
+`SUPABASE_POSTGRES_CONFIG_DIR`, `SUPABASE_POSTGRES_INITDB_DIR`, and the schema
+backup variables are optional image wiring. A failed fresh init leaves an
+explicit pending witness and the data directory intact so a later start fails
+closed until it is recovered.
+
 ## Service preparation and startup
 
 The portable artifacts expose service-owned launchers alongside their main

@@ -25,6 +25,10 @@ start_postgres pooler_smoke
 api_secret='pooler-api-secret-with-at-least-32-characters'
 metrics_secret='pooler-metrics-secret-with-at-least-32'
 secret_key_base="$(openssl rand -hex 32)"
+# Supavisor's Cloak AES-GCM vault key is a 32-byte printable value. This
+# matches the CLI's unpadded base64url generator (24 random bytes -> 32 chars).
+vault_enc_key="$(openssl rand -base64 24 | tr '+/' '-_' | tr -d '=[:space:]')"
+[[ "${#vault_enc_key}" == "32" ]] || fail "generated pooler vault key is not 32 bytes"
 token="$(make_role_jwt "$api_secret" "service_role")"
 
 if [[ -n "$artifact_rootfs" ]]; then
@@ -61,6 +65,7 @@ PY
     SECRET_KEY_BASE="$secret_key_base"
     API_JWT_SECRET="$api_secret"
     METRICS_JWT_SECRET="$metrics_secret"
+    VAULT_ENC_KEY="$vault_enc_key"
     PORT="$port"
     RELEASE_DISTRIBUTION=none
   )
@@ -91,6 +96,18 @@ PY
   log "updating pooler tenant with quoted password and settings"
   provision_pooler_tenant 'pooler "quoted" password \ slash' session 7 120
   provision_pooler_tenant 'pooler "quoted" password \ slash' session 7 120
+
+  tenant_state="$(harness_psql pooler_smoke -tA <<'SQL'
+SELECT format('%s|%s|%s|%s|%s|%s', count(DISTINCT t.id), max(t.default_pool_size),
+  max(t.default_max_clients), count(u.id), max(u.pool_size), max(u.mode_type))
+FROM _supavisor.tenants AS t
+LEFT JOIN _supavisor.users AS u ON u.tenant_external_id = t.external_id
+WHERE t.external_id = 'pooler-smoke';
+SQL
+)"
+  [[ "$tenant_state" == "1|7|120|1|7|session" ]] \
+    || fail "pooler tenant state mismatch after reprovisioning: $tenant_state"
+
   log "smoke testing pooler host process on port $port"
   start_host_service pooler "$pooler_log" \
     "${pooler_env[@]}" \
@@ -119,6 +136,7 @@ docker run --rm --network "$NETWORK" \
   -e SECRET_KEY_BASE="$secret_key_base" \
   -e API_JWT_SECRET="$api_secret" \
   -e METRICS_JWT_SECRET="$metrics_secret" \
+  -e VAULT_ENC_KEY="$vault_enc_key" \
   --entrypoint /app/bin/prepare \
   "$image" \
   || fail "pooler preparation one-shot failed"
@@ -129,6 +147,7 @@ provision_pooler_image_tenant() {
     -e SECRET_KEY_BASE="$secret_key_base" \
     -e API_JWT_SECRET="$api_secret" \
     -e METRICS_JWT_SECRET="$metrics_secret" \
+    -e VAULT_ENC_KEY="$vault_enc_key" \
     -e POSTGRES_HOST="$POSTGRES_CONTAINER" \
     -e POSTGRES_PORT=5432 \
     -e POSTGRES_PASSWORD="$1" \
@@ -146,6 +165,17 @@ provision_pooler_image_tenant postgres transaction 5 100
 provision_pooler_image_tenant 'pooler "quoted" password \ slash' session 7 120
 provision_pooler_image_tenant 'pooler "quoted" password \ slash' session 7 120
 
+tenant_state="$(harness_psql pooler_smoke -tA <<'SQL'
+SELECT format('%s|%s|%s|%s|%s|%s', count(DISTINCT t.id), max(t.default_pool_size),
+  max(t.default_max_clients), count(u.id), max(u.pool_size), max(u.mode_type))
+FROM _supavisor.tenants AS t
+LEFT JOIN _supavisor.users AS u ON u.tenant_external_id = t.external_id
+WHERE t.external_id = 'pooler-smoke';
+SQL
+)"
+[[ "$tenant_state" == "1|7|120|1|7|session" ]] \
+  || fail "pooler tenant state mismatch after image reprovisioning: $tenant_state"
+
 container="pooler-smoke-$RUN_ID"
 run_container \
   "$container" \
@@ -155,6 +185,7 @@ run_container \
   -e SECRET_KEY_BASE="$secret_key_base" \
   -e API_JWT_SECRET="$api_secret" \
   -e METRICS_JWT_SECRET="$metrics_secret" \
+  -e VAULT_ENC_KEY="$vault_enc_key" \
   "$image"
 port="$(host_port "$container" 4000)"
 

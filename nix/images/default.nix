@@ -404,6 +404,8 @@ let
                   "head"
                   "id"
                   "mkdir"
+                  "mktemp"
+                  "mv"
                   "od"
                   "readlink"
                   "rm"
@@ -604,7 +606,9 @@ pkgs.dockerTools.buildLayeredImage {
           chmod ${identity.mode or "0755"} root
         ''}
         ${lib.optionalString ((cfg.user or "") == "65532:65532") ''
-          chown -R 65532:65532 ${lib.removePrefix "/" (cfg.root or ".")}
+          chown -R 65532:65532 ${
+            if cfg.rootfsMode == "node" then "slim-runtime/app" else lib.removePrefix "/" cfg.root
+          }
           chown -R 65532:65532 home/nonroot
         ''}
       '';
