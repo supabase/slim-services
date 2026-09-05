@@ -21,7 +21,7 @@ let
   lockfile = builtins.readFile (src + "/pnpm-lock.yaml");
   platform = if pkgs.stdenv.hostPlatform.isDarwin then "darwin" else "linux";
   arch = if pkgs.stdenv.hostPlatform.isAarch64 then "arm64" else "64";
-  usesScopedTurboPackage = lib.hasInfix "@turbo/" lockfile;
+  usesScopedTurboPackage = builtins.replaceStrings [ "@turbo/" ] [ "" ] lockfile != lockfile;
   turboPackage =
     if usesScopedTurboPackage then "@turbo/${platform}-${arch}" else "turbo-${platform}-${arch}";
   turboArchive = pkgs.fetchurl {
