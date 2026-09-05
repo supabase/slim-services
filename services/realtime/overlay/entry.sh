@@ -1,6 +1,6 @@
 #!/bin/sh
 # Derived-image entrypoint: the image is the portable artifact plus this
-# wiring (HOST_NATIVE_PLAN.md, native-first convergence). Cloud-deploy
+# wiring (HOST_NATIVE_ARTIFACTS.md, native-first convergence). Cloud-deploy
 # bootstrap (Fly/ECS IP discovery, cluster cert generation) from the old
 # docker-source run.sh is intentionally absent from the local/CI image.
 set -eu

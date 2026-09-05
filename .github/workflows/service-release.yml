@@ -508,9 +508,27 @@ jobs:
           release_dir="release-assets"
           mkdir -p "$release_dir"
 
-          archive="$(find "$artifact_dir" -maxdepth 1 -type f \( -name '*.tar.zst' -o -name '*.tar.gz' -o -name '*.tar' \) -print -quit)"
-          [[ -n "$archive" ]] || {
-            printf 'distribution archive not found in %s\n' "$artifact_dir" >&2
+          archive_prefix="$SERVICE-$VERSION-$PLATFORM_DIR"
+          archive_name="$(python3 - "$artifact_dir/manifest.json" "$archive_prefix" <<'PY'
+          import json
+          import sys
+
+          manifest_path, archive_prefix = sys.argv[1:]
+          with open(manifest_path, encoding="utf-8") as stream:
+              archive = json.load(stream).get("archive")
+          expected = {
+              archive_prefix + suffix for suffix in (".tar.zst", ".tar.gz", ".tar")
+          }
+          if archive not in expected:
+              raise SystemExit(
+                  f"manifest archive must be one of {sorted(expected)}, got: {archive!r}"
+              )
+          print(archive)
+          PY
+          )"
+          archive="$artifact_dir/$archive_name"
+          [[ -f "$archive" ]] || {
+            printf 'manifest archive not found in %s: %s\n' "$artifact_dir" "$archive_name" >&2
             exit 1
           }
           cp "$archive" "$release_dir/"

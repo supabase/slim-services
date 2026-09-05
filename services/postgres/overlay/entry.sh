@@ -1,6 +1,6 @@
 #!/bin/sh
 # Derived-image entrypoint: the image is the portable postgres artifact
-# (/opt/postgres) plus this wiring (HOST_NATIVE_PLAN.md, native-first — no
+# (/opt/postgres) plus this wiring (HOST_NATIVE_ARTIFACTS.md, native-first — no
 # exceptions). First boot delegates initialization to the bundle's own
 # supabase-postgres-init.sh (initdb, CLI config templates with the pgsodium
 # getkey script wired, superuser password, bundled init scripts), then this

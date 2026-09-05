@@ -1,7 +1,7 @@
 name: Service artifacts
 
 # Builds, smokes, and uploads per-service host-native archives for every
-# supported CI target (CI_MATRIX.md, HOST_NATIVE_PLAN.md native-first):
+# supported CI target (CI_MATRIX.md, HOST_NATIVE_ARTIFACTS.md native-first):
 #
 #   linux-arm64 / linux-amd64  — native runners build the portable artifact
 #                                (Nix or build-host.sh), derive the Docker
@@ -224,7 +224,7 @@ jobs:
           recipe_metadata="$(TARGET_OS="${{ matrix.target_os }}" ARCH="${{ matrix.arch }}" SERVICE="${{ matrix.service }}" bash -c '
             source scripts/lib.sh
             load_recipe "$SERVICE" >/dev/null 2>&1
-            printf "%s|%s|%s" "${ARTIFACT_BACKEND:-docker-source}" "${SOURCE_REF:-}" "${UPSTREAM_ASSETS_FILE:-}"
+            printf "%s|%s|%s" "${ARTIFACT_BACKEND:?recipe must define ARTIFACT_BACKEND}" "${SOURCE_REF:-}" "${UPSTREAM_ASSETS_FILE:-}"
           ')"
           IFS='|' read -r artifact_backend source_ref upstream_assets_file <<< "$recipe_metadata"
           if [[ "${{ matrix.external || false }}" == "true" ]]; then

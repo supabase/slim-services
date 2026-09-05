@@ -11,7 +11,7 @@ Usage: scripts/build-artifact.sh SERVICE [VERSION]
 
 Build SERVICE with the backend selected by services/SERVICE/recipe.env:
 - ARTIFACT_BACKEND=nix
-- ARTIFACT_BACKEND=docker-source
+- ARTIFACT_BACKEND=host-source
 - ARTIFACT_BACKEND=image
 - ARTIFACT_BACKEND=upstream-archive
 
@@ -40,21 +40,11 @@ case "$TARGET_OS" in
     ;;
 esac
 
-case "${ARTIFACT_BACKEND:-docker-source}" in
+case "${ARTIFACT_BACKEND:-}" in
   nix)
     exec "$ROOT_DIR/scripts/build-artifact-from-nix.sh" "$service" "$@"
     ;;
-  docker-source)
-    if [[ "$TARGET_OS" != "linux" && ! -x "$ROOT_DIR/services/$service/build-host.sh" ]]; then
-      fail "docker-source artifacts for non-linux targets require services/$service/build-host.sh"
-    fi
-    exec "$ROOT_DIR/scripts/build-artifact-from-source.sh" "$service" "$@"
-    ;;
-  docker-image)
-    # Dockerfile.artifact build rooted at an upstream image (FROM SOURCE_IMAGE)
-    # instead of a source submodule; used when pruning a published image is the
-    # practical build path (e.g. the Nix-based supabase/postgres image).
-    [[ "$TARGET_OS" == "linux" ]] || fail "docker-image artifacts are only supported for linux targets"
+  host-source)
     exec "$ROOT_DIR/scripts/build-artifact-from-source.sh" "$service" "$@"
     ;;
   image)

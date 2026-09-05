@@ -1,6 +1,6 @@
 #!/bin/sh
 # Derived-image entrypoint: the image is the portable artifact plus this
-# wiring (HOST_NATIVE_PLAN.md, native-first convergence).
+# wiring (HOST_NATIVE_ARTIFACTS.md, native-first convergence).
 set -eu
 
 if [ -n "${RLIMIT_NOFILE:-}" ]; then

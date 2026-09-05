@@ -156,7 +156,7 @@ CLI — per the standing decision.
 
 - Record the NSS built-in contract and evidence (this file is the canonical
   record; add a pointer + short version to the portability docs the repo
-  already keeps, e.g. HOST_NATIVE_PLAN.md decision log and the gotcha index).
+  already keeps, e.g. HOST_NATIVE_ARTIFACTS.md and the gotcha index).
 - Update the handoff's PR-2 section to point here.
 - Gotcha additions: glibc ≥ 2.34 compiles nss_files/nss_dns into libc (bundling
   NSS modules for host glibc is wrong, not just unnecessary); stock glibc
