@@ -163,10 +163,11 @@ if [ -n "$initdb_dir" ] && [ -d "$initdb_dir" ]; then
 fi
 
 # A previous fresh start failed during initialization or bootstrap. Do not
-# silently promote that partial cluster on a later invocation; the owner can
-# inspect/fix the input and remove this explicit pending witness before retry.
+# silently promote that partial cluster on a later invocation; recover and
+# complete initialization manually before removing this explicit pending
+# witness.
 if [ -e "$init_pending" ]; then
-  echo "supabase-postgres: initialization is pending after an earlier failure; refusing to start $PGDATA until $init_pending is removed" >&2
+  echo "supabase-postgres: initialization is incomplete after an earlier failure; recover the cluster before removing $init_pending" >&2
   exit 1
 fi
 
