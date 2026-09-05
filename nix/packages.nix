@@ -172,14 +172,14 @@ let
         pkgs = postgresPkgs;
         upstream = requireReleaseSource;
         postgresqlPackages = upstream.packages.${system};
-        portablePostgres = ../portable-postgres;
+        portablePostgres = ./portable-postgres;
         nixpkgsRevision = if hasPostgresNixpkgs then upstream.inputs.nixpkgs.rev else nixpkgs.rev or null;
       };
       postgresPortable =
         postgresPkgs.callPackage ../services/postgres/nix/packages/postgres-portable.nix
           {
             upstream = requireReleaseSource;
-            portablePostgres = ../portable-postgres;
+            portablePostgres = ./portable-postgres;
             psql_cli = if postgresMajor == "15" then postgresPackages.legacyPackages.psql_15_cli else null;
             psql_17_cli = if postgresMajor == "17" then postgresPackages.legacyPackages.psql_17_cli else null;
             postgres_major = postgresMajor;

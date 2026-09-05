@@ -18,10 +18,18 @@ let
   };
   packageJson = builtins.fromJSON (builtins.readFile (src + "/package.json"));
   turboVersion = packageJson.devDependencies.turbo;
+  lockfile = builtins.readFile (src + "/pnpm-lock.yaml");
   platform = if pkgs.stdenv.hostPlatform.isDarwin then "darwin" else "linux";
   arch = if pkgs.stdenv.hostPlatform.isAarch64 then "arm64" else "64";
+  usesScopedTurboPackage = lib.hasInfix "@turbo/" lockfile;
+  turboPackage =
+    if usesScopedTurboPackage then "@turbo/${platform}-${arch}" else "turbo-${platform}-${arch}";
   turboArchive = pkgs.fetchurl {
-    url = "https://registry.npmjs.org/turbo-${platform}-${arch}/-/turbo-${platform}-${arch}-${turboVersion}.tgz";
+    url =
+      if usesScopedTurboPackage then
+        "https://registry.npmjs.org/@turbo/${platform}-${arch}/-/${platform}-${arch}-${turboVersion}.tgz"
+      else
+        "https://registry.npmjs.org/${turboPackage}/-/${turboPackage}-${turboVersion}.tgz";
     hash = hashes.turbo_tool_hash or lib.fakeHash;
   };
   turbo = pkgs.stdenvNoCC.mkDerivation {

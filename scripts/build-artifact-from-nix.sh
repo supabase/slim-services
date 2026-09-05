@@ -109,7 +109,7 @@ esac
 
 if [[ "$service" == postgrest ]]; then
   python3 - "$release_dir/release.json" "${UPSTREAM_ASSET_URL:-}" "${UPSTREAM_ASSET_SHA256:-}" <<'PYASSET'
-import json, re, sys, urllib.request
+import base64, json, re, sys, urllib.request
 path, url, digest = sys.argv[1:]
 with open(path, encoding="utf-8") as stream:
     data = json.load(stream)
@@ -125,7 +125,7 @@ if not url or not digest:
     url, digest = assets[0]["browser_download_url"], assets[0].get("digest", "").removeprefix("sha256:")
 if url != expected or re.fullmatch("[0-9a-f]{64}", digest) is None:
     raise SystemExit("invalid PostgREST release asset URL or SHA-256")
-data.update(assetUrl=url, assetHash=digest)
+data.update(assetUrl=url, assetHash="sha256-" + base64.b64encode(bytes.fromhex(digest)).decode("ascii"))
 with open(path, "w", encoding="utf-8") as stream:
     json.dump(data, stream, indent=2)
     stream.write("\n")

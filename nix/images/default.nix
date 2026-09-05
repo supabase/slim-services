@@ -16,6 +16,15 @@
 */
 let
   lib = pkgs.lib;
+  # Tini 0.19 uses basename without its POSIX declaration. The musl static
+  # build needs this header; keep the upstream warning checks enabled.
+  tini = pkgs.pkgsStatic.tini.overrideAttrs (old: {
+    postPatch = (old.postPatch or "") + ''
+      substituteInPlace src/tini.c \
+        --replace-fail '#include <stdlib.h>' '#include <stdlib.h>
+      #include <libgen.h>'
+    '';
+  });
   root = builtins.path {
     path = rootfs;
     name = "${service}-portable-rootfs";
@@ -469,7 +478,7 @@ let
         add_busybox
         ${lib.optionalString (lib.elem "beam" cfg.tools) ''
           mkdir -p "$out/usr/bin"
-          cp -L ${pkgs.pkgsStatic.tini}/bin/tini "$out/usr/bin/tini"
+          cp -L ${tini}/bin/tini "$out/usr/bin/tini"
           rm "$out/usr/bin/df"
           printf '#!/bin/sh\nexec /usr/bin/busybox df -k "$@"\n' > "$out/usr/bin/df"
           chmod 0755 "$out/usr/bin/df"

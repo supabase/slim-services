@@ -15,7 +15,7 @@ nix_release() {
 
 nix_tool() {
   nix --extra-experimental-features 'nix-command flakes' build \
-    "$ROOT_DIR#$1" --no-link --print-out-paths
+    "$ROOT_DIR#$1^out" --no-write-lock-file --no-link --print-out-paths
 }
 
 # Expected hash mismatches are used only during release input resolution.

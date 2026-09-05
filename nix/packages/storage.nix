@@ -32,6 +32,7 @@ let
     pname = "storage-portable";
     inherit src version nodejs;
     npmDepsHash = hashes.npm_deps_hash or lib.fakeHash;
+    makeCacheWritable = true;
     nativeBuildInputs = [ npm.package ];
     prePatch = ''
       export PATH=${npm.package}/bin:$PATH
