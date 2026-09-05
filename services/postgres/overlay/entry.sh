@@ -1,6 +1,6 @@
 #!/bin/sh
 # Image wiring for the portable PostgreSQL service. The artifact owns
-# initialization, migrations, marker handling and the final exec; this file
+# initialization, migrations, first-boot failure handling and the final exec; this file
 # only selects the image's config and optional initdb.d locations.
 set -eu
 
