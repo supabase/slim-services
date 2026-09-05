@@ -20,14 +20,82 @@ export POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-postgres}"
 export POSTGRES_DB="${POSTGRES_DB:-postgres}"
 
 config_dir="${SUPABASE_POSTGRES_CONFIG_DIR:-$PGDATA}"
-marker="$PGDATA/.supabase-stack-migration-complete"
 init_pending="$PGDATA/.supabase-postgres-init-pending"
 initdb_dir="${SUPABASE_POSTGRES_INITDB_DIR:-}"
 schema_file="${SUPABASE_POSTGRES_SCHEMA_FILE:-}"
 schema_backup="${SUPABASE_POSTGRES_SCHEMA_BACKUP:-}"
+getkey_script="$bundle_dir/share/supabase-cli/config/pgsodium_getkey.sh"
+
+socket_dir=
+migration_log=
+temp_server_started=0
+init_attempted=0
 
 # Keep command discovery deterministic for migrate.sh and user init scripts.
 export PATH="$bin_dir${PATH:+:$PATH}"
+
+restore_schema() {
+  if [ -n "$schema_file" ] && [ -n "$schema_backup" ] && [ -s "$schema_backup" ]; then
+    cp "$schema_backup" "$schema_file" || return 1
+    # Keep the backup when unlinking fails; the restored source remains
+    # recoverable and the next cleanup/start can retry the unlink.
+    rm -f "$schema_backup" || return 1
+  fi
+}
+
+temp_server_owned() {
+  [ "$temp_server_started" = 1 ] || return 1
+  [ -n "$socket_dir" ] || return 1
+  if [ -f "$PGDATA/postmaster.opts" ] \
+    && grep -F -q -- "$socket_dir" "$PGDATA/postmaster.opts"; then
+    return 0
+  fi
+  if [ -f "$PGDATA/postmaster.pid" ] \
+    && grep -F -q -- "$socket_dir" "$PGDATA/postmaster.pid"; then
+    return 0
+  fi
+  return 1
+}
+
+write_pending_if_partial_init() {
+  if [ "$init_attempted" = 1 ] && [ -s "$PGDATA/PG_VERSION" ] \
+    && [ ! -e "$init_pending" ]; then
+    (umask 077 && printf 'pending\n' >"$init_pending") || return 1
+  fi
+}
+
+cleanup() {
+  status=$?
+  trap - 0 HUP INT TERM
+  cleanup_error=0
+
+  # A signal can arrive while pg_ctl -w start is still blocked. The command
+  # is considered ours only when PostgreSQL recorded our unique socket path;
+  # this protects an already-running server in the same PGDATA.
+  if temp_server_owned; then
+    "$bin_dir/pg_ctl" -D "$PGDATA" -m fast -w stop >/dev/null 2>&1 \
+      || cleanup_error=1
+  fi
+
+  if ! restore_schema; then
+    echo "supabase-postgres: failed to restore schema backup $schema_backup" >&2
+    cleanup_error=1
+  fi
+  if [ -n "$socket_dir" ]; then
+    rm -rf "$socket_dir" || cleanup_error=1
+  fi
+  if ! write_pending_if_partial_init; then
+    echo "supabase-postgres: failed to record incomplete initialization at $init_pending" >&2
+    cleanup_error=1
+  fi
+  if [ "$status" -eq 0 ] && [ "$cleanup_error" -ne 0 ]; then
+    status=1
+  fi
+  exit "$status"
+}
+
+trap cleanup 0
+trap 'exit 143' HUP INT TERM
 
 # The stack passes PostgreSQL options, rather than another executable or -D.
 # Preserve the standard informational commands without touching PGDATA or any
@@ -47,7 +115,7 @@ if [ -n "$initdb_dir" ] && [ -d "$initdb_dir" ]; then
   done
 fi
 
-# A previous fresh start reached the user init-file phase and failed. Do not
+# A previous fresh start failed during initialization or bootstrap. Do not
 # silently promote that partial cluster on a later invocation; the owner can
 # inspect/fix the input and remove this explicit pending witness before retry.
 if [ -e "$init_pending" ]; then
@@ -55,24 +123,10 @@ if [ -e "$init_pending" ]; then
   exit 1
 fi
 
-if [ -e "$marker" ]; then
-  marker_contents=$(cat "$marker")
-  [ "$marker_contents" = completed ] || {
-    echo "supabase-postgres: refusing invalid migration marker: $marker" >&2
-    exit 1
-  }
-  migrated=1
-else
-  migrated=0
-fi
-
 initialized=0
 fresh=0
 if [ -s "$PGDATA/PG_VERSION" ]; then
   initialized=1
-elif [ "$migrated" = 1 ]; then
-  echo "supabase-postgres: migration marker exists without PG_VERSION" >&2
-  exit 1
 fi
 
 if [ "$initialized" = 0 ]; then
@@ -80,6 +134,7 @@ if [ "$initialized" = 0 ]; then
     echo "supabase-postgres: initialization script is missing: $init_script" >&2
     exit 1
   }
+  init_attempted=1
   mkdir -p "$PGDATA"
   echo "supabase-postgres: initializing database in $PGDATA"
   # The upstream init script's final postgres exec is intentionally converted
@@ -92,27 +147,22 @@ fi
 
 # PG_VERSION can be written before a first-boot process is interrupted. Keep
 # the cluster untouched and fail closed rather than guessing whether the
-# upstream init/config phase completed.
-if [ ! -s "$PGDATA/postgresql.conf" ] || [ ! -s "$PGDATA/pg_hba.conf" ] || [ ! -s "$PGDATA/pg_ident.conf" ]; then
+# upstream init/config phase completed. Existing unmarked volumes retain the
+# established startup path and do not replay the bootstrap bundle.
+if [ "$fresh" = 1 ] \
+  && { [ ! -s "$PGDATA/postgresql.conf" ] || [ ! -s "$PGDATA/pg_hba.conf" ] || [ ! -s "$PGDATA/pg_ident.conf" ]; }; then
   echo "supabase-postgres: initialized data is missing PostgreSQL config; refusing to discard $PGDATA" >&2
   exit 1
 fi
 
-if [ "$fresh" = 1 ] && [ "$has_init_files" = 1 ]; then
-  # Record the user-init phase only after upstream initdb and its config phase
-  # have succeeded. Writing this before initdb would make PGDATA non-empty and
-  # cause initdb itself to refuse the directory.
+# Record the complete fresh-boot phase only after upstream initdb and its
+# config phase have succeeded. Writing this before initdb would make PGDATA
+# non-empty and cause initdb itself to refuse the directory.
+if [ "$fresh" = 1 ]; then
   (umask 077 && printf 'pending\n' >"$init_pending")
 fi
 
-restore_schema() {
-  if [ -n "$schema_file" ] && [ -n "$schema_backup" ] && [ -s "$schema_backup" ]; then
-    cp "$schema_backup" "$schema_file"
-    rm -f "$schema_backup"
-  fi
-}
-
-if [ "$migrated" = 0 ]; then
+if [ "$fresh" = 1 ]; then
   [ -f "$migration_script" ] || {
     echo "supabase-postgres: bundled migration script is missing: $migration_script" >&2
     exit 1
@@ -125,28 +175,21 @@ if [ "$migrated" = 0 ]; then
   socket_dir=$(mktemp -d /tmp/supabase-pg.XXXXXX)
   migration_log="$socket_dir/postgres.log"
   chmod 700 "$socket_dir"
-  temp_started=0
-
-  cleanup() {
-    status=$?
-    if [ "$temp_started" = 1 ]; then
-      "$bin_dir/pg_ctl" -D "$PGDATA" -m fast -w stop >/dev/null 2>&1 || true
-    fi
-    rm -rf "$socket_dir" "$migration_log"
-    exit "$status"
-  }
-  trap cleanup 0
-  trap 'exit 143' HUP INT TERM
+  # Set this before -w start: SIGTERM can interrupt pg_ctl while PostgreSQL
+  # has already written its ownership record.
+  temp_server_started=1
 
   echo "supabase-postgres: running bundled migrations"
-  "$bin_dir/pg_ctl" -D "$PGDATA" -l "$migration_log" \
+  if ! "$bin_dir/pg_ctl" -D "$PGDATA" -l "$migration_log" \
     -o "-c listen_addresses='' -c port=5432 -c unix_socket_directories='$socket_dir' -c unix_socket_permissions=0700" \
-    -w start \
-    || {
-      cat "$migration_log" >&2 2>/dev/null || true
-      exit 1
-    }
-  temp_started=1
+    -w start; then
+    cat "$migration_log" >&2 2>/dev/null || true
+    exit 1
+  fi
+  if ! temp_server_owned; then
+    echo "supabase-postgres: could not prove ownership of the temporary server; refusing to continue" >&2
+    exit 1
+  fi
 
   # The migration and init-script environments intentionally stay in their
   # subshells; final server options must retain the caller's values.
@@ -208,31 +251,24 @@ if [ "$migrated" = 0 ]; then
   fi
 
   # pg_ctl owns the temporary server only for the migration window. Stop it
-  # before committing the marker; the final exec below replaces this shell, so
-  # an EXIT trap cannot perform this cleanup after a successful start.
+  # before removing the pending witness; the final exec below replaces this
+  # shell, so an EXIT trap cannot perform this cleanup after a successful start.
   if ! "$bin_dir/pg_ctl" -D "$PGDATA" -m fast -w stop; then
     cat "$migration_log" >&2 2>/dev/null || true
     exit 1
   fi
-  temp_started=0
+  temp_server_started=0
   rm -rf "$socket_dir"
+
+  # Removing the pending witness is the commit point. All fresh bootstrap
+  # work and schema restoration have completed, so an interrupted final exec
+  # can safely use the existing-cluster path on the next start.
+  rm -f "$init_pending"
+  init_attempted=0
   trap - 0 HUP INT TERM
-
-  # Once all user init files have succeeded, remove the pending witness before
-  # publishing migration success. If interrupted in between, the migrations
-  # are safely retried while already-complete initdb.d input is not replayed.
-  if [ "$fresh" = 1 ] && [ "$has_init_files" = 1 ]; then
-    rm -f "$init_pending"
-  fi
-
-  # The rename is the commit point. An interrupted or failed migration leaves
-  # no marker, so the next start retries the idempotent bundle migrations.
-  marker_parent=$(dirname -- "$marker")
-  mkdir -p "$marker_parent"
-  marker_tmp="$marker.$$"
-  (umask 077 && printf 'completed\n' >"$marker_tmp")
-  mv -f "$marker_tmp" "$marker"
 fi
 
 echo "supabase-postgres: starting server"
-exec "$bin_dir/postgres" -D "$config_dir" "$@"
+exec "$bin_dir/postgres" -D "$config_dir" \
+  -c "pgsodium.getkey_script=$getkey_script" \
+  -c "vault.getkey_script=$getkey_script" "$@"

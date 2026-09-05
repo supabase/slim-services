@@ -92,9 +92,9 @@ PY
     sleep 1
   done
 
-  # A successful service start commits its marker. A second start must reuse
-  # the initialized cluster without reopening the migration server.
-  log "restarting portable postgres through the committed migration marker"
+  # A successful service start removes its pending witness. A second start
+  # must reuse the initialized cluster without reopening bootstrap migrations.
+  log "restarting portable postgres through the initialized cluster path"
   "$artifact_rootfs/bin/pg_ctl" -D "$pg_data_dir/data" -m fast -w stop \
     >/dev/null 2>&1 || { cat "$pg_data_dir/postgres.log" >&2; fail "postgres stop failed"; }
   repeat_log="$pg_data_dir/postgres-repeat.log"
@@ -118,7 +118,7 @@ PY
   done
   grep -q "running bundled migrations" "$repeat_log" && {
     cat "$repeat_log" >&2
-    fail "portable postgres reran migrations after marker commit"
+    fail "portable postgres reran bootstrap migrations for an existing cluster"
   }
 
   # The bundle's config is the docker.io recipe (ansible/files) assembled at

@@ -405,7 +405,6 @@ let
                   "id"
                   "mkdir"
                   "mktemp"
-                  "mv"
                   "od"
                   "readlink"
                   "rm"

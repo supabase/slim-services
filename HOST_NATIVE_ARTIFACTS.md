@@ -82,7 +82,7 @@ smaller preload list for upstream behavior.
 Postgres also exposes `bin/supabase-postgres-start`. The CLI and derived image
 call this launcher with `PGDATA`, the `POSTGRES_*` credentials, and the final
 server arguments; it owns first-boot initialization, bundled migrations, the
-`.supabase-stack-migration-complete` marker, and the final `postgres` exec.
+pending initialization witness, and the final `postgres` exec.
 `SUPABASE_POSTGRES_CONFIG_DIR`, `SUPABASE_POSTGRES_INITDB_DIR`, and the schema
 backup variables are optional image wiring. A failed fresh init leaves an
 explicit pending witness and the data directory intact so a later start fails
@@ -102,7 +102,10 @@ providing only container wiring.
 Pooler additionally exposes `bin/provision-tenant`, which reads
 `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_PASSWORD`, `TENANT_ID`,
 `POOL_MODE`, `DEFAULT_POOL_SIZE`, and `MAX_CLIENT_CONN`. It creates or updates
-the tenant idempotently without generating source from those values.
+the tenant idempotently without generating source from those values. The
+running Pooler service also requires `DATABASE_URL` and `VAULT_ENC_KEY`, a
+32-character printable AES-GCM key; the CLI supplies its managed unpadded
+base64url value.
 
 Preparation runs against each stack's runtime database during service startup
 or lazy activation. It is not performed at build time: stack-specific ports,

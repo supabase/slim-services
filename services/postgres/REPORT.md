@@ -29,9 +29,10 @@ including the extension set shipped by that major's upstream Dockerfile.
   `wal_writer_delay=2000ms`. `wal_level=logical` is left untouched (realtime
   requires it).
 - The derived image provides a small busybox/bash tools stage, the bundle at
-  `/opt/postgres`, and the repo-owned entrypoint that performs initdb,
-  migrations, and Docker networking setup using the UID/GID generated from
-  the digest-pinned upstream identity.
+  `/opt/postgres`, and repo-owned entrypoints. `docker-entrypoint.sh` preserves
+  Docker argv and user setup, while `supabase-postgres-start` owns initdb,
+  migrations, pending-witness handling, and the final server exec using the UID/GID
+  generated from the digest-pinned upstream identity.
 
 ## What still works (smoke-verified)
 
@@ -145,9 +146,9 @@ target — an accepted divergence from upstream supabase/postgres bundling:
   empty Config.User) + busybox/bash tools stage + the bundle at
   `/opt/postgres` + repo-owned `entry.sh` / `docker-entrypoint.sh`. Start
   user and drop-to uid are generated from the digest-pinned docker.io
-  image (IMAGE_CONTRACT.md). First boot delegates to the bundle's own
-  `supabase-postgres-init.sh`, then appends the docker network settings
-  and starts postgres after dropping to the probed uid.
+  image (IMAGE_CONTRACT.md). `docker-entrypoint.sh` preserves Docker's
+  command and drop-to-user behavior; `entry.sh` supplies image paths while
+  `supabase-postgres-start` runs the shared first-boot and migration lifecycle.
 - The image smoke checks the broad preload-free set (29 creates including
   postgis/pgroonga/wrappers and, on PG15, TimescaleDB/plv8; PG17 omits those
   incompatible extensions to match its upstream image), a pgsodium/vault round-trip through the
@@ -227,7 +228,8 @@ ICU-provider either way).
 
 `nix/packages/local-dev.conf` is the single, complete list of deliberate
 divergences (loopback/54322 native contract, `/tmp` socket, low-footprint
-profile); `entry.sh` shrinks to the two docker overrides (listen/port).
+profile). The image config selects its Docker network settings, while
+`entry.sh` only supplies image paths to the shared lifecycle launcher.
 pg_hba carries one adaptation: `peer map=supabase_map` becomes `trust` —
 the map assumes the docker.io image's OS users, and it resolves them to
 full role access anyway, so single-OS-user environments get the same
