@@ -175,8 +175,10 @@ Memory and CPU are first-class optimization targets, not just disk:
 
 ```text
 .
-├── scripts/                  Shared artifact, image, measure, and smoke helpers
-├── services/<service>/        Per-service recipes, Dockerfiles, smoke tests, reports
+├── flake.nix / flake.lock     Root Nix interface and pinned inputs
+├── nix/                       Package, runtime, archive, and image definitions
+├── scripts/                   Shared artifact, image, measure, and smoke helpers
+├── services/<service>/        Recipes, Nix adapters, smokes, overlays, and reports
 ├── sources/<service>/         Upstream source repositories as pinned submodules
 ├── artifacts/                 Generated rootfs outputs and optional archives, gitignored
 └── SLIM_IMAGES_REPORT.md      Global summary and cross-service lessons

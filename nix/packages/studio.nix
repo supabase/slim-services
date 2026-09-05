@@ -134,9 +134,12 @@ let
       mkdir -p "$HOME" "$STORE_PATH"
       cp -a ${deps}/. "$STORE_PATH"/
       chmod -R +w "$STORE_PATH"
+      # The network FOD already verified this lockfile; avoid pnpm's offline
+      # registry metadata and attestation checks when materializing its store.
       pnpm install \
         --offline \
         --ignore-scripts \
+        --trust-lockfile \
         --store-dir "$STORE_PATH" \
         --frozen-lockfile \
         --config.package-import-method=clone-or-copy
@@ -150,7 +153,6 @@ let
     };
     buildPhase = ''
       runHook preBuild
-      pnpm rebuild --pending
       ${
         if studioFramework == "next" then
           ''
