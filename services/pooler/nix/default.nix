@@ -192,6 +192,15 @@ in
       cp -R ${release}/. "$rootfs/"
       chmod -R u+w "$rootfs"
 
+      # Keep service-owned preparation and tenant provisioning beside the
+      # release launchers so native consumers and derived images share them.
+      cp ${../overlay/prepare.sh} "$rootfs/bin/prepare"
+      cp ${../overlay/provision-tenant.sh} "$rootfs/bin/provision-tenant"
+      chmod 0755 "$rootfs/bin/prepare" "$rootfs/bin/provision-tenant"
+      mkdir -p "$rootfs/share/supabase-cli"
+      cp ${../overlay/provision-tenant.exs} "$rootfs/share/supabase-cli/provision-tenant.exs"
+      chmod 0444 "$rootfs/share/supabase-cli/provision-tenant.exs"
+
       rm -rf "$rootfs"/erts-*/src "$rootfs"/erts-*/doc "$rootfs"/erts-*/man \
              "$rootfs"/erts-*/include "$rootfs"/erts-*/lib/internal
       find "$rootfs/lib" -type d \( -name src -o -name include -o -name doc \) \

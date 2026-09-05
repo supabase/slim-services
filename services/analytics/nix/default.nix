@@ -262,6 +262,11 @@ in
       cp -R ${release}/. "$rootfs/"
       chmod -R u+w "$rootfs"
 
+      # Keep service-owned preparation beside the release launchers so native
+      # consumers and derived images execute the same migration contract.
+      cp ${../overlay/prepare.sh} "$rootfs/bin/prepare"
+      chmod 0755 "$rootfs/bin/prepare"
+
       rm -rf "$rootfs"/erts-*/src "$rootfs"/erts-*/doc "$rootfs"/erts-*/man \
              "$rootfs"/erts-*/include "$rootfs"/erts-*/lib/internal
       find "$rootfs/lib" -type d \( -name src -o -name include -o -name doc \) \

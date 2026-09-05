@@ -10,8 +10,8 @@ fi
 
 export ERL_CRASH_DUMP="${ERL_CRASH_DUMP:-/tmp/erl_crash.dump}"
 
-echo "Running migrations"
-/app/bin/migrate
+SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P)"
+"$SCRIPT_DIR/bin/prepare"
 
 echo "Starting Supavisor"
 exec "$@"

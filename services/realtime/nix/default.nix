@@ -187,6 +187,11 @@ in
       cp -R ${release}/. "$rootfs/"
       chmod -R u+w "$rootfs"
 
+      # Keep service-owned preparation beside the release launchers so native
+      # consumers and derived images execute the same migration contract.
+      cp ${../overlay/prepare.sh} "$rootfs/bin/prepare"
+      chmod 0755 "$rootfs/bin/prepare"
+
       # Trim BEAM release tooling that never runs in the artifact (mirrors
       # scripts/prune-beam-release.sh for the Docker artifact).
       rm -rf "$rootfs"/erts-*/src "$rootfs"/erts-*/doc "$rootfs"/erts-*/man \

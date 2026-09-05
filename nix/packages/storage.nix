@@ -61,6 +61,8 @@ let
         service = "storage";
         command = "dist/start/server.js";
       }}
+      cp ${../../services/storage/overlay/prepare.sh} $out/bin/prepare
+      chmod 0755 $out/bin/prepare
       runHook postInstall
     '';
     dontFixup = true;

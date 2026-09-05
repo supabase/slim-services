@@ -149,7 +149,7 @@ let
       ${import ./node-runtime.nix {
         inherit pkgs nodeMajor;
         service = "studio";
-        command = ''apps/studio/docker-entrypoint.mjs "$NODE_BIN" apps/studio/server.js'';
+        command = "apps/studio/docker-entrypoint.mjs";
       }}
       ${pkgs.bash}/bin/bash ${../..}/services/studio/validate-artifact.sh $out
       runHook postInstall

@@ -89,10 +89,7 @@ let
     pgmeta = {
       overlay = null;
       entrypoint = [ ];
-      cmd = [
-        "node"
-        "dist/server/server.js"
-      ];
+      cmd = [ "/slim-runtime/bin/pgmeta" ];
       ports = [ 8080 ];
       tools = [ "ca" ];
       rootfsMode = "node";
@@ -200,10 +197,7 @@ let
     storage = {
       overlay = null;
       entrypoint = [ ];
-      cmd = [
-        "/node/bin/node"
-        "dist/start/server.js"
-      ];
+      cmd = [ "/slim-runtime/bin/storage" ];
       ports = [ 5000 ];
       tools = [ "ca" ];
       rootfsMode = "node";
@@ -224,10 +218,7 @@ let
 
     studio = {
       overlay = null;
-      entrypoint = [
-        "/node/bin/node"
-        "/app/apps/studio/docker-entrypoint.mjs"
-      ];
+      entrypoint = [ "/slim-runtime/bin/studio" ];
       cmd = [
         "/node/bin/node"
         "apps/studio/server.js"
@@ -348,9 +339,14 @@ let
             mkdir -p "$out/root"
             ;;
           node)
-            copy_tree app "${cfg.root or "/app"}"
+            # Keep the portable layout intact so native launchers and addons
+            # resolve the same relative paths inside the image.
+            copy_tree app slim-runtime/app
+            copy_tree bin slim-runtime/bin
             copy_tree node slim-runtime/node
             copy_tree lib slim-runtime/lib
+            mkdir -p "$out/$(dirname '${cfg.root}')"
+            ln -s /slim-runtime/app "$out${cfg.root}"
             ln -sf /slim-runtime/node "$out/node"
             ;;
           postgres)
@@ -438,6 +434,7 @@ let
               else if service == "storage" then
                 [
                   "sh"
+                  "dirname"
                   "wget"
                   "mkdir"
                   "chown"

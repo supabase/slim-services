@@ -79,6 +79,27 @@ upstream image for local CLI behavior. Its `shared_preload_libraries` follows
 the matching `UPSTREAM_IMAGE` policy; the artifact does not substitute a
 smaller preload list for upstream behavior.
 
+## Service preparation and startup
+
+The portable artifacts expose service-owned launchers alongside their main
+servers. `bin/prepare` is a one-shot runtime command: Realtime runs migrations
+and seeds when `SEED_SELF_HOST=true`, Analytics runs its migrations, Storage
+runs its migration bundle, and Pooler runs its migrations. `bin/storage`,
+`bin/studio`, and `bin/pgmeta` are the relocatable Node service launchers;
+`bin/server`, `bin/logflare`, and `bin/supavisor` remain the BEAM server
+launchers. Derived images use the same artifact launchers, with image overlays
+providing only container wiring.
+
+Pooler additionally exposes `bin/provision-tenant`, which reads
+`POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_PASSWORD`, `TENANT_ID`,
+`POOL_MODE`, `DEFAULT_POOL_SIZE`, and `MAX_CLIENT_CONN`. It creates or updates
+the tenant idempotently without generating source from those values.
+
+Preparation runs against each stack's runtime database during service startup
+or lazy activation. It is not performed at build time: stack-specific ports,
+credentials, mutable data, and user configuration stay outside immutable
+artifacts and images.
+
 ## Validation and measurements
 
 The release workflow builds and smokes the rootfs, stages the archive,

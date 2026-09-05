@@ -40,6 +40,10 @@ if [[ -n "$artifact_rootfs" ]]; then
 
   pooler_bin="$artifact_rootfs/bin/supavisor"
   [[ -x "$pooler_bin" ]] || fail "pooler artifact launcher not found or not executable: $pooler_bin"
+  [[ -x "$artifact_rootfs/bin/prepare" ]] || fail "pooler preparation helper not found or not executable: $artifact_rootfs/bin/prepare"
+  [[ -x "$artifact_rootfs/bin/provision-tenant" ]] || fail "pooler tenant helper not found or not executable: $artifact_rootfs/bin/provision-tenant"
+  [[ -f "$artifact_rootfs/share/supabase-cli/provision-tenant.exs" ]] \
+    || fail "pooler tenant Elixir helper not found: $artifact_rootfs/share/supabase-cli/provision-tenant.exs"
 
   pg_port="$(postgres_port)"
   port="$(python3 - <<'PY'
@@ -62,12 +66,31 @@ PY
   )
   smoke_beam_release_distribution "$pooler_bin" "${pooler_env[@]}"
 
-  log "running pooler migrations"
-  if ! env "${pooler_env[@]}" "$artifact_rootfs/bin/migrate" >"$pooler_log" 2>&1; then
+  log "running pooler preparation"
+  if ! env "${pooler_env[@]}" "$artifact_rootfs/bin/prepare" >"$pooler_log" 2>&1; then
     cat "$pooler_log" >&2
-    fail "pooler migrations failed"
+    fail "pooler preparation failed"
   fi
 
+  provision_pooler_tenant() {
+    env "${pooler_env[@]}" \
+      POSTGRES_HOST=127.0.0.1 \
+      POSTGRES_PORT="$pg_port" \
+      POSTGRES_PASSWORD="$1" \
+      TENANT_ID=pooler-smoke \
+      POOL_MODE="$2" \
+      DEFAULT_POOL_SIZE="$3" \
+      MAX_CLIENT_CONN="$4" \
+      "$artifact_rootfs/bin/provision-tenant" >>"$pooler_log" 2>&1
+  }
+
+  log "provisioning pooler tenant"
+  provision_pooler_tenant postgres transaction 5 100
+  log "repeating pooler tenant provisioning"
+  provision_pooler_tenant postgres transaction 5 100
+  log "updating pooler tenant with quoted password and settings"
+  provision_pooler_tenant 'pooler "quoted" password \ slash' session 7 120
+  provision_pooler_tenant 'pooler "quoted" password \ slash' session 7 120
   log "smoke testing pooler host process on port $port"
   start_host_service pooler "$pooler_log" \
     "${pooler_env[@]}" \
@@ -86,6 +109,42 @@ ensure_image "$image"
 log "checking wget is on PATH (CLI healthcheck)"
 docker run --rm --entrypoint /usr/bin/wget "$image" --help >/dev/null \
   || fail "pooler image is missing wget"
+docker run --rm --entrypoint /usr/bin/sh "$image" -c \
+  'test -x /app/bin/prepare && test -x /app/bin/provision-tenant && test -r /app/share/supabase-cli/provision-tenant.exs' \
+  || fail "pooler image is missing service preparation helpers"
+
+log "CLI one-shot: /app/bin/prepare"
+docker run --rm --network "$NETWORK" \
+  -e DATABASE_URL="ecto://postgres:postgres@$POSTGRES_CONTAINER:5432/pooler_smoke" \
+  -e SECRET_KEY_BASE="$secret_key_base" \
+  -e API_JWT_SECRET="$api_secret" \
+  -e METRICS_JWT_SECRET="$metrics_secret" \
+  --entrypoint /app/bin/prepare \
+  "$image" \
+  || fail "pooler preparation one-shot failed"
+
+provision_pooler_image_tenant() {
+  docker run --rm --network "$NETWORK" \
+    -e DATABASE_URL="ecto://postgres:postgres@$POSTGRES_CONTAINER:5432/pooler_smoke" \
+    -e SECRET_KEY_BASE="$secret_key_base" \
+    -e API_JWT_SECRET="$api_secret" \
+    -e METRICS_JWT_SECRET="$metrics_secret" \
+    -e POSTGRES_HOST="$POSTGRES_CONTAINER" \
+    -e POSTGRES_PORT=5432 \
+    -e POSTGRES_PASSWORD="$1" \
+    -e TENANT_ID=pooler-smoke \
+    -e POOL_MODE="$2" \
+    -e DEFAULT_POOL_SIZE="$3" \
+    -e MAX_CLIENT_CONN="$4" \
+    --entrypoint /app/bin/provision-tenant \
+    "$image"
+}
+
+log "CLI one-shot: /app/bin/provision-tenant"
+provision_pooler_image_tenant postgres transaction 5 100
+provision_pooler_image_tenant postgres transaction 5 100
+provision_pooler_image_tenant 'pooler "quoted" password \ slash' session 7 120
+provision_pooler_image_tenant 'pooler "quoted" password \ slash' session 7 120
 
 container="pooler-smoke-$RUN_ID"
 run_container \
