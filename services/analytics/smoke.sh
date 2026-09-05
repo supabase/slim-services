@@ -38,6 +38,7 @@ if [[ -n "$artifact_rootfs" ]]; then
 
   logflare_bin="$artifact_rootfs/bin/logflare"
   [[ -x "$logflare_bin" ]] || fail "analytics artifact launcher not found or not executable: $logflare_bin"
+  [[ -x "$artifact_rootfs/bin/prepare" ]] || fail "analytics preparation helper not found or not executable: $artifact_rootfs/bin/prepare"
 
   pg_port="$(postgres_port)"
   port="$(python3 - <<'PY'
@@ -65,10 +66,10 @@ PY
   )
   smoke_beam_release_distribution "$logflare_bin" "${analytics_env[@]}"
 
-  log "running analytics migrations"
-  if ! env "${analytics_env[@]}" "$logflare_bin" eval Logflare.Release.migrate >"$analytics_log" 2>&1; then
+  log "running analytics preparation"
+  if ! env "${analytics_env[@]}" "$artifact_rootfs/bin/prepare" >"$analytics_log" 2>&1; then
     cat "$analytics_log" >&2
-    fail "analytics migrations failed"
+    fail "analytics preparation failed"
   fi
 
   log "smoke testing analytics host process on port $port"
@@ -99,6 +100,8 @@ workdir="$(docker image inspect --format '{{.Config.WorkingDir}}' "$image")"
   || fail "analytics WORKDIR is $workdir, expected /opt/app/rel/logflare/bin"
 docker run --rm --entrypoint sh "$image" -c 'test -x ./logflare && : > run.sh' \
   || fail "analytics WORKDIR lacks an executable ./logflare or is not writable"
+docker run --rm --entrypoint sh "$image" -c 'test -x ./prepare' \
+  || fail "analytics WORKDIR lacks the preparation helper"
 
 container="analytics-smoke-$RUN_ID"
 run_container \

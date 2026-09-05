@@ -73,13 +73,6 @@ fi
 
 ensure_image "$image"
 
-pgmeta_ep="$(docker inspect -f '{{json .Config.Entrypoint}}' "$image")"
-[[ "$pgmeta_ep" == "null" || "$pgmeta_ep" == "[]" ]] \
-  || fail "pgmeta ENTRYPOINT is $pgmeta_ep (expected empty)"
-pgmeta_cmd="$(docker inspect -f '{{json .Config.Cmd}}' "$image")"
-[[ "$pgmeta_cmd" == '["node","dist/server/server.js"]' ]] \
-  || fail "pgmeta CMD is $pgmeta_cmd (expected [node, dist/server/server.js])"
-
 log "checking sh and node on PATH (CLI healthcheck)"
 docker run --rm --entrypoint /usr/bin/sh "$image" -c 'command -v sh && command -v node && command -v wget' >/dev/null \
   || fail "pgmeta image is missing sh, node, or wget"

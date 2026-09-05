@@ -16,7 +16,7 @@ fi
 
 if [[ -n "$artifact_rootfs" ]]; then
   # Host-process smoke for the selected-major portable postgres bundle:
-  # initdb, pg_ctl start, extension round-trip — no Docker anywhere.
+  # service-owned init/migration/start, extension round-trip — no Docker.
   require_cmd python3
 
   receipt="$artifact_rootfs/cli-receipt.json"
@@ -45,7 +45,7 @@ PY
   }
   trap cleanup_postgres_smoke EXIT
 
-  for bin in postgres initdb pg_ctl psql pg_dump pg_dumpall; do
+  for bin in postgres initdb pg_ctl psql pg_dump pg_dumpall supabase-postgres-start; do
     [[ -x "$artifact_rootfs/bin/$bin" ]] || fail "postgres artifact binary missing: bin/$bin"
   done
 
@@ -59,12 +59,7 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
 PY
 )"
 
-  log "initdb (portable artifact)"
-  "$artifact_rootfs/bin/initdb" -D "$pg_data_dir/data" -U supabase_admin --auth=trust \
-    >"$pg_data_dir/initdb.log" 2>&1 \
-    || { cat "$pg_data_dir/initdb.log" >&2; fail "initdb failed"; }
-
-  log "starting postgres host process on port $port"
+  log "starting postgres host process through service-owned lifecycle on port $port"
   # pg_cron/pg_net/pg_stat_statements need preloading (the CLI applies its
   # own config template with the same preload set). TimescaleDB additionally
   # requires preload on PG15, matching the upstream Dockerfile-15 contract.
@@ -72,14 +67,19 @@ PY
   if [[ "$postgres_major" == "15" ]]; then
     shared_preload="$shared_preload,timescaledb"
   fi
-  "$artifact_rootfs/bin/pg_ctl" -D "$pg_data_dir/data" -l "$pg_data_dir/postgres.log" \
-    -o "-p $port -c listen_addresses=127.0.0.1 -k $pg_data_dir -c shared_preload_libraries=$shared_preload -c cron.database_name=postgres" \
-    start >/dev/null \
-    || { cat "$pg_data_dir/postgres.log" >&2; fail "pg_ctl start failed"; }
-  postgres_pid="$(head -1 "$pg_data_dir/data/postmaster.pid")"
+  (
+    export PGDATA="$pg_data_dir/data"
+    export POSTGRES_USER=supabase_admin POSTGRES_PASSWORD=postgres POSTGRES_DB=postgres
+    export SUPABASE_POSTGRES_CONFIG_DIR="$pg_data_dir/data"
+    "$artifact_rootfs/bin/supabase-postgres-start" \
+      -p "$port" -c "listen_addresses=127.0.0.1" \
+      -c "shared_preload_libraries=$shared_preload" \
+      -c "cron.database_name=postgres"
+  ) >"$pg_data_dir/postgres.log" 2>&1 &
+  postgres_pid=$!
 
   psql_host() {
-    "$artifact_rootfs/bin/psql" -h 127.0.0.1 -p "$port" -U supabase_admin -d postgres \
+    PGPASSWORD=postgres "$artifact_rootfs/bin/psql" -h 127.0.0.1 -p "$port" -U supabase_admin -d postgres \
       -v ON_ERROR_STOP=1 -qAt -c "$1"
   }
 
@@ -87,10 +87,39 @@ PY
   while ! psql_host "SELECT 1" >/dev/null 2>&1; do
     if (( "$(date +%s)" - start >= 60 )); then
       cat "$pg_data_dir/postgres.log" >&2
-      fail "portable postgres did not become ready"
+      fail "portable postgres lifecycle did not become ready"
     fi
     sleep 1
   done
+
+  # A successful service start removes its pending witness. A second start
+  # must reuse the initialized cluster without reopening bootstrap migrations.
+  log "restarting portable postgres through the initialized cluster path"
+  "$artifact_rootfs/bin/pg_ctl" -D "$pg_data_dir/data" -m fast -w stop \
+    >/dev/null 2>&1 || { cat "$pg_data_dir/postgres.log" >&2; fail "postgres stop failed"; }
+  repeat_log="$pg_data_dir/postgres-repeat.log"
+  (
+    export PGDATA="$pg_data_dir/data"
+    export POSTGRES_USER=supabase_admin POSTGRES_PASSWORD=postgres POSTGRES_DB=postgres
+    export SUPABASE_POSTGRES_CONFIG_DIR="$pg_data_dir/data"
+    "$artifact_rootfs/bin/supabase-postgres-start" \
+      -p "$port" -c "listen_addresses=127.0.0.1" \
+      -c "shared_preload_libraries=$shared_preload" \
+      -c "cron.database_name=postgres"
+  ) >"$repeat_log" 2>&1 &
+  postgres_pid=$!
+  start="$(date +%s)"
+  while ! psql_host "SELECT 1" >/dev/null 2>&1; do
+    if (( "$(date +%s)" - start >= 60 )); then
+      cat "$repeat_log" >&2
+      fail "portable postgres did not restart"
+    fi
+    sleep 1
+  done
+  grep -q "running bundled migrations" "$repeat_log" && {
+    cat "$repeat_log" >&2
+    fail "portable postgres reran bootstrap migrations for an existing cluster"
+  }
 
   # The bundle's config is the docker.io recipe (ansible/files) assembled at
   # build with Dockerfile-supabase's own edits; the image smoke exercises it
@@ -157,7 +186,7 @@ PY
   # Capture, then grep: `grep -q` exits at first match and its SIGPIPE would
   # fail the dump under pipefail.
   log "role-only dump (pg_dumpall)"
-  roles_dump="$("$artifact_rootfs/bin/pg_dumpall" -h 127.0.0.1 -p "$port" -U supabase_admin --roles-only)" \
+  roles_dump="$(PGPASSWORD=postgres "$artifact_rootfs/bin/pg_dumpall" -h 127.0.0.1 -p "$port" -U supabase_admin --roles-only)" \
     || fail "pg_dumpall --roles-only failed"
   grep -q "CREATE ROLE" <<<"$roles_dump" \
     || fail "pg_dumpall --roles-only produced no roles"
@@ -416,7 +445,8 @@ cli_wal="$(docker exec -e PGPASSWORD=postgres "$cli_container" \
   "SELECT id FROM initdb_d_marker")" == "1" ]] \
   || fail "CLI-shaped start did not run /docker-entrypoint-initdb.d"
 
-# CLI `cat >` leaves migrate.sh non-executable; entry.sh sources that path.
+# CLI `cat >` leaves migrate.sh non-executable; the service command sources
+# that path after the bundled migrations.
 # Real dumps need bundle roles/extensions first, then the restore.
 # CLI also writes /etc/postgresql.schema.sql (unconditional CREATE DATABASE
 # _supabase); restore runs it after the dump — bundle migrate must not.
@@ -431,13 +461,13 @@ EOF
 from_backup_migrate="$(cat <<'EOF'
 #!/bin/sh
 set -eu
-if [ "$(psql -h /tmp -p 5432 -U supabase_admin -d postgres -v ON_ERROR_STOP=1 -qAt -c "SELECT 1 FROM pg_roles WHERE rolname = 'anon'")" != 1 ]; then
+if [ "$(psql -h "${PGHOST}" -p "${PGPORT}" -U supabase_admin -d postgres -v ON_ERROR_STOP=1 -qAt -c "SELECT 1 FROM pg_roles WHERE rolname = 'anon'")" != 1 ]; then
   echo "bundle migrate.sh must create role anon before restore" >&2
   exit 1
 fi
-psql -h /tmp -p 5432 -U supabase_admin -d postgres -v ON_ERROR_STOP=1 -c "CREATE TABLE from_backup_restore(id int primary key); INSERT INTO from_backup_restore VALUES (1);"
+psql -h "${PGHOST}" -p "${PGPORT}" -U supabase_admin -d postgres -v ON_ERROR_STOP=1 -c "CREATE TABLE from_backup_restore(id int primary key); INSERT INTO from_backup_restore VALUES (1);"
 if [ -e /etc/postgresql.schema.sql ]; then
-  psql -h /tmp -p 5432 -U supabase_admin -d postgres -v ON_ERROR_STOP=1 --no-password --no-psqlrc -f /etc/postgresql.schema.sql
+  psql -h "${PGHOST}" -p "${PGPORT}" -U supabase_admin -d postgres -v ON_ERROR_STOP=1 --no-password --no-psqlrc -f /etc/postgresql.schema.sql
 fi
 EOF
 )"
@@ -486,6 +516,22 @@ fi
   || fail "failed initdb.d script still running after timeout"
 [[ "$(docker inspect -f '{{.State.ExitCode}}' "$fail_init_container")" != "0" ]] \
   || fail "failed initdb.d script left ExitCode 0"
+
+log "failed fresh initialization remains blocked on restart"
+fail_retry_container="postgres-fail-init-retry-$RUN_ID"
+run_container \
+  "$fail_retry_container" \
+  --network "$NETWORK" \
+  -e POSTGRES_PASSWORD=postgres \
+  -v "$fail_init_vol:/var/lib/postgresql/data" \
+  --entrypoint /usr/bin/sh \
+  "$image" \
+  -c 'printf "#!/bin/sh\nexit 0\n" > /docker-entrypoint-initdb.d/migrate.sh && exec docker-entrypoint.sh postgres -D /etc/postgresql'
+if wait_for_postgres 60 "$fail_retry_container" supabase_admin; then
+  fail "partial fresh initialization was accepted on restart"
+fi
+[[ "$(docker inspect -f '{{.State.Running}}' "$fail_retry_container")" != "true" ]] \
+  || fail "partial fresh initialization still running after restart"
 
 log "default socket is /run/postgresql (psql with no -h)"
 sock_dirs="$(docker exec -e PGPASSWORD=postgres "$container" \

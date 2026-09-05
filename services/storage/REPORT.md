@@ -120,7 +120,7 @@ accepted path avoids dependency shims or upstream source edits.
 
 ## Host-Native darwin-arm64 Artifact (2026-07)
 
-Runtime decision (recorded in HOST_NATIVE_PLAN.md Phase 4): bundle the
+Runtime decision (recorded in HOST_NATIVE_ARTIFACTS.md): bundle the
 upstream-selected Node runtime per service. The artifact stays a Rolldown JS
 bundle; a thin
 `bin/storage` wrapper resolves the runtime (`SUPABASE_NODE` →

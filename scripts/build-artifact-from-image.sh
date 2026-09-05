@@ -236,10 +236,14 @@ fi
   "$rootfs" "$sbom" "$service" "$VERSION" \
   "$(artifact_platform_dir "$TARGET_OS" "$ARCH")"
 
-archive="$(archive_with_best_available_compressor "$rootfs" "$artifact_dir/$service")"
+archive=""
+archive_bytes="None"
+if [[ "${ARTIFACT_ARCHIVE_ON_BUILD:-1}" == "1" ]]; then
+  archive="$(archive_runtime "$rootfs" "$artifact_dir/$service")"
+  archive_bytes="$(wc -c < "$archive" | tr -d ' ')"
+fi
 
 rootfs_kib="$(du -sk "$rootfs" | awk '{print $1}')"
-archive_bytes="$(wc -c < "$archive" | tr -d ' ')"
 
 portable="$(portable_flag)"
 assumed_host_libs_json="$(portable_host_libs_json)"
@@ -276,14 +280,14 @@ manifest = {
         "Next tracing manifests"
     ],
     "smoke_command": "scripts/smoke.sh $service --artifact $rootfs",
-    "archive": os.path.basename("$archive"),
+    "archive": os.path.basename("$archive") or None,
     "sbom": os.path.basename("$sbom"),
     "licenses": "share/licenses",
     "size": {
         "rootfs_bytes": int($rootfs_kib) * 1024,
         "rootfs_mib": round((int($rootfs_kib) * 1024) / 1024 / 1024, 1),
-        "archive_bytes": int($archive_bytes),
-        "archive_mib": round(int($archive_bytes) / 1024 / 1024, 1)
+        "archive_bytes": $archive_bytes,
+        "archive_mib": round($archive_bytes / 1024 / 1024, 1) if $archive_bytes is not None else None
     }
 }
 
@@ -292,5 +296,5 @@ with open("$manifest", "w", encoding="utf-8") as fh:
     fh.write("\\n")
 PY
 
-"$ROOT_DIR/scripts/measure-artifact.sh" "$rootfs" "$archive"
+"$ROOT_DIR/scripts/measure-artifact.sh" "$rootfs" ${archive:+"$archive"}
 log "artifact ready: $artifact_dir"

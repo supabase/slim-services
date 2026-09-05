@@ -1,276 +1,137 @@
-# Nix Portable Artifact Playbook
+# Nix build architecture
 
-This document captures the packaging lessons from the Edge Runtime slim-image
-work so other services can reuse the same pattern.
-
-## Goal
-
-Use Nix to produce a minimal, portable runtime rootfs, then build Docker images
-by copying that rootfs into the smallest proven base image. The same rootfs
-should also be usable for local archive distribution and artifact smoke tests.
-
-## Contract
-
-The canonical build product is an expanded rootfs:
+The root flake is the build interface. Ordinary Nix functions define service
+builds, portable runtimes, archives, and images. Release scripts select inputs,
+invoke those outputs, run real service smokes, and publish the tested products.
 
 ```text
-artifacts/<service>/<version>/<platform>-<arch>/
-├── rootfs/
-├── <service>.tar.zst
-└── manifest.json
+upstream release selection
+          |
+          v
+exact source + tool versions + dependency hashes
+          |
+          v
+service derivation -> portable runtime -> distribution archive
+                                      -> Docker-compatible image
 ```
 
-`rootfs/` is the source of truth. Archives are derived distribution products
-created later with `scripts/archive-artifact.sh`.
+## Code ownership
 
-For Nix-backed services, prefer a Nix output that is already the final portable
-runtime tree:
+- `flake.nix` declares shared inputs and public outputs; `flake.lock` pins them.
+- `nix/packages.nix` selects the requested service and its package arguments.
+- `nix/packages/` contains Auth, Node, and Darwin PostgREST packages.
+- `services/<service>/nix/` contains the larger BEAM, Edge Runtime, Imgproxy,
+  and Postgres packages and their upstream-specific adapters.
+- `nix/portable-*/` contains runtime-family relocation helpers and launchers.
+- `nix/archive.nix` creates deterministic zstd archives with pinned tools.
+- `nix/images/` defines image files, utilities, and container configuration.
+- `scripts/build-artifact-from-nix.sh` resolves a release and exports its runtime.
+- `scripts/nix.sh` owns the common flake invocation and dependency hash probes.
+
+Package functions take source, version, dependencies, and hashes explicitly.
+They do not read build parameters from the environment during evaluation.
+Shared nixpkgs and runtime-definition pins remain distinct where compatibility
+requires it. Postgres and Edge Runtime retain the selected upstream release's
+own locked dependencies; updating the root lock does not replace those graphs.
+
+The root flake advertises Postgres's public binary cache through `nixConfig`.
+Release commands accept that configuration explicitly; a cache miss or an
+invocation that opts out still falls back to a source build. On multi-user Nix
+installations, configure the same `extra-substituters` and
+`extra-trusted-public-keys` in the daemon's `nix.conf` so builds can use the
+cache. Do not add users to `trusted-users` for this purpose.
+
+## Automatic releases
+
+The hourly poller and `.github/service-release-sources.json` remain the release
+policy. The poller enumerates eligible versions at or above each release floor,
+skips published/in-flight releases, and dispatches `service-release.yml` with
+the selected service and version. No lock-file edit is required for a new
+upstream service release.
+
+The build job checks out the exact source commit and creates a temporary
+`release` input containing:
 
 ```text
-$out/
-├── bin/
-└── lib/
+release.json   Service, version, source provenance, dependency hashes,
+               and upstream-declared tool versions where applicable.
+source/        Clean upstream source export, without injected package files.
 ```
 
-The artifact script copies `$out` directly into `artifacts/.../rootfs`.
+For nested upstream flakes, the same source also overrides the root flake's
+`upstream` input. The upstream lock supplies that release's dependency graph.
+`--no-write-lock-file` keeps per-run release selection out of the repository's
+shared toolchain lock.
 
-## What Belongs In Nix
+Dependency discovery runs ordered fixed-output probes. Each reported content
+hash is added to the release input; a network/compiler failure without a hash
+fails the release. The final runtime build consumes the resolved hashes with
+pure evaluation. The manifest records the release input and derived hashes.
+Flake locking and language dependency hashes protect different inputs: the
+flake lock does not replace npm, pnpm, Cargo, or Mix dependency locking.
 
-Nix should own build and packaging invariants:
+## Build outputs
 
-- build the upstream source at the pinned ref;
-- copy the service executable or release output;
-- copy required runtime shared libraries;
-- recursively complete transitive library closure;
-- patch rpaths/install names to relative locations;
-- set Linux ELF interpreters deliberately;
-- strip shipped binaries and shared libraries;
-- add thin portable wrappers when extracted-folder execution needs env vars;
-- fail the build if shipped files still reference `/nix/store`;
-- fail the build if runtime dependencies are unresolved.
-
-Nix should not own behavioral smoke tests that need Docker networking, mounted
-fixtures, or HTTP orchestration. Keep those in `services/<service>/smoke.sh`.
-
-## Docker Image Pattern
-
-Final `Dockerfile.slim` files should be artifact-only:
-
-```dockerfile
-ARG BASE_IMAGE=gcr.io/distroless/base-debian13:nonroot
-FROM ${BASE_IMAGE}
-ARG ARTIFACT_ROOT
-COPY ${ARTIFACT_ROOT}/bin/ /usr/bin/
-COPY ${ARTIFACT_ROOT}/lib/ /lib/
-ENTRYPOINT ["/bin/.service-wrapped"]
-```
-
-Use `/usr/bin` for copied binaries on Debian 13 Distroless. These images use a
-merged `/usr` layout, where `/bin` is a symlink, and copying a real artifact
-`bin/` directory over `/` can fail.
-
-Keep the final image shell-free when possible. If the artifact needs a shell
-wrapper for extracted-folder use, the Docker image can still enter directly via
-the hidden wrapped binary and set simple env vars in image metadata.
-
-## Base Image Selection
-
-Use the smallest base that is proven by smoke tests:
-
-1. `scratch`, when the artifact is static or bundles all system runtime pieces.
-2. `gcr.io/distroless/static-debian13`, when no dynamic glibc loader is needed.
-3. `gcr.io/distroless/base-debian13`, for dynamically linked glibc services.
-4. `gcr.io/distroless/cc-debian13`, when base C++ runtime is needed.
-5. Alpine only when musl is explicitly validated or upstream already depends on
-   it.
-
-For Edge Runtime we kept `base-debian13:nonroot`. `base-nossl-debian13` worked
-for the current smoke and saved a few MiB, but the gain was too small to adopt
-without broader TLS coverage.
-
-## Linux Dynamic Linking
-
-If the Linux artifact excludes glibc and the dynamic loader, it is not universal
-Linux. It is a glibc-based Linux ARM64 artifact validated against the chosen
-Distroless base.
-
-That contract now has a number: shipped ELFs may reference at most
-`GLIBC_2.35` from the host. Bundled-glibc artifacts are hermetic and instead
-prove their matching loader/libc pair with the floor-container execution
-check.
-`scripts/os-floor.sh --linux` measures it, the portable audit gates it, and
-`scripts/floor-check-linux.sh` proves it by executing the launcher inside
-ubuntu:22.04. Raising the shared pin can raise this floor silently — the gate
-exists to catch exactly that; artifacts that carry their own glibc bypass the
-host ceiling only after the bundled loader resolves every audited ELF.
-The generic audit proves this loader/libc closure; each service recipe remains
-responsible for its relocatable launcher, which `FLOOR_CHECK_CMD` executes at
-the Jammy floor.
-
-For Edge Runtime, we intentionally excluded core system libraries:
-
-```text
-ld-linux*
-libc*
-libdl*
-libpthread*
-libm*
-libresolv*
-librt*
-```
-
-The binary was patched to use the system loader:
-
-```text
-/lib/ld-linux-aarch64.so.1
-```
-
-That makes Distroless Debian 13 a sensible host. Running from `scratch` would
-require bundling glibc, loader, NSS/DNS files, and CA certificates, then adding
-broader DNS/TLS smoke coverage. For Edge Runtime the expected compressed gain
-was not worth the extra production responsibility.
-
-At the glibc floor, NSS `files`/`dns` lookups and gconv modules are compiled
-into or shipped alongside the host's libc — do not bundle them. Bundling NSS
-modules for a host-glibc artifact is a correctness bug (cross-glibc `dlopen`),
-not merely redundant. Stock glibc also ignores `LOCALE_ARCHIVE` (a Nix-glibc
-patch) and `LOCPATH` cannot read archive files, so a bundled locale archive is
-inert for host-glibc artifacts too; `C.UTF-8` is built into glibc >= 2.35 and
-needs no locale files at all. The one genuine gap is tzdata: minimal hosts
-have no `/usr/share/zoneinfo`, and glibc degrades silently to UTC on a
-bad/missing `TZ`. For services that need it (the BEAM trio: realtime, pooler,
-analytics), copy the pinned nixpkgs `tzdata`'s `share/zoneinfo` into the
-rootfs and set `TZDIR` from the release env script, guarded so a user-set
-`TZDIR` wins:
+The normal service entry point remains:
 
 ```sh
-if [ -z "${TZDIR:-}" ] && [ -d "$RELEASE_ROOT/share/zoneinfo" ]; then
-  export TZDIR="$RELEASE_ROOT/share/zoneinfo"
-fi
+TARGET_OS=linux ARCH=arm64 scripts/build-artifact.sh realtime v2.134.6
 ```
 
-The one real gconv mismatch is a bundled-glibc artifact (postgrest's
-`SPLIT_BUNDLED_GLIBC`): its compiled-in gconv path is empty inside the scratch
-Docker image, so it ships its own source image's gconv modules via
-`OPTIONAL_INCLUDE_PATHS` — no wrapper, no `GCONV_PATH`. Host-glibc artifacts
-never need this; their only iconv importer (`libstdc++.so.6`) reads host
-gconv, which ships with host libc. Full evidence, decision rules, and sweep
-results:
-`docs/design/glibc-runtime-side-data.md`.
+It verifies the selected source checkout, resolves missing dependency hashes,
+and builds `packages.<system>.runtime` through the root flake. Available Nix
+systems are `aarch64-linux`, `x86_64-linux`, and `aarch64-darwin`. Builds for a
+foreign system require a matching configured Nix builder; service-specific
+Docker build runners are no longer a second build implementation.
 
-## macOS Dynamic Linking
-
-For Darwin artifacts, complete the dylib closure and remove all Nix store
-references:
-
-- copy direct and transitive `.dylib` dependencies;
-- resolve hidden `@rpath` dependencies;
-- rewrite copied Nix store install names to `@rpath/<library>`;
-- add `@executable_path/../lib` for binaries;
-- add `@loader_path` for libraries;
-- delete absolute `/nix/store` rpaths;
-- strip local symbols with `strip -x`;
-- ad-hoc sign every mutated Mach-O file after patching.
-
-The build should fail if any shipped Mach-O still references `/nix/store`.
-
-## Runtime Wrappers
-
-Portable archives often need a tiny wrapper because `dlopen` dependencies may
-not be found through rpath alone.
-
-For Edge Runtime the wrapper sets:
+Given a resolved release input, the underlying interface is:
 
 ```sh
-LD_LIBRARY_PATH="$LIB_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-ORT_DYLIB_PATH="${ORT_DYLIB_PATH:-$LIB_DIR/libonnxruntime.so}"
+nix build .#runtime --override-input release path:/absolute/release-input --no-write-lock-file
 ```
 
-On macOS it uses `DYLD_LIBRARY_PATH` and `libonnxruntime.dylib`.
+Archives and images can also be produced from an already audited rootfs:
 
-Keep wrappers thin and generic. Avoid service behavior in wrappers unless the
-upstream production launcher requires it.
-
-## Validation Layers
-
-Use three layers of validation:
-
-1. Nix package audit: no unresolved deps, no Nix store leaks, files stripped.
-2. Artifact smoke: build a temporary image from `rootfs/` for Linux artifacts;
-   run the extracted artifact directly for non-Linux artifacts when the host
-   platform matches.
-3. Final image smoke: copy the same `rootfs/` into the selected base and run
-   the same smoke.
-
-For Edge Runtime the smoke now does:
-
-- `edge-runtime --help`;
-- start a tiny local `Deno.serve` fixture;
-- request `/smoke` over HTTP and assert the JSON response.
-
-Keep smoke tests small and service-specific. They validate runtime viability,
-not full service correctness.
-
-Service smoke scripts should support both contracts when practical:
-
-```bash
-IMAGE=local/service:slim services/<service>/smoke.sh
-ARTIFACT_ROOTFS=artifacts/<service>/<version>/darwin-arm64/rootfs services/<service>/smoke.sh
+```sh
+scripts/archive-artifact.sh artifacts/realtime/v2.134.6/linux-arm64/rootfs
+scripts/build-image-from-artifact.sh realtime artifacts/realtime/v2.134.6/linux-arm64/rootfs local/realtime:slim
 ```
 
-## Cross-Platform Build Rule
+The packaging scripts pass that rootfs as an explicit flake input. Image
+assembly uses pinned Nix packages; Docker is used afterward to load, smoke, and
+publish the image. Upstream mirror services retain their separate provenance
+contract: Mailpit and Vector consume verified upstream archives, Imgproxy
+builds its native package, and their images remain exact upstream mirrors.
+Linux PostgREST retains its verified upstream-image extraction path.
 
-Build Linux ARM64 artifacts inside a Linux ARM64 environment. Do not treat a
-Darwin-hosted Nix build as proof of Linux packaging correctness.
+## Portability boundary
 
-The Edge Runtime Linux path uses native Linux Nix:
+Nix owns service compilation, dependency installation, runtime closure
+completion, relocation, stripping, and pruning. A portable runtime must work
+without the build machine's `/nix/store`. Linux launchers and runtime side data
+must follow the matched-loader/glibc contract in
+[the runtime side-data decision](docs/design/glibc-runtime-side-data.md).
 
-```bash
-TARGET_OS=linux ARCH=arm64 scripts/build-artifact.sh edge-runtime v1.73.15
-```
+macOS exported Mach-O signatures are verified and, when necessary, repaired
+with the host's system signer before auditing and packaging. This explicit
+host operation is retained because a signature made in the build environment
+can fail after export. Both archive and image packaging consume the final
+exported artifact.
 
-The resulting rootfs is then copied into the final Linux ARM64 image:
+Keep runtime-family helpers separate when their requirements differ. OTP
+releases, Node applications, and PostgreSQL extension trees have different
+closure and launcher rules; sharing a package interface does not require a
+universal relocation framework.
 
-```bash
-PLATFORM=linux/arm64 scripts/build-image-from-artifact.sh \
-  edge-runtime \
-  artifacts/edge-runtime/v1.73.15/linux-arm64/rootfs \
-  local/edge-runtime:slim-v1.73.15-arm64
-```
+## Verification
 
-For CI, prefer the standard one-service orchestration command:
+Run host fixture scripts locally. Use `service-release.yml` with
+`validation_only=true` and `force=true` on the branch for real artifact/image
+builds and service smokes. The workflow tests all three supported targets and
+uploads inspection artifacts without replacing published releases.
 
-```bash
-TARGET_OS=linux ARCH=arm64 scripts/ci-build-service.sh edge-runtime v1.73.15
-TARGET_OS=darwin ARCH=arm64 scripts/ci-build-service.sh edge-runtime v1.73.15
-```
-
-## Common Pitfalls
-
-- nixpkgs patches some packages to embed absolute Nix store paths inside
-  *data*, not just binaries. Worst case found so far: OTP's `disksup.erl` is
-  patched to spawn its port shell via the store bash, compiled into
-  `disksup.beam` inside a compressed literal chunk — invisible to `strings`,
-  `grep`, `otool`, and `ldd`, and it only fails off the build machine (the
-  path exists locally). For BEAM artifacts, append
-  `-os_mon start_disksup false` to the release `vm.args`; in general, smoke
-  the artifact somewhere the build machine's store does not exist (a
-  container for Linux, another Mac for darwin) before trusting it.
-- `ldd` only sees linked libraries, not every runtime `dlopen` path.
-- `patchelf --shrink-rpath` is useful, but still audit afterwards.
-- Stripping must happen after patching; otherwise size regressions can be huge.
-- Distroless `/bin` and `/lib` symlinks can make `COPY rootfs/ /` fail.
-- `--help` is not enough for service confidence; add a tiny real request path.
-- A Nix output in the store may be read-only. Normalize permissions before
-  exporting it through Docker if local artifact export needs writable files.
-- Do not edit `sources/`; copy overlays into temporary build locations.
-
-## When To Use This Pattern
-
-This Nix-first pattern is strongest for native services where we need to own
-the runtime shared-library closure. It is less obviously valuable for Node
-services, where framework-native standalone outputs and Distroless Node images
-may be simpler and smaller enough.
-
-Adopt Nix when it improves reproducibility, closure control, or portability.
-Do not force it when Docker source builds are clearer.
+Preserve every unpublished version above its release floor. A recipe change
+must exercise the affected backlog; linkage or platform changes also require
+the supported target matrix. Successful Nix evaluation alone is not runtime
+proof. Use actual database/API/service requests and the host-floor execution
+checks described in [CI_MATRIX.md](CI_MATRIX.md).

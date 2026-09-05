@@ -45,7 +45,7 @@ class StudioArtifactBoundaryTest(unittest.TestCase):
     def write_manifest(self, manifest=None):
         (manifest or self.manifest).write_text(
             '{\n'
-            '  "entrypoint": ["/node/bin/node", "/app/apps/studio/docker-entrypoint.mjs"],\n'
+            '  "entrypoint": ["/slim-runtime/bin/studio"],\n'
             '  "cmd": ["/node/bin/node", "apps/studio/server.js"]\n'
             '}\n',
             encoding="utf-8",
@@ -212,8 +212,8 @@ class StudioArtifactBoundaryTest(unittest.TestCase):
         self.write_manifest()
         self.manifest.write_text(
             self.manifest.read_text(encoding="utf-8").replace(
-                "/app/apps/studio/docker-entrypoint.mjs",
-                "/app/apps/studio/server.js",
+                "/slim-runtime/bin/studio",
+                "/slim-runtime/bin/missing",
             ),
             encoding="utf-8",
         )
@@ -228,8 +228,8 @@ class StudioArtifactBoundaryTest(unittest.TestCase):
         self.write_manifest()
         self.manifest.write_text(
             self.manifest.read_text(encoding="utf-8").replace(
-                '"/app/apps/studio/docker-entrypoint.mjs"],',
-                '"/app/apps/studio/docker-entrypoint.mjs", "--extra"],',
+                '"/slim-runtime/bin/studio"],',
+                '"/slim-runtime/bin/studio", "--extra"],',
             ),
             encoding="utf-8",
         )
@@ -242,7 +242,7 @@ class StudioArtifactBoundaryTest(unittest.TestCase):
     def test_manifest_entrypoint_missing_target_is_rejected(self):
         self.write_required_runtime(self.rootfs)
         self.write_manifest()
-        (self.rootfs / "app/apps/studio/docker-entrypoint.mjs").unlink()
+        (self.rootfs / "bin/studio").unlink()
 
         result = self.run_script(VALIDATE, self.rootfs, self.manifest)
 

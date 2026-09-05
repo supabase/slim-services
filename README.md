@@ -11,10 +11,10 @@ This repo asks a simple question, on three axes:
 <!-- generated:release-summary:begin -->
 For the latest published Linux ARM64 release set (10 services), upstream images
 total **2050.5 MiB** compressed; the slim set totals **549.3 MiB** (**73.2%**
-smaller — exact numbers below). Every published service also ships measured
-steady-state RSS and idle-CPU numbers, and a minimal core stack (postgres +
-auth + postgrest) idles at roughly **98 MiB of RSS per stack** with near-zero
-idle CPU.
+smaller — exact numbers below). Every published service also has measured
+steady-state RSS and idle-CPU numbers. These isolated service smoke
+measurements do not establish complete Dockerless CLI-stack behavior or a
+25-parallel-stack capacity result.
 <!-- generated:release-summary:end -->
 
 ## Project Goals
@@ -28,12 +28,12 @@ This project has three long-term goals:
    upstream the maintainable build and packaging improvements back to each
    service repository.
 3. Minimize each service's runtime footprint — steady-state memory and idle
-   CPU — so many local stacks can run in parallel on one developer machine
-   (the working target: ~25 stacks on a 32 GB laptop).
+   CPU — and measure whether many local stacks can run in parallel on one
+   developer machine (the working hypothesis is ~25 stacks on a 32 GB laptop).
 
-The Docker images are the first delivery target because they immediately help
-local development and CI. The deeper goal is portable, minimal service runtime
-artifacts that can be reused both inside and outside containers.
+The portable artifact is the common delivery. Derived Docker images serve
+container-based local development and CI, while the CLI consumes the same
+rootfs through native archives.
 
 ## Why This Exists
 
@@ -43,9 +43,9 @@ produce smaller local/CI-oriented service images while keeping upstream service
 source trees read-only and preserving a clear validation path.
 
 Disk is only half the story: image layers are stored once and shared by every
-container, but **RSS and CPU multiply per running stack**. That is why each
-service now also carries a runtime profile and measured runtime numbers — see
-[Runtime Footprint](#runtime-footprint) below.
+container, while runtime memory and CPU still matter for each running stack.
+That is why service runtime profiles and measured runtime numbers are tracked
+where available — see [Runtime Footprint](#runtime-footprint) below.
 
 The approach is intentionally service-by-service:
 
@@ -59,12 +59,15 @@ The approach is intentionally service-by-service:
 
 ## Current Results
 
-Image sizes are gzip-compressed; Idle RSS and Idle CPU are steady-state values
-sampled by each service's smoke test (`docker stats`). The slim image and
-runtime values below come from the `linux-arm64` manifest attached to each
-service's latest release in this repository. Upstream ARM64 sizes are measured
-from the matching upstream image tag; Pooler retains its documented comparison
-override because its exact release tag is unavailable on Docker Hub.
+Image sizes are gzip-compressed. Idle RSS and Idle CPU are steady-state values
+sampled by each service's smoke test. Container values use the Docker `stats`
+MemUsage sample; host values use process-tree RSS and an OS-dependent `ps`
+`%cpu` average, so the samplers are not literal RSS equivalents or directly
+comparable CPU samples. The slim image and runtime values below come from the
+`linux-arm64` manifest attached to each published release in this repository.
+Upstream ARM64 sizes are measured from the matching upstream image tag; Pooler
+retains its documented comparison override because its exact release tag is
+unavailable on Docker Hub.
 
 <!-- generated:results:begin -->
 | Service | Version | Upstream ARM64 | Published slim | Reduction | Idle RSS | Idle CPU | Sources |
@@ -83,30 +86,24 @@ override because its exact release tag is unavailable on Docker Hub.
 `*` Upstream comparison uses `UPSTREAM_COMPARE_IMAGE` from the recipe (the exact tag is not published on Docker Hub), so the percentage is directional.
 <!-- generated:results:end -->
 
-Studio is now in the native automatic release pipeline. It remains omitted
-from this release-backed snapshot until the first native Studio release
-publishes its measured manifests.
-
 Postgres is native-first like everything else: the image is derived from the
 portable artifact, which ships the extension set supported by the matching
 upstream image for its selected major (PG15 includes TimescaleDB/plv8; PG17
-omits those incompatible extensions). Configuration and preload behavior
-follow that matching upstream image; all supported extensions are installed,
-with only the image's configured `shared_preload_libraries` enabled by default.
+omits those incompatible extensions). Its `shared_preload_libraries` policy
+follows the matching `UPSTREAM_IMAGE`; the artifact does not replace upstream
+preload behavior with a minimal list.
 
 ### Host-Native Artifacts
 
-Every service in the release workflow ships a self-contained, relocatable
-`tar.zst` archive per target ([HOST_NATIVE_PLAN.md](HOST_NATIVE_PLAN.md)) that
-the CLI can download to `~/.supabase/bin/<service>/<version>/` and run without
-Docker — on macOS and on Linux (only the glibc family is assumed from a
-Linux host; each Node service bundles its upstream-selected runtime inside the archive — the
-wrapper prefers `node/bin/node`, no external runtime, `runtime_requires` is
-null). The Linux Docker images are derived from these same artifacts. The
-table below shows the `darwin-arm64` values from the manifest attached to the
-same published release used above. Idle RSS and Idle CPU are sampled from the
-artifact running as a real host process with `runtime.env` applied (`ps`-based,
-recorded in the manifest). Local rebuilds can preview table changes with
+For a service with a published native manifest, the release workflow attaches a
+self-contained, relocatable `tar.zst` archive per target
+([HOST_NATIVE_ARTIFACTS.md](HOST_NATIVE_ARTIFACTS.md)) for the CLI to download
+to `~/.supabase/bin/<service>/<version>/` and run without Docker. Linux images
+for derived-image services use the same rootfs. The table below shows the
+`darwin-arm64` values from the manifest attached to the same published release
+used above. Host-process smokes apply `services/<service>/runtime.env` when
+that file exists; the CLI integration must arrange the same profile. Local
+rebuilds can preview table changes with
 `scripts/update-results-tables.sh --host-native-only` (darwin) or `--merge`;
 published release manifests remain the source of truth for this snapshot.
 
@@ -147,11 +144,11 @@ For CI target naming and commands, see [CI_MATRIX.md](CI_MATRIX.md).
 
 Memory and CPU are first-class optimization targets, not just disk:
 
-- **Runtime profiles** — each service has a `services/<service>/runtime.env`
-  with low-footprint local-dev defaults, baked into the image as ENV and
-  overridable at `docker run -e`. The same KEY=VALUE files are applied as
-  process environment for host-native (no-Docker) runs — the host-process
-  smokes do exactly that, mirroring the CLI. Highlights:
+- **Runtime profiles** — where a service defines
+  `services/<service>/runtime.env`, its low-footprint local-dev defaults are
+  baked into the image as ENV and overridable at `docker run -e`. Host-process
+  smokes apply the same KEY=VALUE file; the CLI integration must arrange it for
+  native runs. Highlights:
   - BEAM services (realtime, analytics, pooler): one scheduler and no
     scheduler busy-waiting (`+S 1:1 +sbwt none ...`) — idle CPU drops from
     several percent to ≤0.5%.
@@ -160,26 +157,28 @@ Memory and CPU are first-class optimization targets, not just disk:
   - Go services (auth): `GOMEMLIMIT`, `GOGC`, `GOMAXPROCS`.
   - All DB clients: shrunk connection pools — every pooled connection holds a
     server-side postgres backend, so this also cuts postgres memory.
-  - Postgres: a conf overlay (`shared_buffers=32MB`, `jit=off`, slowed idle
-    ticks) via the stock `include_dir`; `wal_level=logical` untouched.
-- **Measurement** — every smoke samples steady-state RSS and idle CPU
-  (`record_runtime_metrics` via `docker stats` for containers,
-  `record_host_runtime_metrics` via `ps` over the process tree for host
-  processes — both in `scripts/smoke-lib.sh`) and records them under
-  `runtime` in the artifact `manifest.json`, so regressions on these axes are
-  visible per build, exactly like size.
-- **The parallel-stacks view** — image layers are shared; RSS multiplies per
-  stack. A minimal core stack (postgres + auth + postgrest) idles at roughly
-  145 MiB, so 25 parallel stacks cost ~3.5 GiB. Analytics (~500 MiB) and
-  Studio (~200 MiB) dominate when run per-stack and are disabled by default
-  in the minimal stack.
+- **Postgres configuration** — a conf overlay (`shared_buffers=32MB`,
+  `jit=off`, slowed idle ticks) via the stock `include_dir`; `wal_level=logical`
+  remains untouched.
+- **Measurement** — smokes record steady-state runtime observations under
+  `runtime` in the artifact `manifest.json`: containers use
+  `record_runtime_metrics` via Docker `stats`, while host processes use
+  `record_host_runtime_metrics` via `ps` (both in `scripts/smoke-lib.sh`).
+  Host `%cpu` is an OS-dependent `ps` average, and these samplers do not
+  produce literal RSS equivalents or directly comparable CPU samples.
+- **Parallel stacks** — capacity remains unmeasured. Isolated service smokes do
+  not model CLI orchestration, service dependencies, shared state, workload,
+  or concurrent startup, so they do not prove a complete Dockerless CLI stack
+  or the 25-stack target.
 
 ## Repository Layout
 
 ```text
 .
-├── scripts/                  Shared artifact, image, measure, and smoke helpers
-├── services/<service>/        Per-service recipes, Dockerfiles, smoke tests, reports
+├── flake.nix / flake.lock     Root Nix interface and pinned inputs
+├── nix/                       Package, runtime, archive, and image definitions
+├── scripts/                   Shared artifact, image, measure, and smoke helpers
+├── services/<service>/        Recipes, Nix adapters, smokes, overlays, and reports
 ├── sources/<service>/         Upstream source repositories as pinned submodules
 ├── artifacts/                 Generated rootfs outputs and optional archives, gitignored
 └── SLIM_IMAGES_REPORT.md      Global summary and cross-service lessons
@@ -196,7 +195,9 @@ Every backend writes the same layout:
 ```text
 artifacts/<service>/<version>/<platform>-<arch>/
 ├── rootfs/
-├── <service>.tar.zst          Optional distribution archive
+├── <service>-<version>-<platform>-<arch>.tar.zst
+├── <service>-<version>-<platform>-<arch>.sbom.spdx.json
+├── SHA256SUMS
 └── manifest.json
 ```
 
@@ -205,41 +206,35 @@ inspection, and Docker image assembly. Compressed archives are derived
 distribution products and may be generated separately from an existing rootfs.
 
 The manifest records source ref (or pinned image digest), selected base image,
-entrypoint, smoke command, artifact size, image size, and — after an image
-smoke — steady-state runtime metrics (`runtime.runtime_rss_mib`,
-`runtime.idle_cpu_pct`).
+entrypoint, smoke command, portability and host-floor metadata, artifact size,
+image size, archive/SBOM information, and runtime observations when a smoke
+records them.
 
 ## Build Backends
 
-Native-first ([HOST_NATIVE_PLAN.md](HOST_NATIVE_PLAN.md)): for every
-Supabase-owned service the portable, relocatable artifact is the single
-source of truth on every target, and the Docker image is derived from that
-same rootfs. Each service has a `services/<service>/recipe.env` file; the
-dispatcher reads `ARTIFACT_BACKEND` and chooses one of:
+Native-first ([HOST_NATIVE_ARTIFACTS.md](HOST_NATIVE_ARTIFACTS.md)): for every
+derived-image service the portable, relocatable artifact is the source of truth
+on every target, and the Docker image is derived from that same rootfs. Each
+service has a `services/<service>/recipe.env` file; the dispatcher reads
+`ARTIFACT_BACKEND` and chooses the service's build path:
 
-- `nix`: build the portable rootfs from the repo-owned Nix package in
-  `services/<service>/nix/` (applied over the read-only submodule via
-  `NIX_PACKAGE_OVERLAY`). Used by the BEAM services (realtime, analytics,
-  pooler) and edge-runtime. On Linux this runs local Nix when the host
-  matches, or the service's `Dockerfile.artifact` nixos/nix builder
-  otherwise (e.g. building Linux artifacts from macOS).
-- `docker-source` with `ARTIFACT_SOURCE_BUILD="host"`: build with
-  `services/<service>/build-host.sh` on the host toolchain — Go
-  cross-compiles (auth) and Node bundles (storage, pgmeta, Studio; these must
-  run on a host matching the target because package managers resolve platform
-  packages).
-- `docker-image`: run `Dockerfile.artifact` rooted at a published upstream
-  image (`FROM $SOURCE_IMAGE`, pinned by `SOURCE_IMAGE_DIGEST`) — used when
-  pruning the published image is the practical path (postgres).
-- `image`: extract selected paths from a published image (postgrest — the
-  extraction bundles the full ELF closure, so the result is still portable).
+- `nix`: build the root flake's portable runtime using the exact selected
+  source, tool versions, and dependency hashes. Auth, the Node services, BEAM,
+  Edge Runtime, Postgres, Imgproxy, and Darwin PostgREST use this path.
+  [Nix build architecture](NIX_PORTABLE_ARTIFACT_PLAYBOOK.md) explains the
+  package definitions and automatic release input resolution.
+- `image`: extract selected paths from a published upstream image when that is
+  the proven portable path (PostgREST bundles its full ELF closure).
+- `upstream-archive`: consume a verified upstream archive for Mailpit or
+  Vector; their Linux image path remains an exact mirror rather than an
+  artifact-derived image.
 
-The final `Dockerfile.slim` files derive the image from the artifact: they
-copy the prepared `rootfs/` into the smallest proven runtime base and add
-only entry wiring (busybox/tini/CA-bundle stages where a shell entrypoint is
-needed). Images are always assembled through `scripts/render-dockerfile.sh`,
-which appends the `runtime.env` profile as ENV — never build
-`Dockerfile.slim` directly or the runtime profile is silently skipped.
+The final images are Nix `dockerTools` derivations built from the exact
+audited `rootfs/`. The image definition adds only service entry wiring,
+static busybox/tini helpers, CA certificates, and the runtime profile from
+`services/<service>/runtime.env`. The same derivation emits a deterministic
+Docker load archive, so local smoke tests and release publication consume
+identical image bytes.
 
 Portable archive builds share two hardening steps. For Nix-backed portable
 artifacts, these checks should run inside the Nix package when practical; the
@@ -251,9 +246,10 @@ scripts remain available as shared helpers and external verification.
 - `scripts/audit-portable-artifact.sh` fails artifacts that still have
   unresolved runtime dependencies or absolute Nix store references.
 
-Archives prefer `zstd -19` and are produced by `scripts/archive-artifact.sh`
-when a distributable bundle is needed. The script uses Nix's `zstd` package
-automatically when `zstd` is not on PATH.
+Archives use pinned GNU tar and zstd from `nix/archive.nix`, with normalized
+ordering, timestamps, ownership, and compression settings. The shell wrapper
+copies the selected rootfs into the pure flake release input before invoking
+that derivation.
 
 ## Quick Start
 
@@ -386,9 +382,10 @@ not allow the built-in Actions token to create pull requests.
 
 The release workflow rechecks the upstream release policy independently, so a
 manual dispatch cannot publish `main`, another branch, a draft/prerelease, or
-an unsupported tag. A newly triggered build can still fail safely when a
-service's version-specific dependency hashes need to be refreshed; no release
-or image is published unless every build and smoke test passes.
+an unsupported tag. A newly triggered build resolves its version-specific
+dependency hashes from the exact source automatically. Upstream dependency or
+build changes can still fail safely; no release or image is published unless
+every build and smoke test passes.
 
 ## Common Commands
 
@@ -468,7 +465,6 @@ scripts/archive-artifact.sh <artifact-rootfs> [archive-prefix]
 - Upstream submodules stay read-only.
 - Service-specific Nix changes live in this repo, not in `sources/`.
 - Prefer `scratch` when the artifact proves it can run there.
-- Prefer Distroless Debian 13 for glibc services.
 - Avoid Alpine unless musl is validated and wins.
 - Keep optimizations maintainable; do not carry a phase 2 variant for a tiny
   compressed gain.
@@ -477,19 +473,14 @@ scripts/archive-artifact.sh <artifact-rootfs> [archive-prefix]
 
 ## Status
 
-Four passes are complete: base-image/artifact slimming (pass 1),
-service-specific pruning (pass 2), the runtime-footprint pass (pass 3 —
-latest versions, postgres onboarding, `runtime.env` profiles, RSS/CPU
-measurement in every smoke), and the host-native pass (pass 4 —
-[HOST_NATIVE_PLAN.md](HOST_NATIVE_PLAN.md)). The release workflow has completed
-the full `darwin-arm64`, `linux-arm64`, and `linux-amd64` build-and-smoke matrix
-for all nine published services, attaching the portable archives to GitHub
-Releases and pushing the exact tested Linux images to GHCR. The legacy
-`.github/workflows/service-artifacts.yml` remains for experiments and services
-outside the release set. CLI-side integration (download/verify and
-process-compose wiring) is the next step, tracked in
-[SLIM_IMAGES_REPORT.md](SLIM_IMAGES_REPORT.md) § Remaining Work and the plan's
-Phase 5 notes.
+The release workflow is the primary publication path for service artifacts and
+derived Linux images. `.github/workflows/service-artifacts.yml` is the manual
+diagnostic path for exercising selected matrix cells and refreshing local
+results. The native artifact contract is documented in
+[HOST_NATIVE_ARTIFACTS.md](HOST_NATIVE_ARTIFACTS.md). CLI-side integration
+(download/verify, process-compose wiring, and an end-to-end Dockerless stack)
+and realistic workload/concurrency measurement remain open; see
+[SLIM_IMAGES_REPORT.md](SLIM_IMAGES_REPORT.md) § Remaining Work.
 
 ## Licensing
 

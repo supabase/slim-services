@@ -1,0 +1,8 @@
+{
+  "name": "slim-storage-build-tools",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "rolldown": "1.0.0-rc.17"
+  }
+}

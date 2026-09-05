@@ -138,7 +138,7 @@ requirements without editing upstream source.
 
 ## Host-Native darwin-arm64 Artifact (2026-07)
 
-First BEAM service on the host-native contract (HOST_NATIVE_PLAN.md), built by
+First BEAM service on the host-native contract (HOST_NATIVE_ARTIFACTS.md), built by
 the repo-owned Nix package `services/realtime/nix/default.nix` (applied over
 the read-only submodule via `NIX_PACKAGE_OVERLAY`; Linux keeps the Docker
 artifact builder unchanged):
