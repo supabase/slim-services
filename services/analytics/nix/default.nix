@@ -27,7 +27,6 @@
   mixDepsHash ? null,
   explorerNifHash ? null,
   sqlFmtNifHash ? null,
-  derivedHashes ? { },
   src ? throw "analytics requires an explicit source path",
   upstreamDockerfile ? builtins.readFile "${src}/Dockerfile",
   portableBeam ? ../../../nix/portable-beam,
@@ -191,19 +190,19 @@ let
       if explorerNifHash != null then
         explorerNifHash
       else
-        derivedHashes.explorer_nif_hash or lib.fakeHash;
+        lib.fakeHash;
   };
   sqlFmtNif = pkgs.fetchurl {
     url = "https://github.com/akoutmos/sql_fmt/releases/download/v${sqlFmtVersion}/${sqlFmtNifName}";
     hash =
-      if sqlFmtNifHash != null then sqlFmtNifHash else derivedHashes.sql_fmt_nif_hash or lib.fakeHash;
+      if sqlFmtNifHash != null then sqlFmtNifHash else lib.fakeHash;
   };
 
   mixDeps = fetchMixDeps {
     pname = "mix-deps-${pname}";
     src = cleanedSrc;
     inherit version;
-    hash = if mixDepsHash != null then mixDepsHash else derivedHashes.mix_deps_hash or lib.fakeHash;
+    hash = if mixDepsHash != null then mixDepsHash else lib.fakeHash;
     mixEnv = "prod";
   };
 

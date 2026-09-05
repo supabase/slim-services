@@ -19,11 +19,14 @@ let
   # Tini 0.19 uses basename without its POSIX declaration. The musl static
   # build needs this header; keep the upstream warning checks enabled.
   tini = pkgs.pkgsStatic.tini.overrideAttrs (old: {
-    postPatch = (old.postPatch or "") + ''
-      substituteInPlace src/tini.c \
-        --replace-fail '#include <stdlib.h>' '#include <stdlib.h>
-      #include <libgen.h>'
-    '';
+    postPatch =
+      (old.postPatch or "")
+      + "\n"
+      + ''
+        substituteInPlace src/tini.c \
+          --replace-fail '#include <stdlib.h>' '#include <stdlib.h>
+        #include <libgen.h>'
+      '';
   });
   root = builtins.path {
     path = rootfs;
@@ -354,10 +357,7 @@ let
             copy_tree . opt/postgres
             mkdir -p "$out/etc/postgresql" "$out/etc/postgresql-custom" \
               "$out/docker-entrypoint-initdb.d" "$out/run/postgresql" \
-              "$out/var/lib/postgresql/data" "$out/usr/lib/locale"
-            # The portable bundle owns the matching glibc locale archive. Reuse it
-            # for the static image shell instead of adding a second locale closure.
-            ln -s /opt/postgres/lib/locale/locale-archive "$out/usr/lib/locale/locale-archive"
+              "$out/var/lib/postgresql/data"
             {
               printf '%s\n' "data_directory = '/var/lib/postgresql/data'"
               printf '%s\n' "hba_file = '/var/lib/postgresql/data/pg_hba.conf'"

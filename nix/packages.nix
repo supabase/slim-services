@@ -48,7 +48,6 @@ let
         inherit pkgs;
         serviceVersion = releaseVersion;
         src = requireReleaseSource;
-        derivedHashes = releaseHashes;
       };
       beamArgs = common // {
         runtimeNixpkgsSrc = runtime-nixpkgs;
@@ -355,7 +354,6 @@ let
       else
         { }
     )
-    // (if hasReleaseRootfs then { } else { "${releaseService}" = selected; })
     // (
       if hasReleaseRootfs || releaseService == "portable-node" then
         { }

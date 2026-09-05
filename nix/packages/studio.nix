@@ -62,15 +62,60 @@ let
     '';
     dontFixup = true;
   };
-  pnpmHooks = pkgs.callPackage (pkgs.path + "/pkgs/development/tools/pnpm/fetch-deps") {
-    pnpm = pnpm.package;
-  };
-  deps = pnpmHooks.fetchDeps {
-    pname = "studio";
+  # The pinned nixpkgs fetch-deps helper writes an obsolete pnpm 10 config key
+  # and pnpm 11 rejects it. Keep the dependency store as a small, reproducible
+  # fixed-output derivation while invoking the exact pnpm version from above.
+  deps = pkgs.stdenvNoCC.mkDerivation {
+    pname = "studio-pnpm-deps";
     inherit version;
     src = workspace;
-    hash = hashes.pnpm_deps_hash or lib.fakeHash;
-    fetcherVersion = 2;
+    nativeBuildInputs = [
+      pkgs.cacert
+      pkgs.jq
+      pnpm.package
+    ];
+    impureEnvVars = lib.fetchers.proxyImpureEnvVars ++ [ "NIX_NPM_REGISTRY" ];
+    dontConfigure = true;
+    dontBuild = true;
+    installPhase = ''
+      runHook preInstall
+      export HOME="$TMPDIR/home"
+      mkdir -p "$HOME" "$out"
+      registry="''${NIX_NPM_REGISTRY:-https://registry.npmjs.org}"
+      pnpm fetch \
+        --force \
+        --ignore-scripts \
+        --store-dir "$out" \
+        --registry="$registry" \
+        --frozen-lockfile
+      runHook postInstall
+    '';
+    fixupPhase = ''
+      runHook preFixup
+      for storeVersion in v3 v10 v11; do
+        if [ -d "$out/$storeVersion/tmp" ]; then
+          rm -rf "$out/$storeVersion/tmp"
+        fi
+      done
+      # pnpm 11 stores its mutable index in SQLite. It is rebuilt by the
+      # offline install below, so omitting it keeps the fixed-output store
+      # independent of SQLite's nondeterministic database metadata.
+      for indexFile in index.db index.db-wal index.db-shm; do
+        if [ -f "$out/v11/$indexFile" ]; then
+          rm "$out/v11/$indexFile"
+        fi
+      done
+      while IFS= read -r -d "" jsonFile; do
+        jq --sort-keys 'del(.. | .checkedAt?)' "$jsonFile" > "$jsonFile.tmp"
+        mv "$jsonFile.tmp" "$jsonFile"
+      done < <(find "$out" -type f -name "*.json" -print0)
+      find "$out" -type f -name "*-exec" -exec chmod 555 {} +
+      find "$out" -type f ! -name "*-exec" -exec chmod 444 {} +
+      find "$out" -type d -exec chmod 555 {} +
+      runHook postFixup
+    '';
+    outputHash = hashes.pnpm_deps_hash or lib.fakeHash;
+    outputHashMode = "recursive";
   };
   runtime = pkgs.stdenv.mkDerivation {
     pname = "studio-portable";
@@ -79,12 +124,23 @@ let
     nativeBuildInputs = [
       nodejs
       pnpm.package
-      pnpmHooks.configHook
       pkgs.python3
       pkgs.pkg-config
       pkgs.git
     ];
-    pnpmDeps = deps;
+    preBuild = ''
+      export HOME="$TMPDIR/home"
+      export STORE_PATH="$TMPDIR/pnpm-store"
+      mkdir -p "$HOME" "$STORE_PATH"
+      cp -a ${deps}/. "$STORE_PATH"/
+      chmod -R +w "$STORE_PATH"
+      pnpm install \
+        --offline \
+        --ignore-scripts \
+        --store-dir "$STORE_PATH" \
+        --frozen-lockfile \
+        --config.package-import-method=clone-or-copy
+    '';
     env = {
       NEXT_TELEMETRY_DISABLED = "1";
       TURBO_TELEMETRY_DISABLED = "1";

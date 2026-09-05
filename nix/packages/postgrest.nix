@@ -19,6 +19,7 @@ let
     nativeBuildInputs = [
       pkgs.file
       pkgs.python3
+      pkgs.darwin.sigtool
     ];
     installPhase = ''
       mkdir -p $out/bin $out/lib

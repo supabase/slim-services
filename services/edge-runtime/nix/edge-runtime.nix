@@ -38,7 +38,6 @@
   v8ArchiveHash ? null,
   v8BindingHash ? null,
   cargoHash ? null,
-  derivedHashes ? { },
   src ? throw "edge-runtime requires an explicit source path",
 }:
 let
@@ -70,16 +69,16 @@ let
     name = v8ArchiveName;
     url = "${rustyV8ReleaseUrl}/${v8ArchiveName}";
     hash =
-      if v8ArchiveHash != null then v8ArchiveHash else derivedHashes.v8_archive_hash or lib.fakeHash;
+      if v8ArchiveHash != null then v8ArchiveHash else lib.fakeHash;
   };
   v8Binding = fetchurl {
     name = v8BindingName;
     url = "${rustyV8ReleaseUrl}/${v8BindingName}";
     hash =
-      if v8BindingHash != null then v8BindingHash else derivedHashes.v8_binding_hash or lib.fakeHash;
+      if v8BindingHash != null then v8BindingHash else lib.fakeHash;
   };
   resolvedCargoHash =
-    if cargoHash != null then cargoHash else derivedHashes.cargo_hash or lib.fakeHash;
+    if cargoHash != null then cargoHash else lib.fakeHash;
 
   build_step = rustPlatform.buildRustPackage (
     finalAttrs:

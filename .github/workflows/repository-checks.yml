@@ -27,13 +27,13 @@ jobs:
           set -euo pipefail
           while IFS= read -r script; do
             bash -n "$script"
-          done < <(find scripts services -type f -name '*.sh' -print | sort)
+          done < <(find scripts services nix -type f -name '*.sh' -print | sort)
 
       - name: Run ShellCheck
         shell: bash
         run: |
           set -euo pipefail
-          mapfile -t scripts < <(find scripts services -type f -name '*.sh' -print | sort)
+          mapfile -t scripts < <(find scripts services nix -type f -name '*.sh' -print | sort)
           # These repository-wide warnings are intentional: SOURCE_REF and
           # host_service_pid are populated by sourced helpers, and ulimit
           # flags are provided by the concrete runtime-image shells.

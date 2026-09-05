@@ -22,7 +22,6 @@
   runtimeNixpkgsSrc,
   serviceVersion ? "dev",
   mixDepsHash ? null,
-  derivedHashes ? { },
   src ? throw "realtime requires an explicit source path",
   upstreamDockerfile ? builtins.readFile "${src}/Dockerfile",
   portableBeam ? ../../../nix/portable-beam,
@@ -120,7 +119,7 @@ let
     pname = "mix-deps-${pname}";
     src = cleanedSrc;
     inherit version;
-    hash = if mixDepsHash != null then mixDepsHash else derivedHashes.mix_deps_hash or lib.fakeHash;
+    hash = if mixDepsHash != null then mixDepsHash else lib.fakeHash;
     mixEnv = "prod";
     postInstall = ''
       if [ -d "$MIX_DEPS_PATH/lumis" ]; then

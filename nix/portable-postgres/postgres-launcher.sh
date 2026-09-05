@@ -12,9 +12,9 @@ esac
 # wrapper directory before constructing argv0 and the real executable path so
 # a launcher invoked as `./artifacts/.../bin/postgres` remains valid after the
 # server changes directory during startup.
-PG_BIN_DIR="$(CDPATH= cd "$PG_BIN_DIR" && pwd -P)"
+PG_BIN_DIR="$(CDPATH='' cd "$PG_BIN_DIR" && pwd -P)"
 
-PG_ROOT="$(CDPATH= cd "$PG_BIN_DIR/@ROOT_REL@" && pwd -P)"
+PG_ROOT="$(CDPATH='' cd "$PG_BIN_DIR/@ROOT_REL@" && pwd -P)"
 PG_NAME="${0##*/}"
 PUBLIC_PATH="$PG_BIN_DIR/$PG_NAME"
 REAL_POSTGRES="$PG_BIN_DIR/@REAL_NAME@"
@@ -43,9 +43,7 @@ fi
 unset LD_LIBRARY_PATH LD_PRELOAD LD_AUDIT GLIBC_TUNABLES \
   GCONV_PATH LOCALE_ARCHIVE LOCPATH NSS_MODULE_PATH
 # Keep PostgreSQL's process locale independent of the invoking host. The
-# portable binary uses the bundled en_US.UTF-8 archive below; image tooling
-# (BusyBox/Bash in the image) uses the separate system archive generated
-# by the image's tools stage.
+# portable binary uses the bundled en_US.UTF-8 archive below.
 export LANG=en_US.UTF-8
 export LANGUAGE=en_US:en
 export LC_ALL=en_US.UTF-8
@@ -54,6 +52,8 @@ if [ -d "$LIB_DIR/gconv" ]; then
 fi
 export LOCALE_ARCHIVE="$LIB_DIR/locale/locale-archive"
 
+# The derivation replaces this template value before installation.
+# shellcheck disable=SC2050
 if [ "@ARGV0_SUPPORTED@" = 1 ]; then
   exec "$LOADER" \
     --argv0 "$PUBLIC_PATH" \
