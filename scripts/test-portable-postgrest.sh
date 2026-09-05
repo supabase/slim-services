@@ -147,16 +147,6 @@ class PortablePostgrestFixupTest(unittest.TestCase):
         self.assertEqual(binary.read_bytes(), before)
         self.assertFalse((self.rootfs / "bin" / ".postgrest-portable-real").exists())
 
-    def test_scratch_image_stages_the_static_shell_used_by_launcher(self):
-        dockerfile = (ROOT_DIR / "services" / "postgrest" / "Dockerfile.slim").read_text(
-            encoding="utf-8"
-        )
-        self.assertIn("FROM busybox:1.36.1-musl AS busybox", dockerfile)
-        self.assertIn("COPY --from=busybox /bin/busybox /tmp/busybox", dockerfile)
-        self.assertIn("ln -sf busybox /out/bin/sh", dockerfile)
-        self.assertIn("COPY --from=shell /out/ /", dockerfile)
-        self.assertEqual(LAUNCHER.read_text(encoding="utf-8").splitlines()[0], "#!/bin/sh")
-
     def test_recipe_carries_nss_modules_for_both_linux_multiarch_layouts(self):
         recipe = (ROOT_DIR / "services" / "postgrest" / "recipe.env").read_text(
             encoding="utf-8"
@@ -211,6 +201,7 @@ class PortablePostgrestFixupTest(unittest.TestCase):
             **os.environ,
             "PATH": f"{fake_docker}:{self.fake_tools}:{os.environ['PATH']}",
             "SOURCE_IMAGE": "fixture-image",
+            "ARTIFACT_ARCHIVE_ON_BUILD": "0",
             "TARGET_OS": "linux",
             "ARCH": "amd64",
             "VERSION": version,

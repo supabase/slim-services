@@ -9,38 +9,31 @@
 # native/pgparser/.cargo/config.toml already carries the macOS
 # `-undefined dynamic_lookup` link flags rustler NIFs need.
 {
-  pkgs ? import (fetchTarball {
-    url = "https://github.com/NixOS/nixpkgs/archive/ac62194c3917d5f474c1a844b6fd6da2db95077d.tar.gz";
-    sha256 = "0v6bd1xk8a2aal83karlvc853x44dg1n4nk08jg3dajqyy0s98np";
-  }) { },
-  runtimeNixpkgsSrc ? fetchTarball {
-    # Import only versioned BEAM definitions; the shared package set keeps the
-    # established artifact compatibility floor.
-    url = "https://github.com/NixOS/nixpkgs/archive/b7c2ada94fe99c15b0dbcf4d11fd7850b957a436.tar.gz";
-    sha256 = "1hw875y585lkhygn09kcbmdgm58b0nb5k0d38qwlvfngprsnp2r0";
-  },
+  pkgs,
+  runtimeNixpkgsSrc,
   serviceVersion ? "dev",
   mixDepsHash ? null,
+  derivedHashes ? { },
+  src ? throw "pooler requires an explicit source path",
+  upstreamDockerfile ? builtins.readFile "${src}/Dockerfile",
+  portableBeam ? ../../../nix/portable-beam,
 }:
 let
   lib = pkgs.lib;
-  portableBeam =
-    if builtins.pathExists ./portable-beam then ./portable-beam else ../../../nix/portable-beam;
-  upstreamDockerfile = builtins.readFile ../Dockerfile;
+  sourceRoot = src;
   upstreamDockerfileLines = lib.splitString "\n" upstreamDockerfile;
-  upstreamDockerArg = name:
+  upstreamDockerArg =
+    name:
     let
       prefix = "ARG ${name}=";
-      line = lib.findFirst
-        (candidate: lib.hasPrefix prefix candidate)
-        (throw "upstream Pooler Dockerfile does not declare ${prefix}<version>")
-        upstreamDockerfileLines;
+      line = lib.findFirst (
+        candidate: lib.hasPrefix prefix candidate
+      ) (throw "upstream Pooler Dockerfile does not declare ${prefix}<version>") upstreamDockerfileLines;
     in
     lib.removePrefix prefix line;
   upstreamElixirVersion = upstreamDockerArg "ELIXIR_VERSION";
   upstreamOtpVersion = upstreamDockerArg "OTP_VERSION";
-  elixirGeneration = lib.concatStringsSep "."
-    (lib.take 2 (lib.splitVersion upstreamElixirVersion));
+  elixirGeneration = lib.concatStringsSep "." (lib.take 2 (lib.splitVersion upstreamElixirVersion));
   otpGeneration = lib.head (lib.splitVersion upstreamOtpVersion);
   runtimeDefinitions = "${runtimeNixpkgsSrc}/pkgs/development/interpreters";
   erlangDefinition = "${runtimeDefinitions}/erlang/${otpGeneration}.nix";
@@ -48,11 +41,15 @@ let
   erlang =
     if builtins.pathExists erlangDefinition then
       let
-        genericBuilder = versionArgs:
-          import "${runtimeDefinitions}/erlang/generic-builder.nix" (versionArgs // {
-            systemdSupport = false;
-            wxSupport = pkgs.stdenv.isDarwin;
-          });
+        genericBuilder =
+          versionArgs:
+          import "${runtimeDefinitions}/erlang/generic-builder.nix" (
+            versionArgs
+            // {
+              systemdSupport = false;
+              wxSupport = pkgs.stdenv.isDarwin;
+            }
+          );
       in
       pkgs.callPackage (import erlangDefinition genericBuilder) {
         libx11 = pkgs.xorg.libX11;
@@ -61,16 +58,17 @@ let
       }
     else
       throw "runtime definitions do not provide OTP ${otpGeneration} required by Pooler's upstream Dockerfile";
-  derivedHashesRaw = builtins.getEnv "SLIM_NIX_DERIVED_HASHES";
-  derivedHashes =
-    if derivedHashesRaw == "" then { } else builtins.fromJSON derivedHashesRaw;
   baseBeamPackages = pkgs.beam.packagesWith erlang;
-  beamPackages = baseBeamPackages.extend (_final: previous: {
-    # Rebar's package-level Common Test suite is unrelated to the service
-    # artifact and has a known temp-directory collision when CI builds several
-    # BEAM targets concurrently. Service compilation and smoke tests stay on.
-    rebar3 = previous.rebar3.overrideAttrs (_: { doCheck = false; });
-  });
+  beamPackages = baseBeamPackages.extend (
+    _final: previous: {
+      # Rebar's package-level Common Test suite is unrelated to the service
+      # artifact and has a known temp-directory collision when CI builds several
+      # BEAM targets concurrently. Service compilation and smoke tests stay on.
+      rebar3 = previous.rebar3.overrideAttrs (_: {
+        doCheck = false;
+      });
+    }
+  );
   elixir =
     if builtins.pathExists elixirDefinition then
       beamPackages.callPackage elixirDefinition {
@@ -89,12 +87,12 @@ let
   pname = "supavisor";
   version = serviceVersion;
 
-  src = lib.cleanSourceWith {
-    src = ../.;
+  cleanedSrc = lib.cleanSourceWith {
+    src = sourceRoot;
     filter =
       path: type:
       let
-        rel = lib.removePrefix (toString ../. + "/") (toString path);
+        rel = lib.removePrefix (toString sourceRoot + "/") (toString path);
       in
       !(lib.hasPrefix "nix" rel)
       && !(lib.hasPrefix ".git" rel)
@@ -107,7 +105,8 @@ let
   # crates.io /api/v1 403s curl's default UA. Remap the fetch URL only —
   # extraRegistries writes a second crates-io source and cargo rejects it.
   importCargoLock = pkgs.rustPlatform.importCargoLock.override {
-    fetchurl = args:
+    fetchurl =
+      args:
       let
         url = args.url or "";
         api = "https://crates.io/api/v1/crates/";
@@ -121,22 +120,20 @@ let
   };
 
   cargoDeps = importCargoLock {
-    lockFile = ../native/Cargo.lock;
+    lockFile = "${sourceRoot}/native/Cargo.lock";
   };
 
   mixDeps = fetchMixDeps {
     pname = "mix-deps-${pname}";
-    inherit version src;
-    hash =
-      if mixDepsHash != null then
-        mixDepsHash
-      else
-        derivedHashes.mix_deps_hash or lib.fakeHash;
+    src = cleanedSrc;
+    inherit version;
+    hash = if mixDepsHash != null then mixDepsHash else derivedHashes.mix_deps_hash or lib.fakeHash;
     mixEnv = "prod";
   };
 
   release = mixRelease ({
-    inherit pname version src;
+    inherit pname version;
+    src = cleanedSrc;
     mixEnv = "prod";
     mixFodDeps = mixDeps;
 
@@ -148,7 +145,8 @@ let
       pkgs.cargo
       pkgs.rustc
       pkgs.protobuf
-    ] ++ lib.optionals pkgs.stdenv.isLinux [ pkgs.rustPlatform.bindgenHook ];
+    ]
+    ++ lib.optionals pkgs.stdenv.isLinux [ pkgs.rustPlatform.bindgenHook ];
 
     # Point cargo at the vendored dependency tree for the pgparser workspace.
     # The vendor copy must be writable: pg_query's build script writes its
@@ -181,7 +179,11 @@ in
     nativeBuildInputs = [
       pkgs.python3
       pkgs.file
-    ] ++ lib.optionals pkgs.stdenv.isLinux [ pkgs.patchelf pkgs.binutils ];
+    ]
+    ++ lib.optionals pkgs.stdenv.isLinux [
+      pkgs.patchelf
+      pkgs.binutils
+    ];
 
     buildPhase = ''
       rootfs="$out"
@@ -267,7 +269,8 @@ in
       chmod "$mode" "$envsh_tmp"
       mv -f "$envsh_tmp" "$envsh"
       trap - EXIT HUP INT TERM
-    '' + lib.optionalString pkgs.stdenv.isLinux ''
+    ''
+    + lib.optionalString pkgs.stdenv.isLinux ''
       # Shared BEAM fixup bundles the matching glibc family, relocates the
       # non-glibc closure, wraps dynamic ERTS/port ELFs, and audits with the
       # bundled loader. Darwin remains on the unchanged branch below.
@@ -280,7 +283,8 @@ in
       export PORTABLE_BEAM_LOCALE_LIB="${glibcLocalesMinimal}/lib/locale"
       export PORTABLE_BEAM_LAUNCHER="${portableBeam}/beam-launcher.sh"
       ${builtins.readFile "${portableBeam}/beam-linux-fixup.sh"}
-    '' + lib.optionalString pkgs.stdenv.isDarwin ''
+    ''
+    + lib.optionalString pkgs.stdenv.isDarwin ''
       rootfs="$out"
       dylib_dir="$rootfs/dylib"
       mkdir -p "$dylib_dir"

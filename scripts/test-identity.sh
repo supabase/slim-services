@@ -125,10 +125,7 @@ grep -Fq "ENTRYPOINT_JSON='[]'" "$ROOT_DIR/services/auth/recipe.env" \
   || fail_test "auth recipe must have an empty ENTRYPOINT"
 grep -Fq "ENTRYPOINT_JSON='[]'" "$ROOT_DIR/services/pgmeta/recipe.env" \
   || fail_test "pgmeta recipe must have an empty ENTRYPOINT"
-if grep -q 'chown' "$ROOT_DIR/scripts/render-dockerfile.sh"; then
-  fail_test "render-dockerfile.sh rewrites chown; identity must use build-args"
-fi
-pass "empty ENTRYPOINT and append-only render"
+pass "empty ENTRYPOINT image contract"
 
 # Fail-closed /mnt probe: stub docker so status 0/1/other is observable.
 probe_dir="$(mktemp -d "${TMPDIR:-/tmp}/slim-identity-probe.XXXXXX")"

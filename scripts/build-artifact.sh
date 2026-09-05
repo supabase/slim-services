@@ -11,7 +11,6 @@ Usage: scripts/build-artifact.sh SERVICE [VERSION]
 
 Build SERVICE with the backend selected by services/SERVICE/recipe.env:
 - ARTIFACT_BACKEND=nix
-- ARTIFACT_BACKEND=host-source
 - ARTIFACT_BACKEND=image
 - ARTIFACT_BACKEND=upstream-archive
 
@@ -43,9 +42,6 @@ esac
 case "${ARTIFACT_BACKEND:-}" in
   nix)
     exec "$ROOT_DIR/scripts/build-artifact-from-nix.sh" "$service" "$@"
-    ;;
-  host-source)
-    exec "$ROOT_DIR/scripts/build-artifact-from-source.sh" "$service" "$@"
     ;;
   image)
     [[ "$TARGET_OS" == "linux" ]] || fail "image extraction artifacts are only supported for linux targets"

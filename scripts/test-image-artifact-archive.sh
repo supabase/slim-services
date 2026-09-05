@@ -26,6 +26,7 @@ class ImageArtifactArchiveTest(unittest.TestCase):
         (self.repo / "scripts").symlink_to(ROOT / "scripts", target_is_directory=True)
         for name in ("LICENSE", "THIRD_PARTY_NOTICES.md"):
             (self.repo / name).symlink_to(ROOT / name)
+        (self.repo / "flake.nix").write_text("{}\n", encoding="utf-8")
         service = self.repo / "services/postgrest"
         service.mkdir(parents=True)
         (service / "recipe.env").write_text(
@@ -53,9 +54,20 @@ class ImageArtifactArchiveTest(unittest.TestCase):
             encoding="utf-8",
         )
         docker.chmod(0o755)
+        nix = fake_bin / "nix"
+        nix.write_text(
+            "#!" + os.sys.executable + "\n"
+            "import os\n"
+            "path = os.environ['FAKE_NIX_OUTPUT']\n"
+            "open(path, 'wb').write(b'fixture archive\\n')\n"
+            "print(path)\n",
+            encoding="utf-8",
+        )
+        nix.chmod(0o755)
         self.env = os.environ.copy()
         self.env.update(
             PATH=f"{fake_bin}:{self.env['PATH']}",
+            FAKE_NIX_OUTPUT=str(self.temp / "fake-nix-output.tar.zst"),
             DOCKER_LOG=str(self.docker_log),
             DOCKER_PAYLOAD=str(payload),
             TARGET_OS="linux",

@@ -239,7 +239,7 @@ fi
 archive=""
 archive_bytes="None"
 if [[ "${ARTIFACT_ARCHIVE_ON_BUILD:-1}" == "1" ]]; then
-  archive="$(archive_with_best_available_compressor "$rootfs" "$artifact_dir/$service")"
+  archive="$(archive_runtime "$rootfs" "$artifact_dir/$service")"
   archive_bytes="$(wc -c < "$archive" | tr -d ' ')"
 fi
 

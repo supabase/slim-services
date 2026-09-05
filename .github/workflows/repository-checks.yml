@@ -44,7 +44,6 @@ jobs:
           set -euo pipefail
           scripts/test-external-release.sh
           scripts/test-external-workflows.sh
-          scripts/test-external-source-build.sh
           scripts/test-dockerhub-release.sh
           scripts/test-poll-service-releases.sh
           scripts/test-portable-audit.sh
@@ -65,7 +64,7 @@ jobs:
           scripts/test-oci-mirror.sh
           scripts/test-upstream-runtime.sh
           scripts/test-studio-artifact.sh
-          scripts/test-host-source-artifact.sh
+          scripts/test-nix-release.sh
           scripts/test-image-artifact-archive.sh
           scripts/test-beam-release-env.sh
           services/vector/test-smoke.sh

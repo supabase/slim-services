@@ -4,7 +4,7 @@ name: Service artifacts
 # supported CI target (CI_MATRIX.md, HOST_NATIVE_ARTIFACTS.md native-first):
 #
 #   linux-arm64 / linux-amd64  — native runners build the portable artifact
-#                                (Nix or build-host.sh), derive the Docker
+#                                (the root Nix flake), derive the Docker
 #                                image from it, smoke the image, smoke the
 #                                artifact as a real host process
 #                                (SLIM_DIRECT_LINUX_ARTIFACT_SMOKE=1), and
@@ -258,8 +258,8 @@ jobs:
           fi
           artifact_dir="artifacts/${{ matrix.service }}/${version}/${{ matrix.platform_dir }}"
           # Content fingerprint of everything that determines this artifact:
-          # the service dir (recipe, overlay, Dockerfile.slim, smoke, nix
-          # overlay, build-host), the source submodule pin, the shared
+          # the service dir (recipe, overlay, smoke, nix
+          # package), the source submodule pin, the shared
           # scripts/, and this workflow. Same fingerprint => identical
           # artifact => the build/smoke below can be skipped and the cached
           # archive re-uploaded.
@@ -274,6 +274,9 @@ jobs:
               git ls-tree HEAD "sources/${{ matrix.service }}"
             fi
             git rev-parse "HEAD:scripts"
+            git rev-parse "HEAD:nix"
+            git rev-parse "HEAD:flake.nix"
+            git rev-parse "HEAD:flake.lock"
             git rev-parse "HEAD:.github/workflows/service-artifacts.yml"
           } | shasum -a 256 | cut -d' ' -f1
           )"
@@ -316,29 +319,18 @@ jobs:
       # Nix drives every native build (BEAM packages, Node/libpq pins, and
       # the Docker-free harness postgres on macOS).
       - name: Install Nix
-        if: steps.artifact-cache.outputs.cache-hit != 'true' && steps.vars.outputs.artifact_backend != 'upstream-archive'
+        if: steps.artifact-cache.outputs.cache-hit != 'true'
         uses: nixbuild/nix-quick-install-action@9f63be77f412a248c9d9a65a4c82cf066cdf8f0c # v35
 
       - name: Restore/save Nix store cache
-        if: steps.artifact-cache.outputs.cache-hit != 'true' && steps.vars.outputs.artifact_backend != 'upstream-archive'
+        if: steps.artifact-cache.outputs.cache-hit != 'true'
         uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
         with:
-          primary-key: nix-host-native-${{ matrix.service }}-${{ matrix.platform_dir }}-${{ hashFiles(format('services/{0}/recipe.env', matrix.service), format('services/{0}/nix/**', matrix.service), format('services/{0}/build-host.sh', matrix.service), 'scripts/nix-build-with-derived-mix-hash.sh', 'scripts/nixpkgs-pin.sh') }}
+          primary-key: nix-host-native-${{ matrix.service }}-${{ matrix.platform_dir }}-${{ hashFiles(format('services/{0}/recipe.env', matrix.service), format('services/{0}/nix/**', matrix.service), 'flake.nix', 'flake.lock', 'nix/**', 'scripts/nix.sh', 'scripts/build-artifact-from-nix.sh') }}
           restore-prefixes-first-match: |
             nix-host-native-${{ matrix.service }}-${{ matrix.platform_dir }}-
           gc-max-store-size-linux: 8G
           gc-max-store-size-macos: 8G
-
-      - name: Set up Docker Buildx
-        if: matrix.target_os == 'linux' && steps.artifact-cache.outputs.cache-hit != 'true' && steps.vars.outputs.artifact_backend != 'upstream-archive' && matrix.external != true
-        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
-
-      - name: Set up Go
-        if: matrix.service == 'auth' && steps.artifact-cache.outputs.cache-hit != 'true' && steps.vars.outputs.artifact_backend != 'upstream-archive'
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: sources/auth/go.mod
-          cache-dependency-path: sources/auth/go.sum
 
       - name: Build, audit, smoke, and package
         if: steps.artifact-cache.outputs.cache-hit != 'true'

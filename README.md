@@ -216,26 +216,23 @@ on every target, and the Docker image is derived from that same rootfs. Each
 service has a `services/<service>/recipe.env` file; the dispatcher reads
 `ARTIFACT_BACKEND` and chooses the service's build path:
 
-- `nix`: build the portable rootfs from the repo-owned Nix package in
-  `services/<service>/nix/`, applied over the read-only submodule when needed.
-  Imgproxy's Nix package consumes its verified external source snapshot and
-  its Linux image remains an exact mirror.
-- `host-source`: run `services/<service>/build-host.sh` so source-built
-  dependencies are bundled in the artifact. Go can cross-compile; Node native
-  dependencies and other platform-specific packages must be built on a host
-  matching the target.
+- `nix`: build the root flake's portable runtime using the exact selected
+  source, tool versions, and dependency hashes. Auth, the Node services, BEAM,
+  Edge Runtime, Postgres, Imgproxy, and Darwin PostgREST use this path.
+  [Nix build architecture](NIX_PORTABLE_ARTIFACT_PLAYBOOK.md) explains the
+  package definitions and automatic release input resolution.
 - `image`: extract selected paths from a published upstream image when that is
   the proven portable path (PostgREST bundles its full ELF closure).
 - `upstream-archive`: consume a verified upstream archive for Mailpit or
   Vector; their Linux image path remains an exact mirror rather than an
   artifact-derived image.
 
-The final `Dockerfile.slim` files derive the image from the artifact: they
-copy the prepared `rootfs/` into the smallest proven runtime base and add
-only entry wiring (busybox/tini/CA-bundle stages where a shell entrypoint is
-needed). Images are always assembled through `scripts/render-dockerfile.sh`,
-which appends the `runtime.env` profile as ENV — never build
-`Dockerfile.slim` directly or the runtime profile is silently skipped.
+The final images are Nix `dockerTools` derivations built from the exact
+audited `rootfs/`. The image definition adds only service entry wiring,
+static busybox/tini helpers, CA certificates, and the runtime profile from
+`services/<service>/runtime.env`. The same derivation emits a deterministic
+Docker load archive, so local smoke tests and release publication consume
+identical image bytes.
 
 Portable archive builds share two hardening steps. For Nix-backed portable
 artifacts, these checks should run inside the Nix package when practical; the
@@ -247,9 +244,10 @@ scripts remain available as shared helpers and external verification.
 - `scripts/audit-portable-artifact.sh` fails artifacts that still have
   unresolved runtime dependencies or absolute Nix store references.
 
-Archives prefer `zstd -19` and are produced by `scripts/archive-artifact.sh`
-when a distributable bundle is needed. The script uses Nix's `zstd` package
-automatically when `zstd` is not on PATH.
+Archives use pinned GNU tar and zstd from `nix/archive.nix`, with normalized
+ordering, timestamps, ownership, and compression settings. The shell wrapper
+copies the selected rootfs into the pure flake release input before invoking
+that derivation.
 
 ## Quick Start
 

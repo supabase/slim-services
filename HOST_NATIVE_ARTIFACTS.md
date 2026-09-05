@@ -15,8 +15,8 @@ source or pinned upstream input -> native rootfs -> tar.zst + manifest
                                              -> Linux Docker image
 ```
 
-`Dockerfile.slim` copies the prepared rootfs into the smallest proven base and
-adds only required entry wiring. Mailpit, Vector, and Imgproxy are external
+Nix `dockerTools` packages the prepared rootfs with pinned runtime utilities
+and service entry wiring, starting from scratch. Mailpit, Vector, and Imgproxy are external
 mirror exceptions: their release path verifies the selected upstream archive or
 source snapshot and mirrors the exact OCI image where applicable; it does not
 derive a new image from this repository's rootfs.
@@ -71,7 +71,7 @@ that every archive contains `runtime.env`.
 
 Node artifacts bundle the upstream-selected Node runtime under
 `node/bin/node`. Their launcher resolves `SUPABASE_NODE`, then the bundled
-runtime, then `PATH`, so a host-installed Node is not required when the bundle
+runtime, so a host-installed Node is not required when the bundle
 is present.
 
 Postgres keeps the full major-compatible extension set from the selected

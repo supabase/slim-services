@@ -98,8 +98,8 @@ Docker measurements use different samplers and are not interchangeable.
 
 ## Runner requirements
 
-Linux runners need Docker with Buildx for derived image assembly and smokes,
-Nix with flakes enabled for Nix-backed builds, and a runner architecture that
+Linux runners need Docker for image smokes and upstream image inspection,
+Nix with flakes enabled for native builds and archive/image assembly, and a runner architecture that
 matches `ARCH` for native artifact execution. macOS runners need Nix with
 flakes enabled, matching architecture for direct smoke, and Xcode command-line
 tools when a package requires Mach-O inspection or signing. macOS CI uses the
