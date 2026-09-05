@@ -94,6 +94,7 @@ let
         nodeMajor = releaseData.nodeMajor or 24;
         pnpmVersion = releaseData.pnpmVersion or (throw "studio release requires pnpmVersion");
         studioFramework = releaseData.studioFramework or (throw "studio release requires studioFramework");
+        runtimeNixpkgsSrc = runtime-nixpkgs;
       };
       postgrestSet = import ./packages/postgrest.nix {
         inherit pkgs;
