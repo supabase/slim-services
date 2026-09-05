@@ -161,7 +161,7 @@ PYHASH
 done < <(python3 -c 'import json,sys; print("\n".join(json.loads(sys.argv[1])))' "$probe_keys")
 
 log "building $service $VERSION runtime with locked release inputs for $NIX_SYSTEM"
-runtime="$(nix_release build "$release_dir" "packages.$NIX_SYSTEM.runtime" --no-link --print-out-paths)"
+runtime="$(nix_release build "$release_dir" "packages.$NIX_SYSTEM.runtime" --no-link --print-build-logs --print-out-paths)"
 [[ -d "$runtime" ]] || fail "Nix did not return a runtime directory: $runtime"
 if [[ -d "$rootfs" ]]; then chmod -R u+w "$rootfs"; fi
 rm -rf "$rootfs"
