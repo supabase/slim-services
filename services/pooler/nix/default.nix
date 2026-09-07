@@ -137,6 +137,13 @@ let
     mixEnv = "prod";
     mixFodDeps = mixDeps;
 
+    # Start the internal shard listeners before public listeners and the HTTP
+    # endpoint. Tenant activation can query these listeners immediately after
+    # the endpoint reports healthy.
+    postPatch = ''
+      patch -p1 < ${../nix/startup-order.patch}
+    '';
+
     # bindgenHook wires libclang + the C standard header search paths that
     # pg_query's bindgen needs on Linux (darwin finds them through the system
     # toolchain; the hook is Linux-only so the darwin derivation is

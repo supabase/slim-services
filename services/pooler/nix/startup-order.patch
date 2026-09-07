@@ -1,0 +1,32 @@
+diff --git a/lib/supavisor/application.ex b/lib/supavisor/application.ex
+index 3388042..b3bbac3 100644
+--- a/lib/supavisor/application.ex
++++ b/lib/supavisor/application.ex
+@@ -59,14 +59,14 @@ defmodule Supavisor.Application do
+       |> build_shards(:transaction)
+ 
+     proxy_ports =
+-      [
++      session_shards ++ transaction_shards ++ [
+         {:pg_proxy_transaction, Application.get_env(:supavisor, :proxy_port_transaction),
+          %{mode: :transaction, local: false}, Supavisor.ClientHandler},
+         {:pg_proxy_session, Application.get_env(:supavisor, :proxy_port_session),
+          %{mode: :session, local: false}, Supavisor.ClientHandler},
+         {:pg_proxy, Application.get_env(:supavisor, :proxy_port), %{mode: :proxy, local: false},
+          Supavisor.ClientHandler}
+-      ] ++ session_shards ++ transaction_shards
++      ]
+ 
+     ranch_listeners =
+       for {key, port, opts, handler} <- proxy_ports do
+@@ -133,9 +133,7 @@ defmodule Supavisor.Application do
+         },
+         Supavisor.Vault,
+ 
+-        # Start the Endpoint (http/https)
+-        SupavisorWeb.Endpoint
+-      ] ++ ranch_listeners
++      ] ++ ranch_listeners ++ [SupavisorWeb.Endpoint]
+ 
+     Logger.warning("metrics_disabled is #{inspect(@metrics_disabled)}")
+ 

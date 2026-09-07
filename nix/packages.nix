@@ -30,6 +30,19 @@ let
       }
     else
       null;
+  # Only services whose packaged launcher contract intentionally mirrors the
+  # image runtime profile receive these defaults. Some runtime.env files are
+  # smoke-test inputs rather than production defaults (for example Mailpit).
+  runtimeProfileServices = [
+    "analytics"
+    "auth"
+    "pgmeta"
+    "pooler"
+    "postgrest"
+    "realtime"
+    "storage"
+    "studio"
+  ];
   requireReleaseSource =
     if releaseSource != null then
       releaseSource
@@ -44,6 +57,51 @@ let
         inherit system;
         overlays = [ (import rust-overlay) ];
       };
+      inherit (pkgs) lib;
+      runtimeEnvFile = "${toString ../services}/${releaseService}/runtime.env";
+      useRuntimeProfile = lib.elem releaseService runtimeProfileServices;
+      runtimeEnvAssignments =
+        if useRuntimeProfile && builtins.pathExists runtimeEnvFile then
+          map
+            (
+              line:
+              let
+                match = builtins.match "([A-Za-z_][A-Za-z0-9_]*)=(.*)" line;
+              in
+              if match == null then
+                throw "invalid runtime.env entry in ${runtimeEnvFile}: ${line}"
+              else
+                {
+                  name = builtins.elemAt match 0;
+                  value = builtins.elemAt match 1;
+                }
+            )
+            (
+              lib.filter
+                (line: line != "" && !(lib.hasPrefix "#" line))
+                (lib.splitString "\n" (builtins.readFile runtimeEnvFile))
+            )
+        else
+          [ ];
+      runtimeProfile =
+        if runtimeEnvAssignments == [ ] then
+          null
+        else
+          pkgs.writeText "${releaseService}-runtime-env.sh" (
+            ''
+              #!/bin/sh
+              # Defaults shared with the derived image's runtime.env. A set
+              # variable, including an explicitly empty value, always wins.
+            ''
+            + lib.concatMapStrings (
+              entry:
+              ''
+                if [ -z "''${${entry.name}+x}" ]; then
+                  export ${entry.name}=${lib.escapeShellArg entry.value}
+                fi
+              ''
+            ) runtimeEnvAssignments
+          );
       common = {
         inherit pkgs;
         serviceVersion = releaseVersion;
@@ -253,6 +311,7 @@ let
               nativeBuildInputs = with pkgs; [
                 bash
                 coreutils
+                file
                 findutils
                 gawk
                 gnugrep
@@ -264,6 +323,48 @@ let
               cp -a ${selected}/. "$out/"
               chmod -R u+w "$out"
               ${pkgs.bash}/bin/bash ${../.}/scripts/prune-runtime-tree.sh "$out"
+              ${lib.optionalString (runtimeProfile != null) ''
+                install -m 0644 ${runtimeProfile} "$out/bin/.runtime-env.sh"
+
+                # Source the same defaults used by image assembly from every
+                # shell launcher. Keep this as a small in-place wrapper so
+                # release scripts retain their normal argument and signal
+                # behavior.
+                for launcher in "$out"/bin/*; do
+                  [ -f "$launcher" ] || continue
+                  [ "$(basename "$launcher")" = ".runtime-env.sh" ] && continue
+                  first_line="$(head -n 1 "$launcher" 2>/dev/null || true)"
+                  case "$first_line" in
+                    '#!'*'/sh'*) ;;
+                    *) continue ;;
+                  esac
+                  grep -q 'SLIM_RUNTIME_PROFILE=' "$launcher" 2>/dev/null && continue
+                  temporary="$(mktemp "$launcher.runtime-env.XXXXXX")"
+                  printf '%s\n' "$first_line" >"$temporary"
+                  cat ${../nix/source-runtime-env.sh} >>"$temporary"
+                  tail -n +2 "$launcher" >>"$temporary"
+                  chmod 0755 "$temporary"
+                  mv -f "$temporary" "$launcher"
+                done
+
+                # Auth and PostgREST are direct binaries rather than shell
+                # releases. Give them the same profile through a thin wrapper;
+                # the image assembly copies the hidden real binary alongside
+                # it. Other direct binaries have no runtime.env profile.
+                entrypoint="$out/bin/${releaseService}"
+                if [ -x "$entrypoint" ] && file "$entrypoint" 2>/dev/null | grep -Eq 'ELF|Mach-O'; then
+                  mv "$entrypoint" "$out/bin/.${releaseService}-wrapped"
+                  cat >"$entrypoint" <<'WRAPPER'
+              #!/bin/sh
+              SLIM_RUNTIME_PROFILE="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P)/.runtime-env.sh"
+              if [ -r "$SLIM_RUNTIME_PROFILE" ]; then
+                . "$SLIM_RUNTIME_PROFILE"
+              fi
+              exec "$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P)/.${releaseService}-wrapped" "$@"
+              WRAPPER
+                  chmod 0755 "$entrypoint"
+                fi
+              ''}
             '';
       probes =
         if releaseService == "realtime" then

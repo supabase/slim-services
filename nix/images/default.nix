@@ -307,6 +307,12 @@ let
         case "${cfg.rootfsMode}" in
           auth)
             copy_tree bin/auth usr/local/bin/auth
+            if [ -e "${root}/bin/.auth-wrapped" ]; then
+              copy_tree bin/.auth-wrapped usr/local/bin/.auth-wrapped
+            fi
+            if [ -e "${root}/bin/.runtime-env.sh" ]; then
+              copy_tree bin/.runtime-env.sh usr/local/bin/.runtime-env.sh
+            fi
             mkdir -p "$out/usr/local/bin"
             ln -s auth "$out/usr/local/bin/gotrue"
             ;;
