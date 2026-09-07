@@ -392,8 +392,8 @@ _smoke_beam_release_distribution_value() {
     '
 }
 
-# Prove that a built BEAM release launcher preserves its named distribution
-# default while honoring an explicit caller override. The launcher sources the
+# Prove that a built BEAM release launcher preserves the standalone distribution
+# default while honoring explicit caller overrides. The launcher sources the
 # release's built env.sh before evaluating the expression.
 # Usage: smoke_beam_release_distribution /path/to/release/bin/name [ENV=value ...]
 smoke_beam_release_distribution() {
@@ -421,25 +421,63 @@ smoke_beam_release_distribution() {
   if ! default_distribution="$(_smoke_beam_release_distribution_value "$default_output" "$marker")"; then
     fail "BEAM release distribution marker missing or duplicated with caller variable unset"
   fi
-  [[ "$default_distribution" == name ]] || {
-    fail "BEAM release default distribution was '$default_distribution', expected name"
+  [[ "$default_distribution" == none ]] || {
+    fail "BEAM release default distribution was '$default_distribution', expected none"
   }
 
-  if ! override_output="$(
-    env -u RELEASE_DISTRIBUTION \
-      ${smoke_env[@]+"${smoke_env[@]}"} \
-      RELEASE_DISTRIBUTION=none "$launcher" eval "$expression"
-  )"; then
-    fail "BEAM release distribution smoke failed with caller override"
-  fi
-  if ! override_distribution="$(_smoke_beam_release_distribution_value "$override_output" "$marker")"; then
-    fail "BEAM release distribution marker missing or duplicated with caller override"
-  fi
-  [[ "$override_distribution" == none ]] || {
-    fail "BEAM release override distribution was '$override_distribution', expected none"
-  }
+  local override
+  for override in name sname; do
+    if ! override_output="$(
+      env -u RELEASE_DISTRIBUTION \
+        ${smoke_env[@]+"${smoke_env[@]}"} \
+        RELEASE_DISTRIBUTION="$override" "$launcher" eval "$expression"
+    )"; then
+      fail "BEAM release distribution smoke failed with caller override $override"
+    fi
+    if ! override_distribution="$(_smoke_beam_release_distribution_value "$override_output" "$marker")"; then
+      fail "BEAM release distribution marker missing or duplicated with caller override $override"
+    fi
+    [[ "$override_distribution" == "$override" ]] || {
+      fail "BEAM release override distribution was '$override_distribution', expected $override"
+    }
+  done
 
   log "BEAM release distribution smoke passed for $launcher"
+}
+
+# Verify the low-footprint BEAM scheduler defaults and that a caller can raise
+# them for a load-test process. The release launcher supplies runtime.env via
+# its adjacent profile wrapper, so this exercises the consumed launcher.
+smoke_beam_runtime_profile() {
+  local launcher="$1"
+  shift
+  local smoke_env=()
+  local pair
+  for pair in "$@"; do
+    [[ "$pair" == ELIXIR_ERL_OPTIONS=* || "$pair" == RELEASE_DISTRIBUTION=* ]] && continue
+    smoke_env+=("$pair")
+  done
+  local expression='IO.puts("__slim_beam_schedulers__=#{:erlang.system_info(:schedulers)}/#{:erlang.system_info(:schedulers_online)}/#{:erlang.system_info(:dirty_cpu_schedulers)}/#{:erlang.system_info(:dirty_io_schedulers)}")'
+  local output
+  output="$(env -u ELIXIR_ERL_OPTIONS -u RELEASE_DISTRIBUTION \
+    ${smoke_env[@]+"${smoke_env[@]}"} "$launcher" eval "$expression")" \
+    || fail "BEAM scheduler profile smoke failed with defaults"
+  local marker='__slim_beam_schedulers__='
+  local schedulers
+  schedulers="$(_smoke_beam_release_distribution_value "$output" "$marker")" ||
+    fail "BEAM scheduler marker missing or duplicated: $output"
+  [[ "$schedulers" == 1/1/1/1 ]] ||
+    fail "unexpected BEAM scheduler defaults: $schedulers"
+
+  output="$(env -u ELIXIR_ERL_OPTIONS -u RELEASE_DISTRIBUTION \
+    ${smoke_env[@]+"${smoke_env[@]}"} ELIXIR_ERL_OPTIONS='+S 2:2 +SDcpu 2 +SDio 2' \
+    "$launcher" eval "$expression")" \
+    || fail "BEAM scheduler profile smoke failed with caller override"
+  schedulers="$(_smoke_beam_release_distribution_value "$output" "$marker")" ||
+    fail "BEAM scheduler override marker missing or duplicated: $output"
+  [[ "$schedulers" == 2/2/2/2 ]] ||
+    fail "BEAM scheduler override was not preserved: $schedulers"
+  log "BEAM scheduler profile smoke passed for $launcher"
 }
 
 # wait_for_http_code for a host process: fails fast (with logs) when the
