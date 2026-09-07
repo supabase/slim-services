@@ -62,9 +62,9 @@ PY
     LOGFLARE_DB_ENCRYPTION_KEY="$db_encryption_key"
     PHX_HTTP_PORT="$port"
     PHX_SECRET_KEY_BASE="$secret_key_base"
-    RELEASE_DISTRIBUTION=none
   )
   smoke_beam_release_distribution "$logflare_bin" "${analytics_env[@]}"
+  smoke_beam_runtime_profile "$logflare_bin" "${analytics_env[@]}"
 
   log "running analytics preparation"
   if ! env "${analytics_env[@]}" "$artifact_rootfs/bin/prepare" >"$analytics_log" 2>&1; then
@@ -107,6 +107,7 @@ container="analytics-smoke-$RUN_ID"
 run_container \
   "$container" \
   --network "$NETWORK" \
+  --cpus 1 --memory 768m \
   -p 127.0.0.1::4000 \
   -e DB_DATABASE=analytics_smoke \
   -e DB_HOSTNAME="$POSTGRES_CONTAINER" \

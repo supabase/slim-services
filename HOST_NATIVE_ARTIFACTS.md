@@ -65,9 +65,14 @@ necessary, such as the approved BEAM tzdata path.
 ## Runtime conventions
 
 When a service defines `services/<service>/runtime.env`, image assembly and
-host-process smoke apply those values. The CLI must arrange the same profile
-when it runs that service; the profile is repository input, not an assertion
-that every archive contains `runtime.env`.
+host-process smoke apply those values. The Realtime, Pooler, and Analytics
+native BEAM services also embed the same profile beside their launchers, so
+native and image defaults converge;
+every value remains overridable by the CLI or caller. These profiles use a
+standalone BEAM node by default (`RELEASE_DISTRIBUTION=none`); distributed
+deployments opt in with `RELEASE_DISTRIBUTION=name|sname` and their cluster
+configuration. Realtime keeps `CLUSTER_STRATEGIES=` empty for standalone local
+stacks; `CLUSTER_STRATEGIES=POSTGRES` is an explicit cluster opt-in.
 
 Node artifacts bundle the upstream-selected Node runtime under
 `node/bin/node`. Their launcher resolves `SUPABASE_NODE`, then the bundled

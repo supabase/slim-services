@@ -64,9 +64,9 @@ PY
     SECRET_KEY_BASE="$secret_key_base"
     APP_NAME=realtime-smoke
     PORT="$port"
-    RELEASE_DISTRIBUTION=none
   )
   smoke_beam_release_distribution "$realtime_bin" "${rt_env[@]}"
+  smoke_beam_runtime_profile "$realtime_bin" "${rt_env[@]}"
 
   log "running realtime preparation"
   if ! env "${rt_env[@]}" SEED_SELF_HOST=true "$artifact_rootfs/bin/prepare" >"$realtime_log" 2>&1; then
@@ -121,6 +121,7 @@ container="realtime-smoke-$RUN_ID"
 run_container \
   "$container" \
   --network "$NETWORK" \
+  --cpus 1 --memory 384m \
   -p 127.0.0.1::4000 \
   -e DB_HOST="$POSTGRES_CONTAINER" \
   -e DB_PORT=5432 \

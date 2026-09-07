@@ -146,12 +146,14 @@ Memory and CPU are first-class optimization targets, not just disk:
 
 - **Runtime profiles** — where a service defines
   `services/<service>/runtime.env`, its low-footprint local-dev defaults are
-  baked into the image as ENV and overridable at `docker run -e`. Host-process
-  smokes apply the same KEY=VALUE file; the CLI integration must arrange it for
-  native runs. Highlights:
+  baked into the image as ENV and embedded in selected native launchers, and
+  remain overridable at runtime. Host-process smokes apply the same KEY=VALUE
+  file. Highlights:
   - BEAM services (realtime, analytics, pooler): one scheduler and no
     scheduler busy-waiting (`+S 1:1 +sbwt none ...`) — idle CPU drops from
     several percent to ≤0.5%.
+    Container smokes cap realtime and pooler at 1 CPU/384 MiB and analytics at
+    1 CPU/768 MiB to keep the measured path resource-bound.
   - Node services (storage, studio, pgmeta): V8 heap caps
     (`--max-old-space-size`).
   - Go services (auth): `GOMEMLIMIT`, `GOGC`, `GOMAXPROCS`.

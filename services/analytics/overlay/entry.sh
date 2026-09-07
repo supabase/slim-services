@@ -11,4 +11,4 @@ SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P)"
 "$SCRIPT_DIR/bin/prepare"
 
 echo "Starting Logflare"
-exec "$SCRIPT_DIR/bin/logflare" start --sname logflare
+exec "$SCRIPT_DIR/bin/logflare" start

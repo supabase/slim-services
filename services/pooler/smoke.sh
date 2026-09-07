@@ -67,9 +67,9 @@ PY
     METRICS_JWT_SECRET="$metrics_secret"
     VAULT_ENC_KEY="$vault_enc_key"
     PORT="$port"
-    RELEASE_DISTRIBUTION=none
   )
   smoke_beam_release_distribution "$pooler_bin" "${pooler_env[@]}"
+  smoke_beam_runtime_profile "$pooler_bin" "${pooler_env[@]}"
 
   log "running pooler preparation"
   if ! env "${pooler_env[@]}" "$artifact_rootfs/bin/prepare" >"$pooler_log" 2>&1; then
@@ -131,7 +131,7 @@ docker run --rm --entrypoint /usr/bin/sh "$image" -c \
   || fail "pooler image is missing service preparation helpers"
 
 log "CLI one-shot: /app/bin/prepare"
-docker run --rm --network "$NETWORK" \
+docker run --rm --network "$NETWORK" --cpus 1 --memory 384m \
   -e DATABASE_URL="ecto://postgres:postgres@$POSTGRES_CONTAINER:5432/pooler_smoke" \
   -e SECRET_KEY_BASE="$secret_key_base" \
   -e API_JWT_SECRET="$api_secret" \
@@ -143,6 +143,7 @@ docker run --rm --network "$NETWORK" \
 
 provision_pooler_image_tenant() {
   docker run --rm --network "$NETWORK" \
+    --cpus 1 --memory 384m \
     -e DATABASE_URL="ecto://postgres:postgres@$POSTGRES_CONTAINER:5432/pooler_smoke" \
     -e SECRET_KEY_BASE="$secret_key_base" \
     -e API_JWT_SECRET="$api_secret" \
@@ -180,6 +181,7 @@ container="pooler-smoke-$RUN_ID"
 run_container \
   "$container" \
   --network "$NETWORK" \
+  --cpus 1 --memory 384m \
   -p 127.0.0.1::4000 \
   -e DATABASE_URL="ecto://postgres:postgres@$POSTGRES_CONTAINER:5432/pooler_smoke" \
   -e SECRET_KEY_BASE="$secret_key_base" \

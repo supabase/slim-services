@@ -11,17 +11,28 @@ trap 'rm -rf "$tmp_dir"' EXIT
 artifact_rootfs="$tmp_dir/artifact"
 mkdir -p "$artifact_rootfs/bin" "$artifact_rootfs/releases/demo"
 env_file="$artifact_rootfs/releases/demo/env.sh"
+runtime_profile="$artifact_rootfs/bin/.runtime-env.sh"
 cat >"$env_file" <<'EOF'
 #!/bin/sh
 export RELEASE_DISTRIBUTION=name
 EOF
 chmod 0755 "$env_file"
 
+cat >"$runtime_profile" <<'EOF'
+#!/bin/sh
+if [ -z "${RELEASE_DISTRIBUTION+x}" ]; then
+  export RELEASE_DISTRIBUTION=none
+fi
+EOF
+chmod 0755 "$runtime_profile"
+
 launcher="$artifact_rootfs/bin/demo"
 cat >"$launcher" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 release_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=/dev/null
+[ ! -r "$release_root/bin/.runtime-env.sh" ] || source "$release_root/bin/.runtime-env.sh"
 # shellcheck source=/dev/null
 source "$release_root/releases/demo/env.sh"
 [[ "${1:-}" == eval ]] || exit 2
@@ -49,8 +60,35 @@ log "unpatched release env correctly rejected by distribution smoke"
 
 cat >"$env_file" <<'EOF'
 #!/bin/sh
+export RELEASE_DISTRIBUTION=none
+EOF
+if (smoke_beam_release_distribution "$launcher" \
+  SMOKE_MARKER=present >/dev/null 2>&1); then
+  echo "unpatched unconditional none env unexpectedly passed override checks" >&2
+  exit 1
+fi
+log "unpatched unconditional none env correctly rejected by distribution smoke"
+
+cat >"$env_file" <<'EOF'
+#!/bin/sh
 export RELEASE_DISTRIBUTION="${RELEASE_DISTRIBUTION:-name}"
 EOF
+
+rm "$runtime_profile"
+if (smoke_beam_release_distribution "$launcher" \
+  SMOKE_MARKER=present >/dev/null 2>&1); then
+  echo "missing runtime profile unexpectedly passed standalone default check" >&2
+  exit 1
+fi
+log "missing runtime profile correctly rejected"
+
+cat >"$runtime_profile" <<'EOF'
+#!/bin/sh
+if [ -z "${RELEASE_DISTRIBUTION+x}" ]; then
+  export RELEASE_DISTRIBUTION=none
+fi
+EOF
+chmod 0755 "$runtime_profile"
 smoke_beam_release_distribution "$launcher" \
   SMOKE_MARKER=present RELEASE_DISTRIBUTION=caller
 
