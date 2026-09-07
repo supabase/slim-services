@@ -96,7 +96,9 @@ start_temp_server() {
       echo "supabase-postgres: temporary server did not become ready" >&2
       return 1
     fi
-    sleep 1
+    # pg_isready is already the bounded readiness check; a short retry keeps
+    # startup responsive without changing ownership of the foreground child.
+    sleep 0.05
   done
 }
 

@@ -1,4 +1,5 @@
 {
+  pkgs,
   lib,
   stdenv,
   writeTextFile,
@@ -61,11 +62,14 @@ let
     name = "cli-migration-bundle";
     src = "${upstream}/migrations/db";
     dontPatchShebangs = true;
+    nativeBuildInputs = [ pkgs.patch ];
     installPhase = ''
       mkdir -p $out/share/supabase-cli/migrations
       cp -r init-scripts $out/share/supabase-cli/migrations/
       cp -r migrations $out/share/supabase-cli/migrations/
       cp migrate.sh $out/share/supabase-cli/migrations/
+      ${pkgs.patch}/bin/patch $out/share/supabase-cli/migrations/migrate.sh \
+        < ${./migrate-batch.patch}
       chmod +x $out/share/supabase-cli/migrations/migrate.sh
 
       # Add pgbouncer schema (same as Docker build does)
@@ -82,6 +86,7 @@ let
     name = "cli-config-bundle";
     src = configDir;
     dontPatchShebangs = true;
+    nativeBuildInputs = [ pkgs.patch ];
     installPhase = ''
       mkdir -p $out/share/supabase-cli/config/conf.d
       mkdir -p $out/share/supabase-cli/bin
@@ -201,10 +206,12 @@ let
       chmod +x $cfg/pgsodium_getkey.sh
       chmod +x $out/share/supabase-cli/bin/supabase-postgres-init.sh
 
-      # Patch the init script (two anchored edits; each asserted below):
+      # Patch the init script (the pwfile replacement is anchored to the
+      # pinned upstream script; each resulting contract is asserted below):
       #  1. source stage-shared-config.sh after the config templates are
       #     copied into PGDATA;
-      #  2. initdb with the docker.io image's locale flags
+      #  2. initdb with the docker.io image's locale flags and a temporary
+      #     password file
       #     (POSTGRES_INITDB_ARGS there: --allow-group-access
       #     --locale-provider=icu --encoding=UTF-8 --icu-locale=en_US.UTF-8).
       #     PostgreSQL enters the pinned bundled glibc through its launcher,
@@ -213,17 +220,20 @@ let
       #     the Nix dockerTools image; stage-shared-config.sh probes and falls back to
       #     'C' only if the selected runtime cannot resolve the locale.
       init=$out/share/supabase-cli/bin/supabase-postgres-init.sh
+      ${pkgs.patch}/bin/patch "$init" < ${./postgres-init-pwfile.patch}
       sed -i \
         -e '/pg_ident.conf.template/a\	. "$BUNDLE_DIR/share/supabase-cli/bin/stage-shared-config.sh"' \
-        -e 's|--encoding=UTF8 \\|--encoding=UTF-8 \\|' \
-        -e 's|--locale=C \\|--locale-provider=icu --icu-locale=en_US.UTF-8 --allow-group-access \\|' \
         $init
-      for want in "stage-shared-config.sh" "icu-locale=en_US.UTF-8"; do
-        grep -q "$want" $init || {
+      for want in "stage-shared-config.sh" "icu-locale=en_US.UTF-8" "--pwfile="; do
+        grep -q -- "$want" $init || {
           echo "init-script patch anchor missing: $want" >&2
           exit 1
         }
       done
+      if grep -q "postgres_setup_password\|--single.*ALTER USER" $init; then
+        echo "init script still boots PostgreSQL for the bootstrap password" >&2
+        exit 1
+      fi
       bash -n $init
     '';
   };

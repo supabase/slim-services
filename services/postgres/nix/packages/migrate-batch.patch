@@ -1,0 +1,41 @@
+--- migrate.sh
++++ migrate.sh
+@@ -38,17 +38,29 @@
+   end if;
+ end \$\$
+ EOSQL
+-	# run init scripts as postgres user
+-	for sql in "$db"/init-scripts/*.sql; do
+-		echo "$0: running $sql"
+-		psql -v ON_ERROR_STOP=1 --no-password --no-psqlrc -U postgres -f "$sql"
+-	done
++	run_sql_files() {
++		role="$1"
++		directory="$2"
++		shift 2
++		set --
++		for sql in "$directory"/*.sql; do
++			[ -f "$sql" ] || continue
++			echo "$0: running $sql"
++			set -- "$@" -f "$sql"
++		done
++		[ "$#" -gt 0 ] || return 0
++		psql -v ON_ERROR_STOP=1 --no-password --no-psqlrc -U "$role" "$@"
++	}
++
++	# The migration files were audited for session-sensitive psql commands:
++	# they contain no \connect or \set, and no session-level SET outside a
++	# transaction/function body. Keep each filename as its own -f argument so
++	# psql preserves source context while one client process handles the
++	# ordered group.
++	run_sql_files postgres "$db/init-scripts"
+ 	psql -v ON_ERROR_STOP=1 --no-password --no-psqlrc -U postgres -c "ALTER USER supabase_admin WITH PASSWORD '$PGPASSWORD'"
+ 	# run migrations as super user - postgres user demoted in post-setup
+-	for sql in "$db"/migrations/*.sql; do
+-		echo "$0: running $sql"
+-		psql -v ON_ERROR_STOP=1 --no-password --no-psqlrc -U supabase_admin -f "$sql"
+-	done
++	run_sql_files supabase_admin "$db/migrations"
+ else
+ 	psql -v ON_ERROR_STOP=1 --no-password --no-psqlrc -U supabase_admin <<EOSQL
+   create role postgres superuser login password '$PGPASSWORD';

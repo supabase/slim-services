@@ -1,0 +1,83 @@
+--- supabase-postgres-init.sh
++++ supabase-postgres-init.sh
+@@ -44,13 +44,42 @@
+ 	# Create PGDATA directory if it doesn't exist
+ 	mkdir -p "$PGDATA"
+ 
+-	# Run initdb
+-	"$PGBIN/initdb" \
+-		-D "$PGDATA" \
+-		-U "$POSTGRES_USER" \
+-		--encoding=UTF8 \
+-		--locale=C \
++	# Let initdb set the bootstrap password directly. Keep the temporary file
++	# outside PGDATA so initdb still sees an empty data directory.
++	initdb_args=(
++		-D "$PGDATA"
++		-U "$POSTGRES_USER"
++		--encoding=UTF-8
++		--locale-provider=icu
++		--icu-locale=en_US.UTF-8
++		--allow-group-access
+ 		--no-instructions
++	)
++	password_file=""
++	cleanup_password_file() {
++		[ -z "$password_file" ] || rm -f "$password_file"
++	}
++	cleanup_password_file_on_signal() {
++		exit 143
++	}
++	if [ -n "$POSTGRES_PASSWORD" ]; then
++		password_file="$(mktemp "${TMPDIR:-/tmp}/supabase-initdb-password.XXXXXX")"
++		(umask 077 && printf '%s\n' "$POSTGRES_PASSWORD" >"$password_file")
++		chmod 0600 "$password_file"
++		initdb_args+=("--pwfile=$password_file")
++		trap cleanup_password_file EXIT
++		trap cleanup_password_file_on_signal HUP INT TERM
++	fi
++	if "$PGBIN/initdb" "${initdb_args[@]}"; then
++		:
++	else
++		status=$?
++		cleanup_password_file
++		trap - EXIT HUP INT TERM
++		return "$status"
++	fi
++	cleanup_password_file
++	trap - EXIT HUP INT TERM
+ 
+ 	postgres_note "Database initialized"
+ }
+@@ -80,23 +109,6 @@
+ EOF
+ 
+ 	postgres_note "Configuration files set up"
+-}
+-
+-# Set password for superuser using single-user mode
+-postgres_setup_password() {
+-	if [ -n "$POSTGRES_PASSWORD" ]; then
+-		postgres_note "Setting password for user: $POSTGRES_USER"
+-
+-		# Use single-user mode to set password before server starts
+-		# This allows us to use scram-sha-256 authentication
+-		# Must specify 'postgres' database as the target database
+-		# -j flag allows natural multi-line SQL (terminated by semicolon + empty line)
+-		"$PGBIN/postgres" --single -j -D "$PGDATA" postgres <<-EOSQL
+-			ALTER USER "$POSTGRES_USER" WITH PASSWORD '$POSTGRES_PASSWORD';
+-		EOSQL
+-
+-		postgres_note "Password set successfully"
+-	fi
+ }
+ 
+ # Create additional database if specified and different from default
+@@ -162,7 +174,6 @@
+ 
+ 	postgres_setup_db
+ 	postgres_setup_config
+-	postgres_setup_password
+ 	postgres_create_db
+ 
+ 	# Process any initialization scripts in standard location
