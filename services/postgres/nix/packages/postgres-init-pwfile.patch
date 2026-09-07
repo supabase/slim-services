@@ -8,8 +8,8 @@
 -	"$PGBIN/initdb" \
 -		-D "$PGDATA" \
 -		-U "$POSTGRES_USER" \
--		--encoding=UTF-8 \
--		--locale-provider=icu --icu-locale=en_US.UTF-8 --allow-group-access \
+-		--encoding=UTF8 \
+-		--locale=C \
 +	# Let initdb set the bootstrap password directly. Keep the temporary file
 +	# outside PGDATA so initdb still sees an empty data directory.
 +	initdb_args=(

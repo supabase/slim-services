@@ -220,10 +220,6 @@ let
       #     the Nix dockerTools image; stage-shared-config.sh probes and falls back to
       #     'C' only if the selected runtime cannot resolve the locale.
       init=$out/share/supabase-cli/bin/supabase-postgres-init.sh
-      sed -i \
-        -e 's|--encoding=UTF8 \\\|--encoding=UTF-8 \\\|' \
-        -e 's|--locale=C \\\|--locale-provider=icu --icu-locale=en_US.UTF-8 --allow-group-access \\\|' \
-        $init
       ${pkgs.patch}/bin/patch "$init" < ${./postgres-init-pwfile.patch}
       sed -i \
         -e '/pg_ident.conf.template/a\	. "$BUNDLE_DIR/share/supabase-cli/bin/stage-shared-config.sh"' \

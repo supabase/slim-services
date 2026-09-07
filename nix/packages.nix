@@ -356,11 +356,16 @@ let
                   mv "$entrypoint" "$out/bin/.${releaseService}-wrapped"
                   cat >"$entrypoint" <<'WRAPPER'
               #!/bin/sh
-              SLIM_RUNTIME_PROFILE="$(CDPATH="" cd -- "$(dirname -- "$0")" && pwd -P)/.runtime-env.sh"
+              case "$0" in
+                */*) SLIM_RUNTIME_DIR=''${0%/*} ;;
+                *) SLIM_RUNTIME_DIR=. ;;
+              esac
+              SLIM_RUNTIME_DIR="$(CDPATH="" cd -- "$SLIM_RUNTIME_DIR" && pwd -P)"
+              SLIM_RUNTIME_PROFILE="$SLIM_RUNTIME_DIR/.runtime-env.sh"
               if [ -r "$SLIM_RUNTIME_PROFILE" ]; then
                 . "$SLIM_RUNTIME_PROFILE"
               fi
-              exec "$(CDPATH="" cd -- "$(dirname -- "$0")" && pwd -P)/.${releaseService}-wrapped" "$@"
+              exec "$SLIM_RUNTIME_DIR/.${releaseService}-wrapped" "$@"
               WRAPPER
                   chmod 0755 "$entrypoint"
                 fi
