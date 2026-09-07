@@ -34,6 +34,7 @@ if [[ -n "$artifact_rootfs" ]]; then
 
   realtime_bin="$artifact_rootfs/bin/realtime"
   [[ -x "$realtime_bin" ]] || fail "realtime artifact launcher not found or not executable: $realtime_bin"
+  [[ -x "$artifact_rootfs/bin/prepare" ]] || fail "realtime preparation helper not found or not executable: $artifact_rootfs/bin/prepare"
 
   start_postgres realtime_smoke
   pg_port="$(postgres_port)"
@@ -67,16 +68,10 @@ PY
   )
   smoke_beam_release_distribution "$realtime_bin" "${rt_env[@]}"
 
-  log "running realtime migrations"
-  if ! env "${rt_env[@]}" "$artifact_rootfs/bin/migrate" >"$realtime_log" 2>&1; then
+  log "running realtime preparation"
+  if ! env "${rt_env[@]}" SEED_SELF_HOST=true "$artifact_rootfs/bin/prepare" >"$realtime_log" 2>&1; then
     cat "$realtime_log" >&2
-    fail "realtime migrations failed"
-  fi
-
-  log "seeding selfhosted realtime"
-  if ! env "${rt_env[@]}" "$realtime_bin" eval 'Realtime.Release.seeds(Realtime.Repo)' >"$realtime_log" 2>&1; then
-    cat "$realtime_log" >&2
-    fail "realtime seeds failed"
+    fail "realtime preparation failed"
   fi
 
   log "smoke testing realtime host process on port $port"
@@ -112,6 +107,7 @@ docker run --rm --entrypoint /usr/bin/sh "$image" -c '
   test -x /app/bin/realtime
   test -x /app/bin/server
   test -x /app/bin/migrate
+  test -x /app/bin/prepare
   test -r /app/entry.sh
 '
 

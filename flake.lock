@@ -1,0 +1,91 @@
+{
+  "nodes": {
+    "nixpkgs": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1767313136,
+        "narHash": "sha256-16KkgfdYqjaeRGBaYsNrhPRRENs0qzkQVUooNHtoy2w=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "ac62194c3917d5f474c1a844b6fd6da2db95077d",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "ac62194c3917d5f474c1a844b6fd6da2db95077d",
+        "type": "github"
+      }
+    },
+    "release": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1,
+        "narHash": "sha256-tnIAhzpCsLB7bllvd9rmCfKeHa6IOYVCz0ctfJRwVPk=",
+        "path": "./nix/release",
+        "type": "path"
+      },
+      "original": {
+        "path": "./nix/release",
+        "type": "path"
+      }
+    },
+    "root": {
+      "inputs": {
+        "nixpkgs": "nixpkgs",
+        "release": "release",
+        "runtime-nixpkgs": "runtime-nixpkgs",
+        "rust-overlay": "rust-overlay",
+        "upstream": "upstream"
+      }
+    },
+    "runtime-nixpkgs": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1785967620,
+        "narHash": "sha256-IItrdb7Puk05RqOBWZYFC5X6Wl1sJmCfh5MWVHw5iMM=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "b7c2ada94fe99c15b0dbcf4d11fd7850b957a436",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "b7c2ada94fe99c15b0dbcf4d11fd7850b957a436",
+        "type": "github"
+      }
+    },
+    "rust-overlay": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1786076960,
+        "narHash": "sha256-jfR6OhwurCKn1tREyfOcK/Omxf1Q/DzDDFbnEr1mBLs=",
+        "owner": "oxalica",
+        "repo": "rust-overlay",
+        "rev": "57a23bfaf4f7017267294b161175db1e32eb1c85",
+        "type": "github"
+      },
+      "original": {
+        "owner": "oxalica",
+        "repo": "rust-overlay",
+        "rev": "57a23bfaf4f7017267294b161175db1e32eb1c85",
+        "type": "github"
+      }
+    },
+    "upstream": {
+      "locked": {
+        "lastModified": 1,
+        "narHash": "sha256-ZuKu4Dfv/fVEjm+zYaJh8kkrSSDCv4LzvAjLIDd9c5Q=",
+        "path": "./nix/upstream-empty",
+        "type": "path"
+      },
+      "original": {
+        "path": "./nix/upstream-empty",
+        "type": "path"
+      }
+    }
+  },
+  "root": "root",
+  "version": 7
+}

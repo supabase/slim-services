@@ -71,10 +71,10 @@ append-only for `runtime.env` — it does not rewrite `COPY --chown`.
   because the CLI always uses them. Storage ships `dist/scripts/migrate-call.js`
   (third Rolldown input) plus `postgres-migrations`'
   `0_create-migrations-table.sql` beside that script. Empty `ENTRYPOINT` and
-  `CMD ["/node/bin/node","dist/start/server.js"]` so default `docker run`
-  still serves, while `docker run IMAGE node dist/scripts/migrate-call.js`
-  is the CLI one-shot (`node` is on `PATH`). A node `ENTRYPOINT` would turn
-  that argv into `node node …`.
+  `CMD ["/slim-runtime/bin/storage"]` so default `docker run` still serves,
+  while `docker run --entrypoint /slim-runtime/bin/prepare IMAGE` runs the
+  migration one-shot. Both launchers use the same portable `/slim-runtime`
+  layout.
 
 Do not extract upstream `docker-entrypoint.sh` or `gosu`. Do not root a
 stateless service that the pin does not start as root.

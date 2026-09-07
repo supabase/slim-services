@@ -1,8 +1,7 @@
-# Repo-owned portable Nix package for Realtime (darwin host-native artifacts).
+# Repo-owned portable Nix package for Realtime.
 #
-# This file lives outside sources/ so the submodule stays read-only. The
-# artifact build copies services/realtime/nix/ into a temporary export of the
-# submodule (NIX_PACKAGE_OVERLAY) and runs `nix-build nix/ -A realtime`.
+# The package is imported with the exact upstream source and dependency hashes
+# for the requested release; the upstream submodule remains read-only.
 #
 # It builds the upstream mix release with ERTS included, then applies the
 # portable packaging steps from NIX_PORTABLE_ARTIFACT_PLAYBOOK.md:
@@ -18,38 +17,31 @@
 # service boots and serves /healthcheck and websockets normally; only the
 # LiveDashboard UI assets 404. Same philosophy as edge-runtime's no-AI profile.
 {
-  pkgs ? import (fetchTarball {
-    url = "https://github.com/NixOS/nixpkgs/archive/ac62194c3917d5f474c1a844b6fd6da2db95077d.tar.gz";
-    sha256 = "0v6bd1xk8a2aal83karlvc853x44dg1n4nk08jg3dajqyy0s98np";
-  }) { },
-  runtimeNixpkgsSrc ? fetchTarball {
-    # Runtime definitions come from a newer immutable snapshot, while builds
-    # continue to use the shared package set and its established glibc floor.
-    url = "https://github.com/NixOS/nixpkgs/archive/b7c2ada94fe99c15b0dbcf4d11fd7850b957a436.tar.gz";
-    sha256 = "1hw875y585lkhygn09kcbmdgm58b0nb5k0d38qwlvfngprsnp2r0";
-  },
+  pkgs,
+  runtimeNixpkgsSrc,
   serviceVersion ? "dev",
   mixDepsHash ? null,
+  src ? throw "realtime requires an explicit source path",
+  upstreamDockerfile ? builtins.readFile "${src}/Dockerfile",
+  portableBeam ? ../../../nix/portable-beam,
 }:
 let
   lib = pkgs.lib;
-  portableBeam =
-    if builtins.pathExists ./portable-beam then ./portable-beam else ../../../nix/portable-beam;
-  upstreamDockerfile = builtins.readFile ../Dockerfile;
+  sourceRoot = src;
   upstreamDockerfileLines = lib.splitString "\n" upstreamDockerfile;
-  upstreamDockerArg = name:
+  upstreamDockerArg =
+    name:
     let
       prefix = "ARG ${name}=";
-      line = lib.findFirst
-        (candidate: lib.hasPrefix prefix candidate)
-        (throw "upstream Realtime Dockerfile does not declare ${prefix}<version>")
-        upstreamDockerfileLines;
+      line =
+        lib.findFirst (candidate: lib.hasPrefix prefix candidate)
+          (throw "upstream Realtime Dockerfile does not declare ${prefix}<version>")
+          upstreamDockerfileLines;
     in
     lib.removePrefix prefix line;
   upstreamElixirVersion = upstreamDockerArg "ELIXIR_VERSION";
   upstreamOtpVersion = upstreamDockerArg "OTP_VERSION";
-  elixirGeneration = lib.concatStringsSep "."
-    (lib.take 2 (lib.splitVersion upstreamElixirVersion));
+  elixirGeneration = lib.concatStringsSep "." (lib.take 2 (lib.splitVersion upstreamElixirVersion));
   otpGeneration = lib.head (lib.splitVersion upstreamOtpVersion);
   runtimeDefinitions = "${runtimeNixpkgsSrc}/pkgs/development/interpreters";
   erlangDefinition = "${runtimeDefinitions}/erlang/${otpGeneration}.nix";
@@ -57,13 +49,17 @@ let
   erlang =
     if builtins.pathExists erlangDefinition then
       let
-        genericBuilder = versionArgs:
-          import "${runtimeDefinitions}/erlang/generic-builder.nix" (versionArgs // {
-            # Neither service is needed by Realtime. Keeping them out of Linux
-            # avoids libsystemd and GUI dependencies that raise the glibc floor.
-            systemdSupport = false;
-            wxSupport = pkgs.stdenv.isDarwin;
-          });
+        genericBuilder =
+          versionArgs:
+          import "${runtimeDefinitions}/erlang/generic-builder.nix" (
+            versionArgs
+            // {
+              # Neither service is needed by Realtime. Keeping them out of Linux
+              # avoids libsystemd and GUI dependencies that raise the glibc floor.
+              systemdSupport = false;
+              wxSupport = pkgs.stdenv.isDarwin;
+            }
+          );
       in
       pkgs.callPackage (import erlangDefinition genericBuilder) {
         # Names used by the newer runtime definition set.
@@ -73,9 +69,6 @@ let
       }
     else
       throw "runtime definitions do not provide OTP ${otpGeneration} required by Realtime's upstream Dockerfile";
-  derivedHashesRaw = builtins.getEnv "SLIM_NIX_DERIVED_HASHES";
-  derivedHashes =
-    if derivedHashesRaw == "" then { } else builtins.fromJSON derivedHashesRaw;
   beamPackages = pkgs.beam.packagesWith erlang;
   elixir =
     if builtins.pathExists elixirDefinition then
@@ -101,19 +94,18 @@ let
   # access and carry it into the writable dependency copy used by mixRelease.
   # Force Lumis's legacy x86_64 build so the artifact does not inherit AVX/FMA
   # requirements from the CI builder CPU.
-  lumisEnvironment = lib.optionalString
-    (pkgs.stdenv.isLinux && pkgs.stdenv.hostPlatform.isx86_64) ''
-      export LUMIS_USE_LEGACY_ARTIFACTS=true
-    '';
+  lumisEnvironment = lib.optionalString (pkgs.stdenv.isLinux && pkgs.stdenv.hostPlatform.isx86_64) ''
+    export LUMIS_USE_LEGACY_ARTIFACTS=true
+  '';
 
   # Exclude the overlay itself (and repo noise) so editing packaging files does
   # not invalidate the deps fetcher's fixed-output derivation.
-  src = lib.cleanSourceWith {
-    src = ../.;
+  cleanedSrc = lib.cleanSourceWith {
+    src = sourceRoot;
     filter =
       path: type:
       let
-        rel = lib.removePrefix (toString ../. + "/") (toString path);
+        rel = lib.removePrefix (toString sourceRoot + "/") (toString path);
       in
       !(lib.hasPrefix "nix" rel)
       && !(lib.hasPrefix ".git" rel)
@@ -124,12 +116,9 @@ let
 
   mixDeps = fetchMixDeps {
     pname = "mix-deps-${pname}";
-    inherit version src;
-    hash =
-      if mixDepsHash != null then
-        mixDepsHash
-      else
-        derivedHashes.mix_deps_hash or lib.fakeHash;
+    src = cleanedSrc;
+    inherit version;
+    hash = if mixDepsHash != null then mixDepsHash else lib.fakeHash;
     mixEnv = "prod";
     postInstall = ''
       if [ -d "$MIX_DEPS_PATH/lumis" ]; then
@@ -155,7 +144,8 @@ let
   };
 
   release = mixRelease {
-    inherit pname version src;
+    inherit pname version;
+    src = cleanedSrc;
     mixEnv = "prod";
     mixFodDeps = mixDeps;
     preConfigure = ''
@@ -182,7 +172,11 @@ in
     nativeBuildInputs = [
       pkgs.python3
       pkgs.file
-    ] ++ lib.optionals pkgs.stdenv.isLinux [ pkgs.patchelf pkgs.binutils ];
+    ]
+    ++ lib.optionals pkgs.stdenv.isLinux [
+      pkgs.patchelf
+      pkgs.binutils
+    ];
 
     buildPhase = ''
       rootfs="$out"
@@ -192,6 +186,11 @@ in
       # bin/migrate (rel overlays), erts-*/, lib/, releases/.
       cp -R ${release}/. "$rootfs/"
       chmod -R u+w "$rootfs"
+
+      # Keep service-owned preparation beside the release launchers so native
+      # consumers and derived images execute the same migration contract.
+      cp ${../overlay/prepare.sh} "$rootfs/bin/prepare"
+      chmod 0755 "$rootfs/bin/prepare"
 
       # Trim BEAM release tooling that never runs in the artifact (mirrors
       # scripts/prune-beam-release.sh for the Docker artifact).
@@ -275,7 +274,8 @@ in
       chmod "$mode" "$envsh_tmp"
       mv -f "$envsh_tmp" "$envsh"
       trap - EXIT HUP INT TERM
-    '' + lib.optionalString pkgs.stdenv.isLinux ''
+    ''
+    + lib.optionalString pkgs.stdenv.isLinux ''
       # Shared BEAM fixup bundles the matching glibc family, relocates the
       # non-glibc closure, wraps dynamic ERTS/port ELFs, and audits with the
       # bundled loader. Darwin remains on the unchanged branch below.
@@ -288,7 +288,8 @@ in
       export PORTABLE_BEAM_LOCALE_LIB="${glibcLocalesMinimal}/lib/locale"
       export PORTABLE_BEAM_LAUNCHER="${portableBeam}/beam-launcher.sh"
       ${builtins.readFile "${portableBeam}/beam-linux-fixup.sh"}
-    '' + lib.optionalString pkgs.stdenv.isDarwin ''
+    ''
+    + lib.optionalString pkgs.stdenv.isDarwin ''
       rootfs="$out"
       dylib_dir="$rootfs/dylib"
       mkdir -p "$dylib_dir"

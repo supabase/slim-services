@@ -23,7 +23,9 @@ locale_archive="$locale_source/locale-archive"
 
 # Keep hidden-entrypoint normalization and launcher generation in one
 # executable seam so host tests can exercise the exact public-name contract.
+# shellcheck source=nix/portable-postgres/postgres-entrypoint-fixup.sh
 . "$entrypoint_helper"
+# shellcheck source=nix/portable-postgres/postgres-compiler-runtime.sh
 . "$compiler_runtime_helper"
 
 runtime_dir="$rootfs/lib"

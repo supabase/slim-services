@@ -76,6 +76,7 @@ if [[ -n "$artifact_rootfs" ]]; then
 
   storage_bin="$artifact_rootfs/bin/storage"
   [[ -x "$storage_bin" ]] || fail "storage artifact launcher not found or not executable: $storage_bin"
+  [[ -x "$artifact_rootfs/bin/prepare" ]] || fail "storage preparation helper not found or not executable: $artifact_rootfs/bin/prepare"
 
   [[ -x "$artifact_rootfs/node/bin/node" ]] \
     || fail "storage artifact does not bundle a node runtime: $artifact_rootfs/node/bin/node"
@@ -95,6 +96,20 @@ PY
 )"
   storage_log="$(mktemp "${TMPDIR:-/tmp}/storage-smoke.XXXXXX.log")"
   storage_data_dir="$(mktemp -d "${TMPDIR:-/tmp}/storage-smoke-data.XXXXXX")"
+
+  log "running storage preparation"
+  if ! env \
+    SUPABASE_NODE= \
+    PATH=/usr/bin:/bin \
+    DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:$pg_port/storage_smoke" \
+    AUTH_JWT_SECRET="$jwt_secret" \
+    PGRST_JWT_SECRET="$jwt_secret" \
+    STORAGE_BACKEND=file \
+    FILE_STORAGE_BACKEND_PATH="$storage_data_dir" \
+    "$artifact_rootfs/bin/prepare" >"$storage_log" 2>&1; then
+    cat "$storage_log" >&2
+    fail "storage preparation failed"
+  fi
 
   log "smoke testing storage host process on port $port"
   start_host_service storage "$storage_log" \
@@ -152,15 +167,17 @@ pinned_image="$PINNED_IMAGE"
 log "checking wget is on PATH (CLI healthcheck)"
 docker run --rm --entrypoint /usr/bin/wget "$image" --help >/dev/null \
   || fail "storage image is missing wget"
+docker run --rm --entrypoint /usr/bin/sh "$image" -c 'test -x /slim-runtime/bin/prepare' \
+  || fail "storage image is missing the preparation helper"
 
 storage_ep="$(docker inspect -f '{{json .Config.Entrypoint}}' "$image")"
 [[ "$storage_ep" == "null" || "$storage_ep" == "[]" ]] \
   || fail "storage ENTRYPOINT is $storage_ep (expected empty)"
 storage_cmd="$(docker inspect -f '{{json .Config.Cmd}}' "$image")"
-[[ "$storage_cmd" == '["/node/bin/node","dist/start/server.js"]' ]] \
-  || fail "storage CMD is $storage_cmd (expected [/node/bin/node, dist/start/server.js])"
+[[ "$storage_cmd" == '["/slim-runtime/bin/storage"]' ]] \
+  || fail "storage CMD is $storage_cmd (expected [/slim-runtime/bin/storage])"
 
-log "CLI one-shot: node dist/scripts/migrate-call.js"
+log "CLI one-shot: /slim-runtime/bin/prepare"
 if ! docker run --rm --network "$NETWORK" \
   -e DATABASE_URL="postgresql://postgres:postgres@$POSTGRES_CONTAINER:5432/storage_smoke" \
   -e AUTH_JWT_SECRET="$jwt_secret" \
@@ -171,9 +188,9 @@ if ! docker run --rm --network "$NETWORK" \
   -e REGION=stub \
   -e GLOBAL_S3_BUCKET=stub \
   -w /app \
-  "$image" \
-  node dist/scripts/migrate-call.js; then
-  fail "storage migrate-call.js one-shot failed"
+  --entrypoint /slim-runtime/bin/prepare \
+  "$image"; then
+  fail "storage preparation one-shot failed"
 fi
 
 # Run the file backend on a FRESH named volume mounted at /mnt — the exact

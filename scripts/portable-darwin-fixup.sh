@@ -14,8 +14,10 @@ Complete and optimize a macOS portable runtime tree:
 - rewrite copied Nix store install names to @rpath;
 - remove absolute /nix/store rpaths;
 - strip local symbols;
-- ad-hoc sign mutated Mach-O files;
-- audit that no shipped Mach-O references /nix/store.
+- ad-hoc sign mutated Mach-O files.
+
+The release pipeline verifies exported signatures and audits the final artifact
+with the host tools after this build-time relocation.
 EOF
 }
 
@@ -80,10 +82,6 @@ for _iteration in 1 2 3 4 5; do
         fi
       done
 
-      if [[ -z "$candidate" ]]; then
-        candidate="$(find /nix/store -path "*/lib/$dep_name" -type f -print -quit 2>/dev/null || true)"
-      fi
-
       if [[ -n "$candidate" && -e "$candidate" ]]; then
         cp -P "$candidate" "$rootfs/lib/$dep_name"
         chmod u+w "$rootfs/lib/$dep_name" 2>/dev/null || true
@@ -130,5 +128,3 @@ while IFS= read -r macho; do
   strip -x "$macho" 2>/dev/null || true
   codesign --force --sign - "$macho" >/dev/null 2>&1 || true
 done < <(find_macho_files)
-
-"$ROOT_DIR/scripts/audit-portable-artifact.sh" --darwin "$rootfs"

@@ -4,12 +4,16 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=scripts/lib.sh
 source "$ROOT_DIR/scripts/lib.sh"
+# shellcheck source=scripts/nix.sh
+source "$ROOT_DIR/scripts/nix.sh"
 
 usage() {
   cat <<'EOF'
 Usage: scripts/build-image-from-artifact.sh SERVICE ARTIFACT_ROOTFS [IMAGE_TAG]
 
-Build a slim Docker image from an artifact rootfs using the service Dockerfile.
+Build a reproducible OCI image with the pinned Nix dockerTools builder and
+load it into Docker. The image is assembled from the exact audited artifact
+rootfs passed as the second argument.
 EOF
 }
 
@@ -18,6 +22,7 @@ EOF
 
 require_cmd docker
 require_cmd python3
+require_cmd nix
 
 service="$1"
 artifact_rootfs="$2"
@@ -26,109 +31,154 @@ tag="${3:-local/$service:slim-artifact}"
 load_recipe "$service"
 [[ -d "$artifact_rootfs" ]] || fail "artifact rootfs not found: $artifact_rootfs"
 
-rel_rootfs="$(relative_to_root "$artifact_rootfs")"
+platform="${PLATFORM:-}"
 manifest="$(dirname "$artifact_rootfs")/manifest.json"
-if [[ -z "${PLATFORM:-}" && -f "$manifest" ]]; then
-  PLATFORM="$(python3 - "$manifest" <<'PY'
+if [[ -z "$platform" && -f "$manifest" ]]; then
+  platform="$(python3 - "$manifest" <<'PY'
 import json
 import sys
-with open(sys.argv[1], "r", encoding="utf-8") as fh:
-    print(json.load(fh).get("platform") or "")
+with open(sys.argv[1], encoding="utf-8") as stream:
+    print(json.load(stream).get("platform") or "")
 PY
 )"
 fi
-if [[ -z "${PLATFORM:-}" ]]; then
-  PLATFORM="$(docker_platform "$(target_os)" "$(target_arch)")"
+if [[ -z "$platform" ]]; then
+  platform="$(docker_platform "$(target_os)" "$(target_arch)")"
 fi
-platform_os="${PLATFORM%%/*}"
-platform_arch="${PLATFORM#*/}"
-PLATFORM="$(docker_platform "$platform_os" "$platform_arch")"
+platform_os="${platform%%/*}"
+platform_arch="${platform#*/}"
+platform="$(docker_platform "$platform_os" "$platform_arch")"
+nix_system="$(nix_system_for "$platform_os" "$platform_arch")"
 
-# Runtime profile contract: services/<service>/runtime.env holds low-footprint
-# local-dev defaults, baked into the image as ENV (overridable at `docker run
-# -e`). render-dockerfile.sh is the single source of truth for the final
-# Dockerfile; CI push paths must use it too.
-if [[ -f "$(service_dir "$service")/runtime.env" ]]; then
-  log "applying runtime profile from services/$service/runtime.env"
-fi
-dockerfile_content="$("$ROOT_DIR/scripts/render-dockerfile.sh" "$service")"
-
-identity_build_args=()
+identity_json='{}'
+identity_dir=""
 if identity_service "$service"; then
   # shellcheck source=scripts/identity-lib.sh
   source "$ROOT_DIR/scripts/identity-lib.sh"
   identity_dir="$(mktemp -d "${TMPDIR:-/tmp}/slim-identity-build.XXXXXX")"
+  cleanup_identity() { rm -rf "$identity_dir"; }
+  trap cleanup_identity EXIT
   if [[ "${SKIP_UPSTREAM_IDENTITY:-}" == "1" ]]; then
-    fail "SKIP_UPSTREAM_IDENTITY=1 cannot build $service (that would invent uid/gid/mode). Unset it; SOURCE_IMAGE_DIGEST is required"
+    fail "SKIP_UPSTREAM_IDENTITY=1 cannot build $service (SOURCE_IMAGE_DIGEST is required)"
   fi
   write_upstream_identity "$service" "$identity_dir"
   # shellcheck source=/dev/null
   source "$identity_dir/identity.env"
-  identity_build_args=(
-    --build-arg "DROP_TO_UID=$DROP_TO_UID"
-    --build-arg "DROP_TO_GID=$DROP_TO_GID"
-    --build-arg "DROP_TO_NAME=$DROP_TO_NAME"
-    --build-arg "VOLUME_MODE=$VOLUME_MODE"
-  )
+  identity_json="$(python3 - "$identity_dir/identity.env" <<'PY'
+import json
+import shlex
+import sys
+
+values = {}
+with open(sys.argv[1], encoding="utf-8") as stream:
+    for line in stream:
+        line = line.strip()
+        if not line or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        values[key] = shlex.split(value)[0] if value else ""
+
+print(json.dumps({
+    "startUser": values.get("START_USER", ""),
+    "uid": int(values.get("DROP_TO_UID", "0")),
+    "gid": int(values.get("DROP_TO_GID", "0")),
+    "name": values.get("DROP_TO_NAME", "root"),
+    "mode": values.get("VOLUME_MODE", "755"),
+}))
+PY
+)"
 fi
 
-log "building $tag from $rel_rootfs on $BASE_IMAGE for $PLATFORM"
-docker_builder="${DOCKER_BUILDER:-$(docker context show 2>/dev/null || echo default)}"
-output_args=()
+labels_json="$(python3 - <<'PY'
+import json
+import os
+
+labels = {}
+for key, env_name in (
+    ("org.opencontainers.image.source", "OCI_SOURCE"),
+    ("org.opencontainers.image.revision", "OCI_REVISION"),
+    ("org.opencontainers.image.version", "OCI_VERSION"),
+):
+    value = os.environ.get(env_name)
+    if value:
+        labels[key] = value
+print(json.dumps(labels, separators=(",", ":")))
+PY
+)"
+
+release_dir="$(mktemp -d "${TMPDIR:-/tmp}/slim-image-release.XXXXXX")"
+cleanup_release() {
+  rm -rf "$release_dir"
+  if [[ -n "$identity_dir" ]]; then
+    rm -rf "$identity_dir"
+  fi
+}
+trap cleanup_release EXIT
+mkdir -p "$release_dir"
+
+# Flake inputs are pure paths. Copying the already audited rootfs into the
+# release input keeps the image derivation pure and preserves the exact bytes
+# selected by the artifact build (Nix normalizes only derivation metadata).
+cp -a "$artifact_rootfs" "$release_dir/rootfs"
+python3 - "$release_dir/release.json" "$manifest" "$service" "$tag" "$identity_json" "$labels_json" <<'PY'
+import json
+import os
+import sys
+
+output, manifest_path, service, image_tag, identity_raw, labels_raw = sys.argv[1:]
+metadata = {}
+if manifest_path and os.path.isfile(manifest_path):
+    with open(manifest_path, encoding="utf-8") as stream:
+        metadata = json.load(stream)
+metadata.update({
+    "service": service,
+    "image_tag": image_tag,
+    "identity": json.loads(identity_raw),
+    "labels": json.loads(labels_raw),
+})
+with open(output, "w", encoding="utf-8") as stream:
+    json.dump(metadata, stream, indent=2)
+    stream.write("\n")
+PY
+
+log "building $tag with pinned Nix dockerTools from $artifact_rootfs on $platform"
+image_archive="$(nix_release build "$release_dir" "packages.${nix_system}.image" --no-link --print-out-paths)"
+[[ -f "$image_archive" ]] || fail "Nix image output is not a file: $image_archive"
+
+# dockerTools emits a standard docker load archive. Always load it so local
+# smoke tests and the release workflow consume the same image bytes. A caller
+# asking for DOCKER_PUSH gets the same loaded image pushed afterward.
+docker load --input "$image_archive"
+docker image inspect "$tag" >/dev/null 2>&1 || fail "Nix image did not load with requested tag $tag"
 if [[ "${DOCKER_PUSH:-0}" == "1" ]]; then
-  output_args+=(--push)
-elif [[ "${DOCKER_LOAD:-1}" == "1" ]]; then
-  output_args+=(--load)
-fi
-label_args=()
-[[ -n "${OCI_SOURCE:-}" ]] && label_args+=(--label "org.opencontainers.image.source=$OCI_SOURCE")
-[[ -n "${OCI_REVISION:-}" ]] && label_args+=(--label "org.opencontainers.image.revision=$OCI_REVISION")
-[[ -n "${OCI_VERSION:-}" ]] && label_args+=(--label "org.opencontainers.image.version=$OCI_VERSION")
-printf '%s\n' "$dockerfile_content" | docker buildx build \
-  --builder "$docker_builder" \
-  --platform "$PLATFORM" \
-  -f - \
-  --build-arg "ARTIFACT_ROOT=$rel_rootfs" \
-  --build-arg "BASE_IMAGE=$BASE_IMAGE" \
-  ${identity_build_args[@]+"${identity_build_args[@]}"} \
-  -t "$tag" \
-  "${label_args[@]}" \
-  "${output_args[@]}" \
-  "$ROOT_DIR"
-
-if [[ -n "${identity_dir:-}" ]]; then
-  rm -rf "$identity_dir"
+  docker push "$tag"
 fi
 
-if [[ "${DOCKER_PUSH:-0}" == "1" && "${DOCKER_LOAD:-0}" != "1" ]]; then
+if [[ "${DOCKER_PUSH:-0}" == "1" && "${DOCKER_LOAD:-1}" != "1" ]]; then
   "$ROOT_DIR/scripts/measure-artifact.sh" "$artifact_rootfs"
 else
   "$ROOT_DIR/scripts/measure-artifact.sh" "$artifact_rootfs" "" "$tag"
 fi
 
 if [[ "${UPDATE_MANIFEST:-1}" == "1" && -f "$manifest" ]]; then
-  if ! image_bytes="$(docker image inspect "$tag" --format '{{.Size}}' 2>/dev/null)"; then
-    image_bytes=""
-  fi
+  image_bytes="$(docker image inspect "$tag" --format '{{.Size}}' 2>/dev/null || true)"
   python3 - "$manifest" "$tag" "$image_bytes" <<'PY'
 import json
 import sys
 
-manifest_path, image_tag, image_bytes_raw = sys.argv[1], sys.argv[2], sys.argv[3]
+manifest_path, image_tag, image_bytes_raw = sys.argv[1:]
 image_bytes = int(image_bytes_raw) if image_bytes_raw else None
-
-with open(manifest_path, "r", encoding="utf-8") as fh:
-    data = json.load(fh)
-
+with open(manifest_path, encoding="utf-8") as stream:
+    data = json.load(stream)
 data.setdefault("image", {})
 data["image"].update({
     "tag": image_tag,
+    "builder": "nix-dockerTools",
     "bytes": image_bytes,
     "mib": round(image_bytes / 1024 / 1024, 1) if image_bytes is not None else None,
 })
-
-with open(manifest_path, "w", encoding="utf-8") as fh:
-    json.dump(data, fh, indent=2)
-    fh.write("\n")
+with open(manifest_path, "w", encoding="utf-8") as stream:
+    json.dump(data, stream, indent=2)
+    stream.write("\n")
 PY
 fi

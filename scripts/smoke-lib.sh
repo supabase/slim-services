@@ -127,12 +127,12 @@ postgres_port() {
 start_host_postgres() {
   [[ -n "$host_pg_dir" ]] && return 0
   require_cmd python3
-  # shellcheck source=scripts/nixpkgs-pin.sh
-  source "$ROOT_DIR/scripts/nixpkgs-pin.sh"
+  # shellcheck source=scripts/nix.sh
+  source "$ROOT_DIR/scripts/nix.sh"
 
   log "starting harness postgres as a host process (SLIM_SMOKE_HOST_POSTGRES=1)"
   local pg_store
-  pg_store="$(nixpkgs_build_attr postgresql_16)"
+  pg_store="$(nix_tool postgresql_16)"
   host_pg_bin="$pg_store/bin"
   host_pg_dir="$(mktemp -d "${TMPDIR:-/tmp}/slim-smoke-pg.XXXXXX")"
   host_pg_port="$(python3 - <<'PY'

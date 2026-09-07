@@ -340,42 +340,10 @@ host_matches_target() {
   [[ "$(normalize_os "$os")" == "$(host_os)" && "$(normalize_arch "$arch")" == "$(host_arch)" ]]
 }
 
-archive_with_best_available_compressor() {
-  local rootfs="$1"
-  local archive_prefix="$2"
-  local archive
-  rm -f "${archive_prefix}.tar" "${archive_prefix}.tar.gz" "${archive_prefix}.tar.zst"
-
-  local nix_cmd=""
-  if command -v nix >/dev/null 2>&1; then
-    nix_cmd="$(command -v nix)"
-  elif [[ -x /nix/var/nix/profiles/default/bin/nix ]]; then
-    nix_cmd="/nix/var/nix/profiles/default/bin/nix"
-  elif [[ -x "$HOME/.nix-profile/bin/nix" ]]; then
-    nix_cmd="$HOME/.nix-profile/bin/nix"
-  fi
-
-  if ! command -v zstd >/dev/null 2>&1 && [[ -n "$nix_cmd" ]] && [[ "${SLIM_USE_NIX_ZSTD:-1}" == "1" ]]; then
-    local zstd_out
-    while IFS= read -r zstd_out; do
-      if [[ -n "$zstd_out" && -x "$zstd_out/bin/zstd" ]]; then
-        PATH="$zstd_out/bin:$PATH"
-        break
-      fi
-    done < <("$nix_cmd" --extra-experimental-features "nix-command flakes" build --no-link --print-out-paths nixpkgs#zstd 2>/dev/null || true)
-  fi
-
-  if command -v zstd >/dev/null 2>&1; then
-    archive="${archive_prefix}.tar.zst"
-    tar -C "$rootfs" -cf - . | zstd -q -19 -o "$archive"
-  elif command -v gzip >/dev/null 2>&1; then
-    archive="${archive_prefix}.tar.gz"
-    tar -C "$rootfs" -czf "$archive" .
-  else
-    archive="${archive_prefix}.tar"
-    tar -C "$rootfs" -cf "$archive" .
-  fi
-  printf '%s\n' "$archive"
+archive_runtime() {
+  local rootfs="$1" archive_prefix="$2"
+  "$ROOT_DIR/scripts/archive-artifact.sh" "$rootfs" "$archive_prefix" >&2
+  printf '%s.tar.zst\n' "$archive_prefix"
 }
 
 # Host-native artifact contract: recipes declare PORTABLE="true" (optionally

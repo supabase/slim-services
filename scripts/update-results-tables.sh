@@ -361,22 +361,14 @@ totals = (
     f"| Current total reduction vs upstream | `{saved:.1f} MiB / {saved / total_upstream * 100:.1f}%` |"
 )
 
-core_rss = 0.0
-for row in rows:
-    cells = [cell.strip() for cell in row.split("|")]
-    if cells[1] in {"Postgres", "PostgREST", "Auth"}:
-        rss = row_mib(row, 6)
-        if rss is not None:
-            core_rss += rss
-
 release_summary = (
     f"For the latest published Linux ARM64 release set ({len(rows)} services), upstream images\n"
     f"total **{total_upstream:.1f} MiB** compressed; the slim set totals **{total_slim:.1f} MiB** "
     f"(**{saved / total_upstream * 100:.1f}%**\n"
-    "smaller — exact numbers below). Every published service also ships measured\n"
-    "steady-state RSS and idle-CPU numbers, and a minimal core stack (postgres +\n"
-    f"auth + postgrest) idles at roughly **{core_rss:.0f} MiB of RSS per stack** with near-zero\n"
-    "idle CPU."
+    "smaller — exact numbers below). Every published service also has measured\n"
+    "steady-state RSS and idle-CPU numbers. These isolated service smoke\n"
+    "measurements do not establish complete Dockerless CLI-stack behavior or a\n"
+    "25-parallel-stack capacity result."
 )
 
 def splice(path, marker, content):

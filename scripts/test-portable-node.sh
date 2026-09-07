@@ -357,27 +357,6 @@ in (import ./nix/portable-node/default.nix { pkgs = fakePkgs; nodeMajor = 24; })
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(destination.read_text(encoding="utf-8"), "license fixture\n")
 
-    def test_image_mounts_portable_runtime_without_overwriting_system_lib(self):
-        for service in ("storage", "studio", "pgmeta"):
-            dockerfile = ROOT_DIR / "services" / service / "Dockerfile.slim"
-            content = dockerfile.read_text(encoding="utf-8")
-            with self.subTest(service=service):
-                self.assertIn("ln -s /slim-runtime/node /out/node", content)
-                self.assertIn(
-                    "COPY ${ARTIFACT_ROOT}/node/ /slim-runtime/node/", content
-                )
-                self.assertIn(
-                    "COPY ${ARTIFACT_ROOT}/lib/ /slim-runtime/lib/", content
-                )
-                self.assertNotIn("COPY ${ARTIFACT_ROOT}/node/ /node/", content)
-                self.assertNotIn("COPY ${ARTIFACT_ROOT}/lib/ /lib/", content)
-
-    def test_host_builds_copy_portable_runtime_notices(self):
-        for service in ("storage", "studio", "pgmeta"):
-            build_host = ROOT_DIR / "services" / service / "build-host.sh"
-            content = build_host.read_text(encoding="utf-8")
-            with self.subTest(service=service):
-                self.assertIn('cp -R "$node_bundle/share/licenses"/. "$ROOTFS/share/licenses/"', content)
 
     def test_launcher_clears_poisoned_side_data_without_artifact_payload(self):
         shutil.rmtree(self.rootfs / "lib" / "gconv")

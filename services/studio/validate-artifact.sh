@@ -45,7 +45,7 @@ except (OSError, json.JSONDecodeError) as error:
     raise SystemExit(f"Studio artifact manifest cannot be read: {error}")
 
 expected_commands = {
-    "entrypoint": ["/node/bin/node", "/app/apps/studio/docker-entrypoint.mjs"],
+    "entrypoint": ["/slim-runtime/bin/studio"],
     "cmd": ["/node/bin/node", "apps/studio/server.js"],
 }
 
@@ -54,7 +54,12 @@ for name, expected in expected_commands.items():
     if not isinstance(command, list) or command != expected:
         raise SystemExit(f"manifest {name} mismatch: expected {expected}")
     for value in expected:
-        candidate = root / value.lstrip("/") if value.startswith("/") else root / "app" / value
+        if value.startswith("/slim-runtime/"):
+            candidate = root / value.removeprefix("/slim-runtime/")
+        elif value.startswith("/"):
+            candidate = root / value.lstrip("/")
+        else:
+            candidate = root / "app" / value
         try:
             resolved = candidate.resolve(strict=True)
         except FileNotFoundError:

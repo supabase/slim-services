@@ -1,6 +1,7 @@
-# Repo-owned portable Nix package for Analytics / Logflare (darwin
-# host-native artifacts). Same pattern as services/realtime/nix/default.nix;
-# see that file and NIX_PORTABLE_ARTIFACT_PLAYBOOK.md for the packaging notes.
+# Repo-owned portable Nix package for Analytics / Logflare. The package is
+# imported with the exact upstream source and dependency hashes for the
+# requested release; see NIX_PORTABLE_ARTIFACT_PLAYBOOK.md for the packaging
+# notes.
 #
 # Logflare-specific packaging:
 # - Four in-tree rustler NIF crates (native/*), members of a cargo workspace
@@ -20,43 +21,35 @@
 #   Rust binary manifest come from separate immutable source pins, while the
 #   shared stdenv remains responsible for linking the output.
 {
-  pkgs ? import (fetchTarball {
-    url = "https://github.com/NixOS/nixpkgs/archive/ac62194c3917d5f474c1a844b6fd6da2db95077d.tar.gz";
-    sha256 = "0v6bd1xk8a2aal83karlvc853x44dg1n4nk08jg3dajqyy0s98np";
-  }) { },
-  runtimeNixpkgsSrc ? fetchTarball {
-    url = "https://github.com/NixOS/nixpkgs/archive/b7c2ada94fe99c15b0dbcf4d11fd7850b957a436.tar.gz";
-    sha256 = "1hw875y585lkhygn09kcbmdgm58b0nb5k0d38qwlvfngprsnp2r0";
-  },
-  rustOverlaySrc ? fetchTarball {
-    url = "https://github.com/oxalica/rust-overlay/archive/57a23bfaf4f7017267294b161175db1e32eb1c85.tar.gz";
-    sha256 = "1fq4csyi5rsn1k1krz2hzp2sdwrbkkrwji6lsskj5b1f3hx7mx4d";
-  },
+  pkgs,
+  runtimeNixpkgsSrc,
+  rustOverlaySrc,
   serviceVersion ? null,
   mixDepsHash ? null,
   explorerNifHash ? null,
   sqlFmtNifHash ? null,
+  src ? throw "analytics requires an explicit source path",
+  upstreamDockerfile ? builtins.readFile "${src}/Dockerfile",
+  portableBeam ? ../../../nix/portable-beam,
 }:
 let
   lib = pkgs.lib;
-  portableBeam =
-    if builtins.pathExists ./portable-beam then ./portable-beam else ../../../nix/portable-beam;
-  upstreamDockerfile = builtins.readFile ../Dockerfile;
+  sourceRoot = src;
   upstreamDockerfileLines = lib.splitString "\n" upstreamDockerfile;
-  upstreamDockerArg = name:
+  upstreamDockerArg =
+    name:
     let
       prefix = "ARG ${name}=";
-      line = lib.findFirst
-        (candidate: lib.hasPrefix prefix candidate)
-        (throw "upstream Analytics Dockerfile does not declare ${prefix}<version>")
-        upstreamDockerfileLines;
+      line =
+        lib.findFirst (candidate: lib.hasPrefix prefix candidate)
+          (throw "upstream Analytics Dockerfile does not declare ${prefix}<version>")
+          upstreamDockerfileLines;
     in
     lib.removePrefix prefix line;
   upstreamElixirVersion = upstreamDockerArg "ELIXIR_VERSION";
   upstreamOtpVersion = upstreamDockerArg "OTP_VERSION";
   upstreamRustVersion = upstreamDockerArg "RUST_VERSION";
-  elixirGeneration = lib.concatStringsSep "."
-    (lib.take 2 (lib.splitVersion upstreamElixirVersion));
+  elixirGeneration = lib.concatStringsSep "." (lib.take 2 (lib.splitVersion upstreamElixirVersion));
   otpGeneration = lib.head (lib.splitVersion upstreamOtpVersion);
   runtimeDefinitions = "${runtimeNixpkgsSrc}/pkgs/development/interpreters";
   erlangDefinition = "${runtimeDefinitions}/erlang/${otpGeneration}.nix";
@@ -64,11 +57,15 @@ let
   erlang =
     if builtins.pathExists erlangDefinition then
       let
-        genericBuilder = versionArgs:
-          import "${runtimeDefinitions}/erlang/generic-builder.nix" (versionArgs // {
-            systemdSupport = false;
-            wxSupport = pkgs.stdenv.isDarwin;
-          });
+        genericBuilder =
+          versionArgs:
+          import "${runtimeDefinitions}/erlang/generic-builder.nix" (
+            versionArgs
+            // {
+              systemdSupport = false;
+              wxSupport = pkgs.stdenv.isDarwin;
+            }
+          );
       in
       pkgs.callPackage (import erlangDefinition genericBuilder) {
         libx11 = pkgs.xorg.libX11;
@@ -77,16 +74,17 @@ let
       }
     else
       throw "runtime definitions do not provide OTP ${otpGeneration} required by Analytics' upstream Dockerfile";
-  derivedHashesRaw = builtins.getEnv "SLIM_NIX_DERIVED_HASHES";
-  derivedHashes =
-    if derivedHashesRaw == "" then { } else builtins.fromJSON derivedHashesRaw;
   baseBeamPackages = pkgs.beam.packagesWith erlang;
-  beamPackages = baseBeamPackages.extend (_final: previous: {
-    # Rebar's package-level Common Test suite is unrelated to the service
-    # artifact and has a known temp-directory collision when CI builds several
-    # BEAM targets concurrently. Service compilation and smoke tests stay on.
-    rebar3 = previous.rebar3.overrideAttrs (_: { doCheck = false; });
-  });
+  beamPackages = baseBeamPackages.extend (
+    _final: previous: {
+      # Rebar's package-level Common Test suite is unrelated to the service
+      # artifact and has a known temp-directory collision when CI builds several
+      # BEAM targets concurrently. Service compilation and smoke tests stay on.
+      rebar3 = previous.rebar3.overrideAttrs (_: {
+        doCheck = false;
+      });
+    }
+  );
   elixir =
     if builtins.pathExists elixirDefinition then
       beamPackages.callPackage elixirDefinition {
@@ -100,26 +98,26 @@ let
     locales = [ "en_US.UTF-8/UTF-8" ];
   };
   rustPackages = pkgs.extend (import rustOverlaySrc);
-  rustToolchain = lib.attrByPath
-    [ "rust-bin" "stable" upstreamRustVersion "minimal" ]
-    (throw "Rust overlay does not provide ${upstreamRustVersion} required by Analytics' upstream Dockerfile")
-    rustPackages;
+  rustToolchain =
+    lib.attrByPath [ "rust-bin" "stable" upstreamRustVersion "minimal" ]
+      (throw "Rust overlay does not provide ${upstreamRustVersion} required by Analytics' upstream Dockerfile")
+      rustPackages;
   fetchMixDeps = beamPackages.fetchMixDeps.override { inherit elixir; };
   mixRelease = beamPackages.mixRelease.override { inherit elixir fetchMixDeps; };
 
   pname = "logflare";
   version =
     if serviceVersion == null then
-      lib.removeSuffix "\n" (builtins.readFile ../VERSION)
+      lib.removeSuffix "\n" (builtins.readFile "${sourceRoot}/VERSION")
     else
       serviceVersion;
 
-  src = lib.cleanSourceWith {
-    src = ../.;
+  cleanedSrc = lib.cleanSourceWith {
+    src = sourceRoot;
     filter =
       path: type:
       let
-        rel = lib.removePrefix (toString ../. + "/") (toString path);
+        rel = lib.removePrefix (toString sourceRoot + "/") (toString path);
       in
       # docs/ stays: compiling docs_view.ex copies docs/docs.logflare.com
       # into priv/docs.
@@ -132,7 +130,8 @@ let
   # crates.io /api/v1 403s curl's default UA. Remap the fetch URL only —
   # extraRegistries writes a second crates-io source and cargo rejects it.
   importCargoLock = pkgs.rustPlatform.importCargoLock.override {
-    fetchurl = args:
+    fetchurl =
+      args:
       let
         url = args.url or "";
         api = "https://crates.io/api/v1/crates/";
@@ -146,16 +145,17 @@ let
   };
 
   cargoDeps = importCargoLock {
-    lockFile = ../Cargo.lock;
+    lockFile = "${sourceRoot}/Cargo.lock";
   };
 
   # Mix writes a stable textual lockfile format. Resolve the exact Hex package
   # versions from the checked-out release so their precompiled NIF asset names
   # advance with future releases instead of requiring a packaging edit.
-  lockedHexVersion = package:
+  lockedHexVersion =
+    package:
     let
       marker = "\"${package}\": {:hex, :${package}, \"";
-      parts = lib.splitString marker (builtins.readFile ../mix.lock);
+      parts = lib.splitString marker (builtins.readFile "${sourceRoot}/mix.lock");
     in
     if builtins.length parts != 2 then
       throw "could not resolve ${package} from mix.lock"
@@ -173,46 +173,38 @@ let
       "2.15"
     else
       throw "Analytics precompiled NIF selection is not audited for OTP ${otpGeneration}";
-  rustlerTarget = {
-    "aarch64-darwin" = "aarch64-apple-darwin";
-    "aarch64-linux" = "aarch64-unknown-linux-gnu";
-    "x86_64-linux" = "x86_64-unknown-linux-gnu";
-  }.${pkgs.stdenv.hostPlatform.system}
-    or (throw "no rustler_precompiled pin for ${pkgs.stdenv.hostPlatform.system}");
+  rustlerTarget =
+    {
+      "aarch64-darwin" = "aarch64-apple-darwin";
+      "aarch64-linux" = "aarch64-unknown-linux-gnu";
+      "x86_64-linux" = "x86_64-unknown-linux-gnu";
+    }
+    .${pkgs.stdenv.hostPlatform.system}
+      or (throw "no rustler_precompiled pin for ${pkgs.stdenv.hostPlatform.system}");
 
   explorerNifName = "libexplorer-v${explorerVersion}-nif-${rustlerNifVersion}-${rustlerTarget}.so.tar.gz";
   sqlFmtNifName = "libsql_fmt_nif-v${sqlFmtVersion}-nif-${rustlerNifVersion}-${rustlerTarget}.so.tar.gz";
 
   explorerNif = pkgs.fetchurl {
     url = "https://github.com/elixir-explorer/explorer/releases/download/v${explorerVersion}/${explorerNifName}";
-    hash =
-      if explorerNifHash != null then
-        explorerNifHash
-      else
-        derivedHashes.explorer_nif_hash or lib.fakeHash;
+    hash = if explorerNifHash != null then explorerNifHash else lib.fakeHash;
   };
   sqlFmtNif = pkgs.fetchurl {
     url = "https://github.com/akoutmos/sql_fmt/releases/download/v${sqlFmtVersion}/${sqlFmtNifName}";
-    hash =
-      if sqlFmtNifHash != null then
-        sqlFmtNifHash
-      else
-        derivedHashes.sql_fmt_nif_hash or lib.fakeHash;
+    hash = if sqlFmtNifHash != null then sqlFmtNifHash else lib.fakeHash;
   };
 
   mixDeps = fetchMixDeps {
     pname = "mix-deps-${pname}";
-    inherit version src;
-    hash =
-      if mixDepsHash != null then
-        mixDepsHash
-      else
-        derivedHashes.mix_deps_hash or lib.fakeHash;
+    src = cleanedSrc;
+    inherit version;
+    hash = if mixDepsHash != null then mixDepsHash else lib.fakeHash;
     mixEnv = "prod";
   };
 
   release = mixRelease {
-    inherit pname version src;
+    inherit pname version;
+    src = cleanedSrc;
     mixEnv = "prod";
     mixFodDeps = mixDeps;
 
@@ -257,7 +249,11 @@ in
     nativeBuildInputs = [
       pkgs.python3
       pkgs.file
-    ] ++ lib.optionals pkgs.stdenv.isLinux [ pkgs.patchelf pkgs.binutils ];
+    ]
+    ++ lib.optionals pkgs.stdenv.isLinux [
+      pkgs.patchelf
+      pkgs.binutils
+    ];
 
     buildPhase = ''
       rootfs="$out"
@@ -265,6 +261,11 @@ in
 
       cp -R ${release}/. "$rootfs/"
       chmod -R u+w "$rootfs"
+
+      # Keep service-owned preparation beside the release launchers so native
+      # consumers and derived images execute the same migration contract.
+      cp ${../overlay/prepare.sh} "$rootfs/bin/prepare"
+      chmod 0755 "$rootfs/bin/prepare"
 
       rm -rf "$rootfs"/erts-*/src "$rootfs"/erts-*/doc "$rootfs"/erts-*/man \
              "$rootfs"/erts-*/include "$rootfs"/erts-*/lib/internal
@@ -345,7 +346,8 @@ in
       chmod "$mode" "$envsh_tmp"
       mv -f "$envsh_tmp" "$envsh"
       trap - EXIT HUP INT TERM
-    '' + lib.optionalString pkgs.stdenv.isLinux ''
+    ''
+    + lib.optionalString pkgs.stdenv.isLinux ''
       # Shared BEAM fixup bundles the matching glibc family, relocates the
       # non-glibc closure, wraps dynamic ERTS/port ELFs, and audits with the
       # bundled loader. Darwin remains on the unchanged branch below.
@@ -358,7 +360,8 @@ in
       export PORTABLE_BEAM_LOCALE_LIB="${glibcLocalesMinimal}/lib/locale"
       export PORTABLE_BEAM_LAUNCHER="${portableBeam}/beam-launcher.sh"
       ${builtins.readFile "${portableBeam}/beam-linux-fixup.sh"}
-    '' + lib.optionalString pkgs.stdenv.isDarwin ''
+    ''
+    + lib.optionalString pkgs.stdenv.isDarwin ''
       rootfs="$out"
       dylib_dir="$rootfs/dylib"
       mkdir -p "$dylib_dir"

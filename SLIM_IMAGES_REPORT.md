@@ -117,23 +117,10 @@ Measured steady-state RSS with the pass-3 runtime profiles:
 
 ## Remaining Work
 
-1. Run the first full CI pass of `.github/workflows/service-artifacts.yml`
-   (all promoted services x linux-arm64/linux-amd64/darwin-arm64; builds the host-native
-   artifact, derives + smokes the Linux image, host-process smokes the
-   artifact, uploads archive + SHA256SUMS). It verifies the two cells that
-   cannot be built locally from macOS: the Node services' Linux artifacts and
-   the linux-amd64 BEAM/Node cells.
-2. Table regeneration is automated: every service-artifacts.yml run ends
-   with an update-tables job that merges fresh rows into the results tables
-   and opens a docs PR when numbers changed. Rows for
-   storage/pgmeta/postgrest/postgres/studio refresh on their first full CI
-   pass (edge-runtime rows also refresh from its dedicated workflow artifacts).
-3. CLI-level follow-ups surfaced by the runtime measurements: run `analytics`
-   and `studio` as shared singletons (or default-off) for parallel stacks;
-   wire memory limits through `container.HostConfig.Resources`.
-4. Revisit PostgREST once a stable upstream static ARM64 artifact is published.
-5. Storage module-level pruning of AWS/Smithy/Iceberg surfaces — the object
-   round-trip smoke added in pass 3 is the safety net it was waiting for.
-6. Further analytics RSS reduction requires upstream boot-time feature flags
-   (Broadway/ETS allocations dominate its ~500 MiB idle footprint).
-7. Keep each `services/<service>/REPORT.md` current when service recipes change.
+1. Complete the CLI-side native composition and integration: download and
+   verify the archives, resolve the artifact layout, configure the process
+   manager and ports, and run the full Dockerless service stack end to end.
+2. Measure realistic workload and concurrency behavior for parallel stacks.
+   The current service-level smoke observations do not establish stack
+   capacity or validate the ~25-stack target.
+3. Keep each `services/<service>/REPORT.md` current when service recipes change.

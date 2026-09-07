@@ -368,16 +368,16 @@ def test_workflow_downloads_and_verifies_snapshot_before_recipe_build_consumers(
 
     service_release_nix = next(step for step in release_steps if step.get("name") == "Install Nix")
     service_release_nix_cache = next(step for step in release_steps if step.get("name") == "Restore/save Nix store cache")
-    assert_true("external-source" in service_release_nix.get("if", ""), "release build does not install Nix for external-source")
-    assert_true("external-source" in service_release_nix_cache.get("if", ""), "release build does not cache Nix for external-source")
+    assert_true(not service_release_nix.get("if"), "all release targets need Nix for archive packaging")
+    assert_true(not service_release_nix_cache.get("if"), "all release targets need the Nix cache")
     source_checkout = next(step for step in release_steps if step.get("name") == "Checkout requested upstream release")
     assert_true("artifact_source == 'source'" in source_checkout.get("if", "") and "external-source" not in source_checkout.get("if", ""), "external-source must not checkout a source tree")
 
     artifact_nix = next(step for step in artifacts_steps if step.get("name") == "Install Nix")
-    assert_true("steps.vars.outputs.artifact_backend != 'upstream-archive'" in artifact_nix.get("if", ""), "artifact build Nix condition changed")
+    assert_true(artifact_nix.get("if") == "steps.artifact-cache.outputs.cache-hit != 'true'", "uncached artifacts need Nix for packaging")
     assert_true("matrix.external != true" not in artifact_nix.get("if", ""), "external artifact source incorrectly skips Nix")
     artifact_nix_cache = next(step for step in artifacts_steps if step.get("name") == "Restore/save Nix store cache")
-    assert_true("steps.vars.outputs.artifact_backend != 'upstream-archive'" in artifact_nix_cache.get("if", ""), "artifact cache Nix condition changed")
+    assert_true(artifact_nix_cache.get("if") == "steps.artifact-cache.outputs.cache-hit != 'true'", "uncached artifacts need the Nix cache")
     assert_true("matrix.external != true" not in artifact_nix_cache.get("if", ""), "external artifact source incorrectly skips Nix cache")
 
 
@@ -399,7 +399,7 @@ def test_repository_checks_runs_dynamic_and_external_contracts():
         "scripts/test-upstream-artifact.sh",
         "scripts/test-oci-mirror.sh",
         "scripts/test-upstream-runtime.sh",
-        "scripts/test-external-source-build.sh",
+        "scripts/test-nix-release.sh",
         "scripts/test-dockerhub-release.sh",
         "scripts/test-portable-audit.sh",
         "scripts/test-portable-node.sh",

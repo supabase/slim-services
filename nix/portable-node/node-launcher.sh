@@ -15,8 +15,8 @@ case "$0" in
   */*) NODE_BIN_DIR="${0%/*}"; [ -n "$NODE_BIN_DIR" ] || NODE_BIN_DIR=/ ;;
   *) NODE_BIN_DIR=. ;;
 esac
-NODE_ROOT="$(CDPATH= cd "$NODE_BIN_DIR/.." && pwd -P)"
-ROOT="$(CDPATH= cd "$NODE_ROOT/.." && pwd -P)"
+NODE_ROOT="$(CDPATH='' cd "$NODE_BIN_DIR/.." && pwd -P)"
+ROOT="$(CDPATH='' cd "$NODE_ROOT/.." && pwd -P)"
 
 LOADER_NAME="@LOADER_NAME@"
 

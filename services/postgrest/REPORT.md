@@ -112,7 +112,7 @@ We also validated upstream PR #4193 artifacts from GitHub Actions:
 ## Host-Native darwin-arm64 Artifact (2026-07)
 
 Decision: consume the upstream macOS release binary instead of building from
-source (the HOST_NATIVE_PLAN.md fallback). A from-source GHC build on darwin
+source. A from-source GHC build on darwin
 without upstream's cachix cache costs hours for a binary upstream already
 publishes (and the CLI already consumes).
 
