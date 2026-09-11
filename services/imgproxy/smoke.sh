@@ -59,7 +59,9 @@ trap 'set +e; cleanup_smoke; rm -f "$smoke_log"' EXIT
 if [[ -n "$artifact_rootfs" ]]; then
   [[ -x "$artifact_rootfs/bin/imgproxy" ]] || fail "imgproxy artifact binary not found: $artifact_rootfs/bin/imgproxy"
   port="$(free_port)"
-  host_env=(IMGPROXY_BIND="127.0.0.1:$port" IMGPROXY_ALLOW_ORIGIN="*")
+  # The native smoke serves its source fixture from localhost; allow that
+  # loopback address only for this test harness, not in the image defaults.
+  host_env=(IMGPROXY_BIND="127.0.0.1:$port" IMGPROXY_ALLOW_ORIGIN="*" IMGPROXY_ALLOW_LOOPBACK_SOURCE_ADDRESSES=true)
   start_host_service imgproxy "$smoke_log" "${host_env[@]}" -- "$artifact_rootfs/bin/imgproxy"
   wait_for_http_code_host "http://127.0.0.1:$port/health" 200 30 "$host_service_pid" "$smoke_log" || fail "imgproxy artifact did not become healthy"
   run_checker "http://127.0.0.1:$port"

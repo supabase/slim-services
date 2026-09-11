@@ -85,10 +85,18 @@ def test_registry_has_one_canonical_descriptor_path_and_external_defaults_are_of
         expected_artifact_source = "external-source" if service == "imgproxy" else "upstream-archive"
         assert_true(entry["artifact_source"] == expected_artifact_source, service)
         assert_true(entry["image_release"] == "mirror", service)
-        assert_true(entry["poll"] is False, service)
+        assert_true(entry["poll"] is (service == "imgproxy"), service)
         if service == "imgproxy":
+            assert_true(entry["release_source"] == "github-compose", "imgproxy Compose release source")
             assert_true(entry["image_repository"] == "imgproxy/imgproxy", "imgproxy registry repository")
             assert_true(entry["tag_pattern"] == r"^v[0-9]+\.[0-9]+\.[0-9]+$", "imgproxy exact v tag pattern")
+            assert_true(entry["compose_pin"] == {
+                "repository": "supabase/storage",
+                "ref": "master",
+                "path": ".docker/docker-compose-infra.yml",
+                "service": "imgproxy",
+                "image_repository": "darthsim/imgproxy",
+            }, "imgproxy Storage Compose pin")
 
 def test_poll_validation_rejects_descriptor_dispatch():
     poll = ROOT / "scripts" / "poll-service-releases.sh"

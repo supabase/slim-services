@@ -94,12 +94,20 @@
     },
     "imgproxy": {
       "repository": "imgproxy/imgproxy",
+      "release_source": "github-compose",
       "artifact_source": "external-source",
       "image_release": "mirror",
       "image_repository": "imgproxy/imgproxy",
       "tag_pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$",
       "external_release_descriptor": "services/imgproxy/external-release.json",
-      "poll": false
+      "compose_pin": {
+        "repository": "supabase/storage",
+        "ref": "master",
+        "path": ".docker/docker-compose-infra.yml",
+        "service": "imgproxy",
+        "image_repository": "darthsim/imgproxy"
+      },
+      "poll": true
     }
   }
 }
