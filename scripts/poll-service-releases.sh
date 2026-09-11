@@ -68,9 +68,25 @@ for service, config in services.items():
     release_floor = config.get("release_floor")
     release_source = config.get("release_source", "github")
     release_lines = config.get("release_lines")
+    if release_source == "github-compose":
+        pin = config.get("compose_pin")
+        if not isinstance(pin, dict):
+            raise SystemExit(f"github-compose release source requires compose_pin for {service}")
+        for field in ("repository", "ref", "path", "service", "image_repository"):
+            if not isinstance(pin.get(field), str) or not pin[field]:
+                raise SystemExit(f"compose_pin.{field} must be a non-empty string for {service}")
+        if not re.fullmatch(r"[^/]+/[^/]+", pin["repository"]):
+            raise SystemExit(f"invalid compose_pin.repository for {service}: {pin['repository']}")
+        if not re.fullmatch(r"[^/]+/[^/]+", pin["image_repository"]):
+            raise SystemExit(f"invalid compose_pin.image_repository for {service}: {pin['image_repository']}")
+        if config.get("poll") is not True:
+            raise SystemExit(f"github-compose service must set poll=true for {service}")
+    elif config.get("compose_pin") is not None:
+        raise SystemExit(f"compose_pin requires github-compose release source for {service}")
     if (
         config.get("poll") is True
         and not config.get("external_release_descriptor")
+        and release_source != "github-compose"
         and release_lines is None
     ):
         if not isinstance(release_floor, str) or not re.fullmatch(tag_pattern, release_floor):
@@ -110,7 +126,7 @@ for service, config in services.items():
                 raise SystemExit(
                     f"release_lines[{index}].release_floor must match the service tag_pattern for {service}: {line_floor}"
                 )
-    if release_source not in {"github", "dockerhub"}:
+    if release_source not in {"github", "dockerhub", "github-compose"}:
         raise SystemExit(f"unsupported release source for {service}: {release_source}")
     artifact_source = config.get("artifact_source", "source")
     if artifact_source not in {"source", "upstream-archive", "external-source"}:
@@ -153,7 +169,7 @@ for service, config in services.items():
     if descriptor is not None:
         if not isinstance(descriptor, str) or not descriptor:
             raise SystemExit(f"external_release_descriptor must be a non-empty path for {service}")
-        if config.get("poll") is True:
+        if config.get("poll") is True and release_source != "github-compose":
             raise SystemExit(f"external descriptor service must set poll=false for {service}")
         descriptor_path = root / descriptor
         if not descriptor_path.is_file() or descriptor_path.is_symlink():
@@ -180,7 +196,10 @@ with open(config_file, encoding="utf-8") as fh:
 for service, config in services.items():
     if selected_service and service != selected_service:
         continue
-    if config.get("poll") is True and not config.get("external_release_descriptor"):
+    if config.get("poll") is True and (
+        not config.get("external_release_descriptor")
+        or config.get("release_source") == "github-compose"
+    ):
         print(
             service,
             config["repository"],
@@ -189,6 +208,7 @@ for service, config in services.items():
             config.get("release_source", "github"),
             config.get("image_repository", "-"),
             json.dumps(config.get("release_lines", []), separators=(",", ":")),
+            json.dumps(config.get("compose_pin", {}), separators=(",", ":")),
             sep="\t",
         )
 PY
@@ -220,10 +240,47 @@ print(
 PY
 )"
 
-while IFS=$'\t' read -r service upstream_repository tag_pattern release_floor release_source upstream_image_repository release_lines_json; do
+while IFS=$'\t' read -r service upstream_repository tag_pattern release_floor release_source upstream_image_repository release_lines_json compose_pin_json; do
   service_dispatch_count=0
   versions=""
-  if [[ "$release_source" == "dockerhub" ]]; then
+  if [[ "$release_source" == "github-compose" ]]; then
+    command -v ruby >/dev/null 2>&1 || {
+      printf 'required command not found: ruby\n' >&2
+      exit 1
+    }
+    compose_endpoint="$(
+      COMPOSE_PIN="$compose_pin_json" python3 - <<'PY'
+import json
+import os
+import urllib.parse
+
+pin = json.loads(os.environ["COMPOSE_PIN"])
+repository = urllib.parse.quote(pin["repository"], safe="/")
+path = urllib.parse.quote(pin["path"], safe="/")
+ref = urllib.parse.quote(pin["ref"], safe="")
+print(f"repos/{repository}/contents/{path}?ref={ref}")
+PY
+    )"
+    if ! versions="$(
+      gh api "$compose_endpoint" \
+        --jq '.content' | base64 --decode | \
+        COMPOSE_PIN="$compose_pin_json" TAG_PATTERN="$tag_pattern" ruby -ryaml -rjson -e '
+          pin = JSON.parse(ENV.fetch("COMPOSE_PIN"))
+          data = YAML.safe_load(STDIN.read, aliases: true)
+          service = data.fetch("services").fetch(pin.fetch("service"))
+          image = service.fetch("image")
+          prefix = "#{pin.fetch("image_repository")}:"
+          abort("compose image #{image.inspect} does not match #{prefix.inspect}") unless image.start_with?(prefix)
+          tag = image.delete_prefix(prefix)
+          pattern = Regexp.new("\\A(?:#{ENV.fetch("TAG_PATTERN")})\\z")
+          abort("compose image tag #{tag.inspect} does not match #{ENV.fetch("TAG_PATTERN")}") unless pattern.match?(tag)
+          puts tag
+        '
+    )"; then
+      printf 'could not resolve pinned Compose image for %s; continuing\n' "$service" >&2
+      continue
+    fi
+  elif [[ "$release_source" == "dockerhub" ]]; then
     if ! versions="$(python3 - \
       "$upstream_image_repository" \
       "$tag_pattern" \

@@ -344,8 +344,10 @@ gh workflow run service-release.yml \
 
 `.github/workflows/poll-service-releases.yml` polls stable upstream releases
 and Docker Hub tags hourly and dispatches independent service-release runs for
-missing eligible version tags, oldest first. Each polled service declares a
-`release_floor` at the first version published by this repository; the poller
+missing eligible version tags, oldest first. Each backlog-polled service uses
+its configured adoption boundary; GitHub release services declare a
+`release_floor` at the first version published by this repository, while
+imgproxy follows Storage's pinned development/test image. The poller
 reconciles every matching stable upstream release from that adoption boundary
 onward. It dispatches at most three versions per service per poll while keeping
 no more than twelve release workflows active across the repository. Active
@@ -362,7 +364,11 @@ floors of `15.14.1.159` and `17.6.1.159`; OrioleDB, architecture-specific, and
 other suffixed release tags are ignored.
 
 Mailpit and Vector are the non-polled upstream-archive services. Imgproxy is a
-non-polled source-built Nix/external-source service. Their release workflows
+source-built Nix/external-source service whose hourly poll follows the imgproxy
+development/test image pinned by `supabase/storage` master in
+`.docker/docker-compose-infra.yml` (currently `darthsim/imgproxy:v3.26.0`).
+This follows Storage's development/test pin and does not assert a production
+deployment version. The external release workflows
 accept an explicit version, resolve the versionless descriptor against GitHub
 and the independent OCI repository at plan time, and publish one run-scoped
 snapshot plus digest for every build, mirror, and release consumer. The recipe

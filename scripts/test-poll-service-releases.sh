@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 python3 - "$ROOT_DIR" <<'PY'
 import datetime
+import base64
 import http.server
 import json
 import os
@@ -27,6 +28,7 @@ class ReleasePollerTest(unittest.TestCase):
         self.fake_bin = self.directory / "bin"
         self.fake_bin.mkdir()
         self.trace = self.directory / "gh-trace"
+        self.api_trace = self.directory / "gh-api-trace"
         self.upstream_releases = self.directory / "upstream-releases"
         self.upstream_releases.write_text(
             "v2.129.0\nv2.128.3\nv2.128.2\nv2.128.1\nv2.128.0\n",
@@ -59,6 +61,7 @@ class ReleasePollerTest(unittest.TestCase):
             "case \"$1\" in\n"
             "  api)\n"
             "    case \"$*\" in\n"
+            "      *contents*) printf '%s\\n' \"$*\" >> \"$FAKE_API_TRACE\"; [ \"${FAKE_COMPOSE_FAILURE:-0}\" = 1 ] && exit 1; printf '%s\\n' \"$FAKE_COMPOSE_CONTENT\" ;;\n"
             "      *supabase/slim-services/releases*) cat \"$FAKE_PUBLISHED_RELEASES\" ;;\n"
             "      *) cat \"$FAKE_UPSTREAM_RELEASES\" ;;\n"
             "    esac\n"
@@ -77,6 +80,12 @@ class ReleasePollerTest(unittest.TestCase):
             encoding="utf-8",
         )
         fake_gh.chmod(0o755)
+        compose = (
+            "services:\n"
+            "  imgproxy:\n"
+            "    image: darthsim/imgproxy:v3.26.0\n"
+        ).encode()
+        self.compose_content = base64.b64encode(compose).decode()
 
     def tearDown(self):
         self.temporary_directory.cleanup()
@@ -87,6 +96,7 @@ class ReleasePollerTest(unittest.TestCase):
         max_dispatches_per_service="1",
         max_active_releases="12",
         docker_hub_api_base=None,
+        compose_failure=False,
     ):
         environment = {
             **os.environ,
@@ -99,6 +109,9 @@ class ReleasePollerTest(unittest.TestCase):
             "FAKE_PUBLISHED_RELEASES": str(self.published),
             "FAKE_RUNS_JSON": str(self.runs),
             "FAKE_UPSTREAM_RELEASES": str(self.upstream_releases),
+            "FAKE_COMPOSE_CONTENT": self.compose_content,
+            "FAKE_COMPOSE_FAILURE": "1" if compose_failure else "0",
+            "FAKE_API_TRACE": str(self.api_trace),
         }
         if max_dispatches_per_service is not None:
             environment["POLL_MAX_DISPATCHES_PER_SERVICE"] = str(
@@ -116,6 +129,98 @@ class ReleasePollerTest(unittest.TestCase):
             env=environment,
             check=False,
         )
+
+    def configure_compose_pin(self):
+        self.config.write_text(
+            json.dumps(
+                {
+                    "services": {
+                        "imgproxy": {
+                            "repository": "imgproxy/imgproxy",
+                            "release_source": "github-compose",
+                            "tag_pattern": r"^v[0-9]+\.[0-9]+\.[0-9]+$",
+                            "compose_pin": {
+                                "repository": "supabase/storage",
+                                "ref": "master",
+                                "path": ".docker/docker-compose-infra.yml",
+                                "service": "imgproxy",
+                                "image_repository": "darthsim/imgproxy",
+                            },
+                            "poll": True,
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    def test_compose_pin_dispatches_only_the_pinned_storage_image(self):
+        self.configure_compose_pin()
+        result = self.run_poller(service="imgproxy")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            self.trace.read_text(encoding="utf-8").splitlines(),
+            [
+                "workflow run service-release.yml --repo supabase/slim-services "
+                "--ref main -f service=imgproxy -f version=v3.26.0 -f force=false"
+            ],
+        )
+        self.assertEqual(
+            self.api_trace.read_text(encoding="utf-8").strip(),
+            "api repos/supabase/storage/contents/.docker/docker-compose-infra.yml?ref=master --jq .content",
+        )
+
+    def test_published_pinned_version_is_not_dispatched(self):
+        self.configure_compose_pin()
+        self.published.write_text("imgproxy-v3.26.0\n", encoding="utf-8")
+        result = self.run_poller(service="imgproxy")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(self.trace.exists())
+
+    def test_active_pinned_version_is_not_dispatched(self):
+        self.configure_compose_pin()
+        self.runs.write_text(json.dumps([{"displayTitle": "Release imgproxy v3.26.0", "status": "in_progress"}]), encoding="utf-8")
+        result = self.run_poller(service="imgproxy")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(self.trace.exists())
+
+    def test_malformed_or_multiline_compose_image_is_not_dispatched(self):
+        self.configure_compose_pin()
+        for image in ("other/imgproxy:v3.26.0", None, "darthsim/imgproxy:latest", "darthsim/imgproxy:v3.27.0-rc1", "darthsim/imgproxy:v3.26.0\nother"):
+            image_yaml = "" if image is None else json.dumps(image)
+            self.compose_content = base64.b64encode((f"services:\n  imgproxy:\n    {('image: ' + image_yaml) if image is not None else 'environment: {}'}\n").encode()).decode()
+            result = self.run_poller(service="imgproxy")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse(self.trace.exists())
+
+    def test_compose_pin_api_failure_skips_without_dispatch(self):
+        self.configure_compose_pin()
+        result = self.run_poller(service="imgproxy", compose_failure=True)
+        self.assertEqual(result.returncode, 0)
+        self.assertFalse(self.trace.exists())
+        self.assertIn("pinned Compose image", result.stderr)
+
+    def test_validation_rejects_missing_compose_pin(self):
+        config = {
+            "services": {
+                "imgproxy": {
+                    "repository": "imgproxy/imgproxy",
+                    "release_source": "github-compose",
+                    "tag_pattern": r"^v[0-9]+\.[0-9]+\.[0-9]+$",
+                    "poll": True,
+                }
+            }
+        }
+        self.config.write_text(json.dumps(config), encoding="utf-8")
+        result = subprocess.run(
+            [str(POLLER), "--validate-config"],
+            text=True,
+            capture_output=True,
+            env={**os.environ, "SERVICE_RELEASE_CONFIG": str(self.config)},
+            check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("compose_pin", result.stderr)
 
     def test_validation_requires_a_matching_floor_for_polled_services(self):
         config = json.loads(self.config.read_text(encoding="utf-8"))
