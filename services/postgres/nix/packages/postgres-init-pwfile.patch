@@ -1,6 +1,6 @@
 --- supabase-postgres-init.sh
 +++ supabase-postgres-init.sh
-@@ -44,13 +44,42 @@
+@@ -44,13 +44,39 @@
  	# Create PGDATA directory if it doesn't exist
  	mkdir -p "$PGDATA"
  
@@ -15,10 +15,7 @@
 +	initdb_args=(
 +		-D "$PGDATA"
 +		-U "$POSTGRES_USER"
-+		--encoding=UTF-8
-+		--locale-provider=icu
-+		--icu-locale=en_US.UTF-8
-+		--allow-group-access
++		@INITDB_ARGS@
  		--no-instructions
 +	)
 +	password_file=""
@@ -49,7 +46,7 @@
  
  	postgres_note "Database initialized"
  }
-@@ -80,23 +109,6 @@
+@@ -80,23 +106,6 @@
  EOF
  
  	postgres_note "Configuration files set up"

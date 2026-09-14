@@ -146,8 +146,8 @@ PY
   init_script="$artifact_rootfs/share/supabase-cli/bin/supabase-postgres-init.sh"
   grep -q "stage-shared-config.sh" "$init_script" \
     || fail "init script is missing the shared-config staging hook"
-  grep -q -- "--icu-locale=en_US.UTF-8" "$init_script" \
-    || fail "init script is missing the docker.io initdb locale flags"
+  grep -q -- "--pwfile=" "$init_script" \
+    || fail "init script is missing the temporary bootstrap password file"
   preload_line="$(grep '^shared_preload_libraries' "$template" || true)"
   if [[ "$postgres_major" == "15" ]]; then
     [[ "$preload_line" == *timescaledb* ]] \
