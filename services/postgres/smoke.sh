@@ -4,6 +4,27 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=scripts/smoke-lib.sh
 source "$ROOT_DIR/scripts/smoke-lib.sh"
 
+write_pgtap_smoke() {
+  local dest="$1"
+  cat >"$dest" <<'SQL'
+BEGIN;
+SELECT plan(1);
+SELECT pass('pg_prove smoke');
+SELECT * FROM finish();
+ROLLBACK;
+SQL
+}
+
+assert_pg_prove_output() {
+  local out="$1"
+  printf '%s\n' "$out" | grep -q '^Files=1,' \
+    || { printf '%s\n' "$out" >&2; fail "pg_prove did not report Files=1"; }
+  if printf '%s\n' "$out" | grep -q 'Result: NOTESTS'; then
+    printf '%s\n' "$out" >&2
+    fail "pg_prove reported Result: NOTESTS"
+  fi
+}
+
 image="${IMAGE:-}"
 artifact_rootfs="${ARTIFACT_ROOTFS:-}"
 
@@ -45,7 +66,7 @@ PY
   }
   trap cleanup_postgres_smoke EXIT
 
-  for bin in postgres initdb pg_ctl psql pg_dump pg_dumpall supabase-postgres-start; do
+  for bin in postgres initdb pg_ctl psql pg_dump pg_dumpall pg_prove supabase-postgres-start; do
     [[ -x "$artifact_rootfs/bin/$bin" ]] || fail "postgres artifact binary missing: bin/$bin"
   done
 
@@ -60,20 +81,14 @@ PY
 )"
 
   log "starting postgres host process through service-owned lifecycle on port $port"
-  # pg_cron/pg_net/pg_stat_statements need preloading (the CLI applies its
-  # own config template with the same preload set). TimescaleDB additionally
-  # requires preload on PG15, matching the upstream Dockerfile-15 contract.
-  shared_preload="pg_stat_statements,pg_cron,pg_net"
-  if [[ "$postgres_major" == "15" ]]; then
-    shared_preload="$shared_preload,timescaledb"
-  fi
+  # Use the bundled docker.io preload set (including plpgsql_check). A reduced
+  # `-c shared_preload_libraries=` override hides CREATE EXTENSION double-load.
   (
     export PGDATA="$pg_data_dir/data"
     export POSTGRES_USER=supabase_admin POSTGRES_PASSWORD=postgres POSTGRES_DB=postgres
     export SUPABASE_POSTGRES_CONFIG_DIR="$pg_data_dir/data"
     "$artifact_rootfs/bin/supabase-postgres-start" \
       -p "$port" -c "listen_addresses=127.0.0.1" \
-      -c "shared_preload_libraries=$shared_preload" \
       -c "cron.database_name=postgres"
   ) >"$pg_data_dir/postgres.log" 2>&1 &
   postgres_pid=$!
@@ -104,7 +119,6 @@ PY
     export SUPABASE_POSTGRES_CONFIG_DIR="$pg_data_dir/data"
     "$artifact_rootfs/bin/supabase-postgres-start" \
       -p "$port" -c "listen_addresses=127.0.0.1" \
-      -c "shared_preload_libraries=$shared_preload" \
       -c "cron.database_name=postgres"
   ) >"$repeat_log" 2>&1 &
   postgres_pid=$!
@@ -157,16 +171,16 @@ PY
       || fail "PG17 postgresql.conf.template unexpectedly preloads TimescaleDB"
   fi
 
-  # The artifact ships the full extension set for its selected major; create
-  # the preload-free subset here. pgsodium/supabase_vault additionally need the pgsodium
-  # getkey script from the CLI config bundle (exercised by the image smoke,
-  # whose entrypoint wires it); pgaudit/pg_stat_monitor/pg_tle need a
-  # shared_preload_libraries opt-in.
-  log "creating the portable extension set (preload-free subset)"
+  # The artifact ships the full extension set for its selected major and
+  # boots the bundled docker.io preload set, so CREATE EXTENSION covers
+  # preload-dependent modules (plpgsql_check, pgaudit, pg_tle). pgsodium /
+  # supabase_vault still need the getkey script wired by the image
+  # entrypoint; pg_stat_monitor needs a preload opt-in docker.io also omits.
+  log "creating the portable extension set"
   extensions=(
     pgcrypto pgjwt pg_stat_statements vector pg_net pg_cron hypopg index_advisor
     pg_jsonschema pg_hashids http rum pgtap pgmq pg_partman pg_repack
-    plpgsql_check postgis pgrouting pgroonga wrappers
+    pgaudit pg_tle plpgsql_check postgis pgrouting pgroonga wrappers
   )
   if [[ "$postgres_major" == "15" ]]; then
     extensions+=(timescaledb plv8)
@@ -175,6 +189,14 @@ PY
     psql_host "CREATE EXTENSION IF NOT EXISTS $ext CASCADE" >/dev/null \
       || { cat "$pg_data_dir/postgres.log" >&2; fail "CREATE EXTENSION $ext failed"; }
   done
+
+  log "pg_prove TAP suite (Files=1)"
+  write_pgtap_smoke "$pg_data_dir/smoke.pg"
+  prove_out="$(
+    PGHOST=127.0.0.1 PGPORT="$port" PGUSER=supabase_admin PGPASSWORD=postgres PGDATABASE=postgres \
+      "$artifact_rootfs/bin/pg_prove" --ext .pg --ext .sql -r "$pg_data_dir/smoke.pg" 2>&1
+  )" || { printf '%s\n' "$prove_out" >&2; fail "pg_prove smoke failed"; }
+  assert_pg_prove_output "$prove_out"
 
   log "pgvector round-trip"
   psql_host "CREATE TABLE IF NOT EXISTS smoke_vec(id serial primary key, v vector(3))" >/dev/null
@@ -682,6 +704,17 @@ for ext in "${extensions[@]}"; do
     || { container_logs "$container"; fail "CREATE EXTENSION $ext failed"; }
 done
 log "all ${#extensions[@]} extensions created"
+
+log "one-shot pg_prove TAP suite (Files=1, no server start)"
+write_pgtap_smoke "$identity_dir/smoke.pg"
+prove_out="$(
+  docker run --rm --network "container:$container" \
+    -v "$identity_dir/smoke.pg:/tmp/smoke.pg:ro" \
+    -e PGHOST=127.0.0.1 -e PGPORT=5432 \
+    -e PGUSER=supabase_admin -e PGPASSWORD=postgres -e PGDATABASE=postgres \
+    "$image" pg_prove --ext .pg --ext .sql -r /tmp/smoke.pg 2>&1
+)" || { printf '%s\n' "$prove_out" >&2; container_logs "$container"; fail "one-shot pg_prove smoke failed"; }
+assert_pg_prove_output "$prove_out"
 
 log "basic SQL round-trip"
 psql_admin "CREATE TABLE IF NOT EXISTS smoke_check(id serial primary key, v text)" >/dev/null

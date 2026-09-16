@@ -93,6 +93,11 @@ backup variables are optional image wiring. A failed fresh init leaves an
 explicit pending witness and the data directory intact so a later start fails
 closed until it is recovered.
 
+The same artifact ships client tools in `bin/` (`pg_dump`, `pg_dumpall`, `psql`,
+`pg_prove`). `pg_prove` is TAP::Harness plus the pgTAP source handler, not a
+`psql`-driving wrapper. One-shot image argv (anything other than the postgres
+server path) execs those tools without starting the server.
+
 ## Service preparation and startup
 
 The portable artifacts expose service-owned launchers alongside their main
