@@ -44,6 +44,7 @@ class EcrMirrorContract(unittest.TestCase):
                 "destination": "public.ecr.aws/supabase/cli/postgrest:v16.2",
             },
         )
+        self.assertNotIn("natives", payload["client_payload"])
 
     def test_payload_honors_prefix_overrides(self):
         result = run(
@@ -83,6 +84,54 @@ class EcrMirrorContract(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("not a sha256 image digest", result.stderr)
 
+    def test_payload_includes_validated_natives(self):
+        native_digest = "sha256:" + "c" * 64
+        with tempfile.TemporaryDirectory() as tmp:
+            natives = pathlib.Path(tmp) / "natives.json"
+            natives.write_text(
+                json.dumps(
+                    [
+                        {
+                            "tag": "v16.2-native-linux-arm64",
+                            "digest": native_digest,
+                        }
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            result = run(
+                "payload",
+                "postgrest",
+                "v16.2",
+                DIGEST,
+                env={"NATIVE_ARTIFACTS_FILE": str(natives)},
+            )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(
+            payload["client_payload"]["natives"],
+            [{"digest": native_digest, "tag": "v16.2-native-linux-arm64"}],
+        )
+
+    def test_payload_rejects_native_platform_image_tag(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            natives = pathlib.Path(tmp) / "natives.json"
+            natives.write_text(
+                json.dumps(
+                    [{"tag": "v16.2-linux-arm64", "digest": "sha256:" + "c" * 64}]
+                ),
+                encoding="utf-8",
+            )
+            result = run(
+                "payload",
+                "postgrest",
+                "v16.2",
+                DIGEST,
+                env={"NATIVE_ARTIFACTS_FILE": str(natives)},
+            )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("native tag does not match", result.stderr)
+
     def test_request_requires_token_when_destination_is_stale(self):
         with tempfile.TemporaryDirectory() as stub_dir:
             for stub in ("gh", "regctl"):
@@ -99,9 +148,10 @@ class EcrMirrorContract(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("MIRROR_DISPATCH_TOKEN is required", result.stderr)
 
-    def test_request_is_noop_when_destination_matches(self):
+    def test_request_dispatches_when_destination_already_matches(self):
         with tempfile.TemporaryDirectory() as stub_dir:
             stub_dir = pathlib.Path(stub_dir)
+            dispatched = stub_dir / "dispatched"
             fake_regctl = stub_dir / "regctl"
             fake_regctl.write_text(
                 "#!/bin/sh\n"
@@ -111,17 +161,26 @@ class EcrMirrorContract(unittest.TestCase):
             )
             fake_regctl.chmod(0o755)
             fake_gh = stub_dir / "gh"
-            fake_gh.write_text("#!/usr/bin/env bash\nexit 1\n", encoding="utf-8")
+            fake_gh.write_text(
+                f"#!/bin/sh\ntouch '{dispatched}'\nexit 0\n",
+                encoding="utf-8",
+            )
             fake_gh.chmod(0o755)
             result = run(
                 "request",
                 "postgrest",
                 "v16.2",
                 DIGEST,
-                env={"PATH": f"{stub_dir}:/usr/bin:/bin"},
+                env={
+                    "PATH": f"{stub_dir}:/usr/bin:/bin",
+                    "MIRROR_DISPATCH_TOKEN": "token",
+                    "ECR_MIRROR_POLL_INTERVAL": "0",
+                    "ECR_MIRROR_TIMEOUT": "30",
+                },
             )
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("destination already matches", result.stdout)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(dispatched.is_file())
+            self.assertNotIn("destination already matches", result.stdout)
 
     def test_destination_digest_uses_empty_task_local_configs(self):
         with tempfile.TemporaryDirectory() as stub_dir:
@@ -203,6 +262,140 @@ class EcrMirrorContract(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("out of sync: postgres 15.14.1.159", result.stdout)
         self.assertNotIn("no published releases found", result.stderr)
+
+    def test_sync_reports_native_drift_when_image_matches(self):
+        native_digest = "sha256:" + "c" * 64
+        with tempfile.TemporaryDirectory() as stub_dir:
+            stub_dir = pathlib.Path(stub_dir)
+            fake_gh = stub_dir / "gh"
+            fake_gh.write_text(
+                "#!/usr/bin/env bash\n"
+                'cat <<\'EOF\'\n'
+                '[[{"tag_name":"postgres-15.14.1.159","draft":false,"prerelease":false}]]\n'
+                "EOF\n",
+                encoding="utf-8",
+            )
+            fake_gh.chmod(0o755)
+            fake_regctl = stub_dir / "regctl"
+            fake_regctl.write_text(
+                "#!/bin/sh\n"
+                f'if [ "$1" = manifest ] && [ "$2" = head ]; then\n'
+                '  case "$3" in *native*) '
+                f'printf "%s\\n" "{native_digest}"; exit 0 ;; esac\n'
+                f'  printf "%s\\n" "{DIGEST}"; exit 0\n'
+                "fi\n"
+                f'if [ "$1" = image ] && [ "$2" = digest ]; then\n'
+                '  case "$3" in *native*) '
+                f'printf "%s\\n" "sha256:{"b" * 64}"; exit 0 ;; esac\n'
+                f'  printf "%s\\n" "{DIGEST}"; exit 0\n'
+                "fi\n"
+                "exit 1\n",
+                encoding="utf-8",
+            )
+            fake_regctl.chmod(0o755)
+            result = run(
+                "sync",
+                env={"PATH": f"{stub_dir}:/usr/bin:/bin"},
+            )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("out of sync: postgres 15.14.1.159 natives", result.stdout)
+        self.assertIn("out of sync native: postgres 15.14.1.159-native-linux-arm64", result.stdout)
+
+    def test_sync_request_fails_when_natives_remain_stale(self):
+        native_digest = "sha256:" + "c" * 64
+        with tempfile.TemporaryDirectory() as stub_dir:
+            stub_dir = pathlib.Path(stub_dir)
+            fake_gh = stub_dir / "gh"
+            fake_gh.write_text(
+                "#!/bin/sh\n"
+                'case "$*" in *dispatches*) cat >/dev/null; exit 0 ;; esac\n'
+                "cat <<'EOF'\n"
+                '[[{"tag_name":"postgres-15.14.1.159","draft":false,"prerelease":false}]]\n'
+                "EOF\n",
+                encoding="utf-8",
+            )
+            fake_gh.chmod(0o755)
+            fake_regctl = stub_dir / "regctl"
+            fake_regctl.write_text(
+                "#!/bin/sh\n"
+                f'if [ "$1" = manifest ] && [ "$2" = head ]; then\n'
+                '  case "$3" in *native*) '
+                f'printf "%s\\n" "{native_digest}"; exit 0 ;; esac\n'
+                f'  printf "%s\\n" "{DIGEST}"; exit 0\n'
+                "fi\n"
+                f'if [ "$1" = image ] && [ "$2" = digest ]; then\n'
+                '  case "$3" in *native*) '
+                f'printf "%s\\n" "sha256:{"b" * 64}"; exit 0 ;; esac\n'
+                f'  printf "%s\\n" "{DIGEST}"; exit 0\n'
+                "fi\n"
+                "exit 1\n",
+                encoding="utf-8",
+            )
+            fake_regctl.chmod(0o755)
+            result = run(
+                "sync",
+                "--request",
+                env={
+                    "PATH": f"{stub_dir}:/usr/bin:/bin",
+                    "MIRROR_DISPATCH_TOKEN": "token",
+                    "ECR_MIRROR_POLL_INTERVAL": "0",
+                    "ECR_MIRROR_TIMEOUT": "1",
+                },
+            )
+        self.assertNotEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertIn("out of sync: postgres 15.14.1.159 natives", result.stdout)
+        self.assertIn("one or more releases are missing", result.stderr)
+
+    def test_sync_request_waits_until_natives_match(self):
+        native_digest = "sha256:" + "c" * 64
+        with tempfile.TemporaryDirectory() as stub_dir:
+            stub_dir = pathlib.Path(stub_dir)
+            fake_gh = stub_dir / "gh"
+            fake_gh.write_text(
+                "#!/bin/sh\n"
+                'case "$*" in *dispatches*) cat >/dev/null; exit 0 ;; esac\n'
+                "cat <<'EOF'\n"
+                '[[{"tag_name":"postgres-15.14.1.159","draft":false,"prerelease":false}]]\n'
+                "EOF\n",
+                encoding="utf-8",
+            )
+            fake_gh.chmod(0o755)
+            fake_regctl = stub_dir / "regctl"
+            fake_regctl.write_text(
+                "#!/bin/sh\n"
+                f'if [ "$1" = manifest ] && [ "$2" = head ]; then\n'
+                '  case "$3" in *native*) '
+                f'printf "%s\\n" "{native_digest}"; exit 0 ;; esac\n'
+                f'  printf "%s\\n" "{DIGEST}"; exit 0\n'
+                "fi\n"
+                f'if [ "$1" = image ] && [ "$2" = digest ]; then\n'
+                '  case "$3" in *native*)\n'
+                '    n=0; [ -f "$FAKE_COUNT" ] && n=$(cat "$FAKE_COUNT")\n'
+                '    n=$((n + 1)); printf "%s\\n" "$n" > "$FAKE_COUNT"\n'
+                f'    if [ "$n" -ge 7 ]; then printf "%s\\n" "{native_digest}"; exit 0; fi\n'
+                f'    printf "%s\\n" "sha256:{"b" * 64}"; exit 0 ;;\n'
+                "  esac\n"
+                f'  printf "%s\\n" "{DIGEST}"; exit 0\n'
+                "fi\n"
+                "exit 1\n",
+                encoding="utf-8",
+            )
+            fake_regctl.chmod(0o755)
+            result = run(
+                "sync",
+                "--request",
+                env={
+                    "PATH": f"{stub_dir}:/usr/bin:/bin",
+                    "FAKE_COUNT": str(stub_dir / "native-dest.count"),
+                    "MIRROR_DISPATCH_TOKEN": "token",
+                    "ECR_MIRROR_POLL_INTERVAL": "0",
+                    "ECR_MIRROR_TIMEOUT": "30",
+                },
+            )
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertIn("waiting for postgres natives", result.stdout)
+        self.assertIn("in sync native: postgres 15.14.1.159-native-linux-arm64", result.stdout)
+        self.assertNotIn("one or more releases are missing", result.stderr)
 
 
 unittest.main(verbosity=2)

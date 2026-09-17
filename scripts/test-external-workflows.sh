@@ -341,12 +341,16 @@ def test_service_release_mirror_ecr_gates_publish_release():
         "data=YAML.safe_load(File.read(ARGV[0]), aliases: true); "
         "jobs=data.fetch('jobs'); "
         "notes=jobs.fetch('publish-release').fetch('steps').find { |s| s['name'] == 'Prepare checksums and release notes' }; "
-        "puts JSON.generate({mirror: jobs.key?('mirror-ecr'), needs: jobs.fetch('publish-release').fetch('needs'), notes_env: notes.fetch('env')})"
+        "puts JSON.generate({mirror: jobs.key?('mirror-ecr'), natives: jobs.key?('publish-natives'), "
+        "mirror_needs: jobs.fetch('mirror-ecr').fetch('needs'), "
+        "needs: jobs.fetch('publish-release').fetch('needs'), notes_env: notes.fetch('env')})"
     )
     result = run(["ruby", "-e", ruby, str(ROOT / ".github" / "workflows" / "service-release.yml")])
     assert_true(result.returncode == 0, result.stderr)
     parsed = json.loads(result.stdout)
     assert_true(parsed["mirror"] is True, "jobs.mirror-ecr is missing")
+    assert_true(parsed["natives"] is True, "jobs.publish-natives is missing")
+    assert_true("publish-natives" in parsed["mirror_needs"], "mirror-ecr.needs omits publish-natives")
     assert_true("mirror-ecr" in parsed["needs"], "publish-release.needs omits mirror-ecr")
     assert_true(
         "needs.mirror-ecr.outputs.mirrored" in str(parsed["notes_env"].get("MIRRORED", "")),
@@ -372,6 +376,7 @@ def test_repository_checks_runs_dynamic_and_external_contracts():
         "scripts/test-upstream-artifact.sh",
         "scripts/test-oci-mirror.sh",
         "scripts/test-ecr-mirror.sh",
+        "scripts/test-publish-native-oci.sh",
         "scripts/test-upstream-runtime.sh",
         "scripts/test-external-source-build.sh",
         "scripts/test-dockerhub-release.sh",

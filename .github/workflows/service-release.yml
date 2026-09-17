@@ -738,12 +738,82 @@ jobs:
           retention-days: 7
           path: mirror-provenance.json
 
+  publish-natives:
+    name: publish ${{ inputs.service }} native OCI artifacts
+    needs:
+      - plan
+      - build
+    if: needs.plan.outputs.publish == 'true'
+    continue-on-error: true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout packaging repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Download portable artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: release-assets-${{ inputs.service }}-${{ inputs.version }}-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Install regctl
+        shell: bash
+        run: |
+          set -euo pipefail
+          regctl_version="v0.11.5"
+          expected_sha256="c93aa7638749f5aaac1a8e01787321889c78f0101809bb2880343478d0ba0467"
+          curl -fsSL \
+            "https://github.com/regclient/regclient/releases/download/${regctl_version}/regctl-linux-amd64" \
+            -o "$RUNNER_TEMP/regctl"
+          actual_sha256="$(sha256sum "$RUNNER_TEMP/regctl" | cut -d' ' -f1)"
+          [[ "$actual_sha256" == "$expected_sha256" ]] || {
+            printf 'regctl checksum mismatch: expected %s, got %s\n' \
+              "$expected_sha256" "$actual_sha256" >&2
+            exit 1
+          }
+          chmod +x "$RUNNER_TEMP/regctl"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push native OCI artifacts
+        shell: bash
+        env:
+          IMAGE_REPOSITORY: ${{ needs.plan.outputs.image_repository }}
+          SERVICE: ${{ inputs.service }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          scripts/publish-native-oci.sh \
+            "$SERVICE" "$VERSION" "$IMAGE_REPOSITORY" release-assets published-natives.json
+
+      - name: Upload published native metadata
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: published-natives-${{ inputs.service }}-${{ inputs.version }}
+          retention-days: 7
+          path: published-natives.json
+
   mirror-ecr:
     name: mirror ${{ inputs.service }} image to ECR Public
     needs:
       - plan
       - publish-image
-    if: needs.plan.outputs.publish == 'true'
+      - publish-natives
+    if: always() && needs.plan.outputs.publish == 'true' && needs.publish-image.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     outputs:
@@ -775,6 +845,13 @@ jobs:
         with:
           name: published-image-${{ inputs.service }}-${{ inputs.version }}
 
+      - name: Download published native metadata
+        if: steps.config.outputs.configured == 'true'
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: published-natives-${{ inputs.service }}-${{ inputs.version }}
+
       - name: Install regctl
         if: steps.config.outputs.configured == 'true'
         shell: bash
@@ -805,6 +882,9 @@ jobs:
         run: |
           set -euo pipefail
           digest="$(python3 -c 'import json; print(json.load(open("published-image.json"))["digest"])')"
+          if [[ -f published-natives.json ]]; then
+            export NATIVE_ARTIFACTS_FILE="$PWD/published-natives.json"
+          fi
           scripts/ecr-mirror.sh request "$SERVICE" "$VERSION" "$digest"
           printf 'mirrored=true\n' >> "$GITHUB_OUTPUT"
 
