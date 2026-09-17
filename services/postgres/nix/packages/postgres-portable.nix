@@ -35,6 +35,10 @@ let
   };
 
   selectedCli = if psql_cli != null then psql_cli else psql_17_cli;
+  # TAP::Harness is in core perl; this package is the pgTAP source handler and
+  # `pg_prove` script. A psql-driving wrapper is not a substitute — CLI test
+  # parses TAP::Harness `Result:` / `Files=` lines.
+  pgTAPPerl = pkgs.perlPackages.TAPParserSourceHandlerpgTAP;
 
   extensionNames = builtins.filter (
     name: name != "recurseForDerivations" && !(lib.hasSuffix "-pkgs" name)
@@ -265,8 +269,9 @@ stdenv.mkDerivation {
   buildPhase = ''
     mkdir -p $out/bin $out/lib $out/share
 
-    # List of PostgreSQL binaries to include in the Supabase CLI bundle
-    binaries="postgres pg_config pg_ctl initdb psql pg_dump pg_dumpall pg_restore createdb dropdb pg_isready"
+    # List of PostgreSQL binaries to include in the Supabase CLI bundle.
+    # `perl` is the relocatable interpreter for bundled `pg_prove`.
+    binaries="postgres pg_config pg_ctl initdb psql pg_dump pg_dumpall pg_restore createdb dropdb pg_isready perl"
 
     # Helper function to check if a library should be excluded (system libraries)
     should_exclude_library() {
@@ -341,8 +346,14 @@ stdenv.mkDerivation {
 
     # Copy binaries (resolve all wrappers to get actual binaries)
     for bin in $binaries; do
-      if [ -f ${selectedCli.bin}/bin/$bin ] || [ -L ${selectedCli.bin}/bin/$bin ]; then
-        actual_binary=$(resolve_binary ${selectedCli.bin}/bin/$bin)
+      src=""
+      if [ "$bin" = "perl" ]; then
+        src="${pkgs.perl}/bin/perl"
+      elif [ -f ${selectedCli.bin}/bin/$bin ] || [ -L ${selectedCli.bin}/bin/$bin ]; then
+        src="${selectedCli.bin}/bin/$bin"
+      fi
+      if [ -n "$src" ] && { [ -f "$src" ] || [ -L "$src" ]; }; then
+        actual_binary=$(resolve_binary "$src")
         if [ -n "$actual_binary" ] && [ -f "$actual_binary" ]; then
           cp "$actual_binary" $out/bin/.$bin-wrapped 2>/dev/null || true
         fi
@@ -444,6 +455,80 @@ stdenv.mkDerivation {
     if [ -d ${selectedCli.bin}/share ]; then
       cp -rL ${selectedCli.bin}/share/* $out/share/ 2>/dev/null || true
     fi
+
+    # Relocatable perl lib + TAP::Parser::SourceHandler::pgTAP. Omit man/pod;
+    # PERL5LIB in bin/pg_prove replaces compiled-in @INC.
+    mkdir -p $out/lib/perl5 $out/libexec
+    if [ -d ${pkgs.perl}/lib/perl5 ]; then
+      cp -rL ${pkgs.perl}/lib/perl5/. $out/lib/perl5/
+    fi
+    if [ -d ${pgTAPPerl}/lib/perl5 ]; then
+      cp -rL ${pgTAPPerl}/lib/perl5/. $out/lib/perl5/
+    fi
+    find $out/lib/perl5 -type d -name man 2>/dev/null | while IFS= read -r man_dir; do
+      rm -rf "$man_dir"
+    done
+    find $out/lib/perl5 -name '*.pod' -delete 2>/dev/null || true
+    if [ -f ${pgTAPPerl}/bin/pg_prove ]; then
+      cp ${pgTAPPerl}/bin/pg_prove $out/libexec/pg_prove
+      chmod 0644 $out/libexec/pg_prove
+    fi
+
+    perl5_inc=""
+    add_perl5_inc() {
+      [ -d "$1" ] || return 0
+      case ":$perl5_inc:" in
+        *":$1:"*) return 0 ;;
+      esac
+      rel="''${1#$out/}"
+      perl5_inc="''${perl5_inc:+$perl5_inc:}@ROOT@/$rel"
+    }
+    for perl5_verdir in $out/lib/perl5/site_perl/5.*; do
+      [ -d "$perl5_verdir" ] || continue
+      for perl5_arch in "$perl5_verdir"/*-thread-* "$perl5_verdir"/*-linux-* "$perl5_verdir"/*-darwin-*; do
+        add_perl5_inc "$perl5_arch"
+      done
+      add_perl5_inc "$perl5_verdir"
+    done
+    add_perl5_inc $out/lib/perl5/site_perl
+    for perl5_verdir in $out/lib/perl5/5.*; do
+      [ -d "$perl5_verdir" ] || continue
+      for perl5_arch in "$perl5_verdir"/*-thread-* "$perl5_verdir"/*-linux-* "$perl5_verdir"/*-darwin-*; do
+        add_perl5_inc "$perl5_arch"
+      done
+      add_perl5_inc "$perl5_verdir"
+    done
+    add_perl5_inc $out/lib/perl5
+    [ -n "$perl5_inc" ] || {
+      echo "bundled perl5 library path is empty" >&2
+      exit 1
+    }
+
+    cat > $out/bin/pg_prove << 'WRAPPER_EOF'
+#!/bin/sh
+case "$0" in
+  */*) SCRIPT_DIR="''${0%/*}"; [ -n "$SCRIPT_DIR" ] || SCRIPT_DIR=/ ;;
+  *) SCRIPT_DIR=. ;;
+esac
+SCRIPT_DIR="$(CDPATH= cd "$SCRIPT_DIR" && pwd -P)"
+ROOT="$(CDPATH= cd "$SCRIPT_DIR/.." && pwd -P)"
+export PATH="$SCRIPT_DIR''${PATH:+:$PATH}"
+export PERL5LIB="@PERL5LIB@''${PERL5LIB:+:$PERL5LIB}"
+exec "$SCRIPT_DIR/perl" "$ROOT/libexec/pg_prove" "$@"
+WRAPPER_EOF
+    substituteInPlace $out/bin/pg_prove --replace-fail '@PERL5LIB@' "$perl5_inc"
+    # PERL5LIB paths are recorded as @ROOT@/<rel> so the wrapper expands $ROOT
+    # at runtime instead of baking the Nix store prefix.
+    sed -i 's|@ROOT@|$ROOT|g' $out/bin/pg_prove
+    chmod 0755 $out/bin/pg_prove
+    [ -x $out/bin/.perl-wrapped ] || {
+      echo "bundled perl interpreter is missing" >&2
+      exit 1
+    }
+    [ -f $out/libexec/pg_prove ] || {
+      echo "bundled pg_prove script is missing" >&2
+      exit 1
+    }
 
     # Add the CLI config bundle wholesale (config/ including conf.d, bin/,
     # extension-custom-scripts/) — a flat `cp dir/*` omits the directories
@@ -559,8 +644,12 @@ stdenv.mkDerivation {
 
       # Patch Mach-O libraries to use @rpath for their dependencies. Darwin
       # extension modules use the .so suffix, while system libraries use
-      # .dylib, so process both.
-      for lib in $out/lib/*.dylib* $out/lib/*.so*; do
+      # .dylib, so process both. Perl XS lives under lib/perl5.
+      perl5_macho=""
+      if [ -d "$out/lib/perl5" ]; then
+        perl5_macho="$(find "$out/lib/perl5" -type f \( -name '*.bundle' -o -name '*.dylib*' -o -name '*.so*' \) 2>/dev/null || true)"
+      fi
+      for lib in $out/lib/*.dylib* $out/lib/*.so* $perl5_macho; do
         if [ -f "$lib" ] && file "$lib" | grep -q "Mach-O"; then
           # First, fix the library's own ID to use @rpath
           libname=$(basename "$lib")
@@ -611,7 +700,7 @@ stdenv.mkDerivation {
       # Mach-O libraries (reexport stubs like libiconv.dylib), which macOS then
       # SIGKILLs at load. scripts/audit-portable-artifact.sh verifies every
       # signature with the host codesign afterwards.
-      for macho in $out/bin/.*-wrapped $out/lib/*.dylib* $out/lib/*.so*; do
+      for macho in $out/bin/.*-wrapped $out/lib/*.dylib* $out/lib/*.so* $perl5_macho; do
         [ -f "$macho" ] || continue
         [ -L "$macho" ] && continue
         file "$macho" | grep -q "Mach-O" || continue
@@ -627,6 +716,34 @@ stdenv.mkDerivation {
       done
     ''
     + ''
+      # Preload loads $libdir/name; CREATE EXTENSION uses module_pathname.
+      # After cp -rL the versioned and unversioned .so are two files, and
+      # Darwin cannot collapse lib/ to one inode (Mach-O LC_ID_DYLIB). Point
+      # CREATE at the same path string preload already loaded.
+      ext_dir="$out/share/postgresql/extension"
+      lib_dir="$out/lib"
+      if [ -d "$ext_dir" ] && [ -d "$lib_dir" ]; then
+        for control in "$ext_dir"/*.control; do
+          [ -f "$control" ] || continue
+          pathname="$(awk -F"'" '/^module_pathname/ { print $2; exit }' "$control")"
+          case "$pathname" in
+            '$libdir/'*) module="''${pathname#'$libdir/'}" ;;
+            *) continue ;;
+          esac
+          unversioned="$(printf '%s\n' "$module" | sed -E 's/-[0-9][0-9.]*$//')"
+          [ "$unversioned" != "$module" ] || continue
+          so=""
+          for suffix in so dylib; do
+            if [ -e "$lib_dir/$unversioned.$suffix" ] && [ -e "$lib_dir/$module.$suffix" ]; then
+              so="$suffix"
+              break
+            fi
+          done
+          [ -n "$so" ] || continue
+          sed -i "s|^module_pathname[[:space:]]*=[[:space:]].*|module_pathname = '\$libdir/$unversioned'|" "$control"
+        done
+      fi
+
       # slim-services overlay: the upstream tree reaches this package as a
       # symlink farm, and the `cp -rL` copies above expand every alias into a
       # full copy — postgis ships ~130 identical 8-MiB upgrade scripts, and
@@ -648,7 +765,9 @@ stdenv.mkDerivation {
       # are symlink-friendly by design, but Mach-O two-level namespace binds
       # symbols to each dylib's LC_ID_DYLIB, so aliasing dylibs whose IDs
       # were just rewritten per-name breaks symbol lookup (seen as
-      # "Symbol not found: _libiconv" loading pg_net on darwin).
+      # "Symbol not found: _libiconv" loading pg_net on darwin). CREATE
+      # EXTENSION still works on Darwin because the control-file rewrite
+      # above makes module_pathname match the preload path.
       dedup_dirs="$out/share/postgresql/extension"
       if [ "$(uname)" = "Linux" ]; then
         dedup_dirs="$dedup_dirs $out/lib"
