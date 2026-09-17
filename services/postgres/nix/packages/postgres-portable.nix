@@ -462,8 +462,11 @@ stdenv.mkDerivation {
     if [ -d ${pkgs.perl}/lib/perl5 ]; then
       cp -rL ${pkgs.perl}/lib/perl5/. $out/lib/perl5/
     fi
+    # Nix copies keep 555 dirs; TAP merge and man/pod strip need a writable tree.
+    chmod -R u+w $out/lib/perl5
     if [ -d ${pgTAPPerl}/lib/perl5 ]; then
       cp -rL ${pgTAPPerl}/lib/perl5/. $out/lib/perl5/
+      chmod -R u+w $out/lib/perl5
     fi
     find $out/lib/perl5 -type d -name man 2>/dev/null | while IFS= read -r man_dir; do
       rm -rf "$man_dir"
