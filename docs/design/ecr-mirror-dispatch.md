@@ -77,7 +77,7 @@ The handler in `supabase/cli` must:
   image `service` / `version` / `digest`.
 
 This repository treats image-mirror success as the destination digest
-matching, which `scripts/ecr-mirror.sh` verifies with anonymous pulls.
+matching, which `bun scripts/ecr-mirror.ts` verifies with anonymous pulls.
 Native destination drift is reported by the daily audit.
 
 ## Follow-up

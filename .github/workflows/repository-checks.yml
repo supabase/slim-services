@@ -21,6 +21,10 @@ jobs:
         with:
           persist-credentials: false
 
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: .bun-version
+
       - name: Check shell syntax
         shell: bash
         run: |
@@ -57,7 +61,9 @@ jobs:
           scripts/test-extract-upstream-archive.sh
           scripts/test-upstream-artifact.sh
           scripts/test-oci-mirror.sh
-          scripts/test-ecr-mirror.sh
-          scripts/test-publish-native-oci.sh
+          bun test ./scripts/ecr-mirror.test.ts ./scripts/publish-native-oci.test.ts
+          bun build --no-bundle --target=bun \
+            scripts/ecr-mirror.ts scripts/publish-native-oci.ts \
+            --outdir="$RUNNER_TEMP/slim-ts-check"
           scripts/test-upstream-runtime.sh
           services/vector/test-smoke.sh
