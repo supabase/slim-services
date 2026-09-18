@@ -72,7 +72,6 @@ PY
     PG_META_DB_PORT="$pg_port" \
     "$artifact_rootfs/node/bin/node" --input-type=module - <<'NODE'
 import { spawn } from "node:child_process"
-import { once } from "node:events"
 import { createInterface } from "node:readline"
 
 const child = spawn(process.env.PG_META_BIN, [], {
@@ -89,7 +88,7 @@ const child = spawn(process.env.PG_META_BIN, [], {
     PG_META_DB_PASSWORD: "postgres",
   },
 })
-const closed = once(child, "close")
+const closed = new Promise((resolve) => child.once("close", resolve))
 const diagnostics = []
 const ports = []
 let resolvePorts
@@ -139,6 +138,8 @@ try {
   await closed
 }
 NODE
+  curl --fail --silent --show-error --max-time 5 "http://127.0.0.1:$((port + 1))/metrics" >/dev/null \
+    || fail "pgmeta default admin metrics listener is unavailable"
   record_host_runtime_metrics "$host_service_pid"
   log "pgmeta smoke passed"
   exit 0
