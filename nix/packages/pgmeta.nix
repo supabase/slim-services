@@ -12,6 +12,12 @@ let
     inherit src version nodejs;
     npmDepsHash = hashes.npm_deps_hash or pkgs.lib.fakeHash;
     dontFixup = true;
+    postPatch = ''
+      substituteInPlace src/server/server.ts \
+        --replace-fail \
+        'const adminPort = PG_META_PORT + 1' \
+        'const adminPort = Number(process.env.PG_META_ADMIN_PORT || PG_META_PORT + 1)'
+    '';
     installPhase = ''
       runHook preInstall
       npm prune --omit=dev --offline

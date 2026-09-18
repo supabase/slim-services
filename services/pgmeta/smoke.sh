@@ -66,6 +66,80 @@ PY
   if ! wait_for_http_code_host "http://127.0.0.1:$port/health" "200" 120 "$host_service_pid" "$pgmeta_log"; then
     fail "pgmeta /health did not return 200"
   fi
+
+  log "smoke testing pgmeta ephemeral admin listener"
+  PG_META_BIN="$pgmeta_bin" \
+    PG_META_DB_PORT="$pg_port" \
+    "$artifact_rootfs/node/bin/node" --input-type=module - <<'NODE'
+import { spawn } from "node:child_process"
+import { createInterface } from "node:readline"
+
+const child = spawn(process.env.PG_META_BIN, [], {
+  env: {
+    PATH: "/usr/bin:/bin",
+    SUPABASE_NODE: "",
+    PG_META_PORT: "0",
+    PG_META_ADMIN_PORT: "0",
+    PG_META_HOST: "127.0.0.1",
+    PG_META_DB_HOST: "127.0.0.1",
+    PG_META_DB_PORT: process.env.PG_META_DB_PORT,
+    PG_META_DB_NAME: "pgmeta_smoke",
+    PG_META_DB_USER: "postgres",
+    PG_META_DB_PASSWORD: "postgres",
+  },
+})
+const closed = new Promise((resolve) => child.once("close", resolve))
+const diagnostics = []
+const ports = []
+let resolvePorts
+let rejectPorts
+const portsReady = new Promise((resolve, reject) => {
+  resolvePorts = resolve
+  rejectPorts = reject
+})
+const observe = (line) => {
+  diagnostics.push(line)
+  try {
+    const entry = JSON.parse(line)
+    const match = String(entry.msg ?? "").match(/^Server listening at .*:(\d+)$/)
+    if (match && !ports.includes(Number(match[1]))) {
+      ports.push(Number(match[1]))
+      if (ports.length === 2) resolvePorts()
+    }
+  } catch {}
+}
+createInterface({ input: child.stdout }).on("line", observe)
+createInterface({ input: child.stderr }).on("line", observe)
+child.once("error", rejectPorts)
+child.once("close", (code) => {
+  if (ports.length < 2) rejectPorts(new Error(`pgmeta exited before both listeners: ${code}`))
+})
+const deadline = setTimeout(() => rejectPorts(new Error("pgmeta did not expose both listeners")), 30_000)
+try {
+  await portsReady
+  if (ports.includes(1) || new Set(ports).size !== 2)
+    throw new Error(`unexpected pgmeta listeners: ${ports.join(",")}`)
+  const [httpPort, adminPort] = ports
+  const health = await fetch(`http://127.0.0.1:${httpPort}/health`, {
+    signal: AbortSignal.timeout(5_000),
+  })
+  const metrics = await fetch(`http://127.0.0.1:${adminPort}/metrics`, {
+    signal: AbortSignal.timeout(5_000),
+  })
+  if (health.status !== 200 || metrics.status !== 200)
+    throw new Error(`unexpected pgmeta responses: health=${health.status} metrics=${metrics.status}`)
+} catch (error) {
+  console.error(diagnostics.join("\n"))
+  console.error(error)
+  process.exitCode = 1
+} finally {
+  clearTimeout(deadline)
+  child.kill("SIGTERM")
+  await closed
+}
+NODE
+  curl --fail --silent --show-error --max-time 5 "http://127.0.0.1:$((port + 1))/metrics" >/dev/null \
+    || fail "pgmeta default admin metrics listener is unavailable"
   record_host_runtime_metrics "$host_service_pid"
   log "pgmeta smoke passed"
   exit 0
