@@ -34,8 +34,15 @@ recorded in supabase/cli
 6. `publish-release` `--clobber`s GitHub Release assets on `force=true`.
    GHCR image tags move on push. ECR Public tags are always mutable;
    `aws ecr-public create-repository` accepts no `--image-tag-mutability` flag.
-7. Daily `ecr-mirror-check.yml` compares images **and** native tags. Manual
-   `request: true` backfills.
+7. Daily `ecr-mirror-check.yml` compares images **and** native tags. A
+   published release with no GHCR image (older postgres releases predate
+   image publication) is skipped and counted, never fatal. Image drift
+   fails the audit; native drift is reported and only fails it when
+   `ECR_MIRROR_REQUIRE_NATIVES=1`. Manual `request: true` backfills:
+   it dispatches and verifies each image, and only waits for the native
+   copy under the same flag, so a handler that copies images only cannot
+   stall the run. Run the first backfill in service-sized slices rather
+   than one shot; each image verify can take up to 15 minutes.
 
 Release-time mirroring (`service-release.yml` `mirror-ecr`) is skipped,
 with a workflow notice, until the `CLI_MIRROR_DISPATCH_TOKEN` secret
@@ -78,7 +85,9 @@ The handler in `supabase/cli` must:
 
 This repository treats image-mirror success as the destination digest
 matching, which `bun scripts/ecr-mirror.ts` verifies with anonymous pulls.
-Native destination drift is reported by the daily audit.
+Native destination drift is reported by the daily audit and becomes a
+failure only once `ECR_MIRROR_REQUIRE_NATIVES=1` is set, which should wait
+until the cli handler on `develop` copies natives.
 
 ## Follow-up
 

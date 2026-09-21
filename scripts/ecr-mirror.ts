@@ -41,7 +41,13 @@ Mirror published slim images and native OCI tags to AWS ECR Public through
 the mirror workflow hosted in the dispatch repository (supabase/cli by
 default). Always dispatch: an unchanged image digest must not skip the
 request, because native tags may have moved. Never prune untagged
-manifests; already-shipped CLIs still pin those digests.`;
+manifests; already-shipped CLIs still pin those digests.
+
+sync audits every published GitHub Release. A release whose GHCR image is
+missing is skipped and counted, not fatal. Native tag drift is reported
+but only fails the audit (and, with --request, only waits for the native
+copy) when ECR_MIRROR_REQUIRE_NATIVES=1; the cli handler copies natives
+best-effort.`;
 
 const log = (message: string): void => {
   console.log(`[slim] ${message}`);
@@ -192,6 +198,7 @@ type Context = {
   readonly destPrefix: string;
   readonly timeoutSec: number;
   readonly pollSec: number;
+  readonly requireNatives: boolean;
   readonly nativesFile: string | undefined;
   readonly token: string | undefined;
   readonly githubRepository: string;
@@ -341,29 +348,43 @@ const listReleasePages = (ctx: Context): unknown => {
 const syncReleases = async (ctx: Context, request: boolean): Promise<void> => {
   const releases = publishedReleases(ctx.config, listReleasePages(ctx));
   if (releases.length === 0) fail("no published releases found");
-  let drift = false;
+  let imageDrift = 0;
+  let nativeDriftCount = 0;
+  let skipped = 0;
   for (const { service, version } of releases) {
     const source = `${ctx.sourcePrefix}/${service}:${version}`;
     const sourceDigest = manifestHead(ctx, source);
-    if (!DIGEST_PATTERN.test(sourceDigest)) fail(`could not resolve source digest for ${service} ${version}`);
+    if (!DIGEST_PATTERN.test(sourceDigest)) {
+      log(`skipped: ${service} ${version} has no source image at ${source}`);
+      skipped += 1;
+      continue;
+    }
     const live = destinationDigest(ctx, `${ctx.destPrefix}/${service}:${version}`);
     const natives = collectSourceNatives(ctx, service, version);
-    const nativeDrift = nativesOutOfSync(ctx, service, natives);
+    let nativeDrift = nativesOutOfSync(ctx, service, natives);
     if (live === sourceDigest && !nativeDrift) {
       log(`in sync: ${service} ${version} (${sourceDigest})`);
       continue;
     }
     if (live !== sourceDigest) log(`out of sync: ${service} ${version} (expected ${sourceDigest}, got ${live || "none"})`);
     else log(`out of sync: ${service} ${version} natives`);
-    if (request) {
-      await requestRelease(ctx, service, version, sourceDigest, natives);
-      if (!(await waitNatives(ctx, service, natives))) drift = true;
-    } else {
-      drift = true;
+    if (!request) {
+      if (live !== sourceDigest) imageDrift += 1;
+      if (nativeDrift) nativeDriftCount += 1;
+      continue;
     }
+    await requestRelease(ctx, service, version, sourceDigest, natives);
+    nativeDrift = ctx.requireNatives
+      ? !(await waitNatives(ctx, service, natives))
+      : nativesOutOfSync(ctx, service, natives);
+    if (nativeDrift) nativeDriftCount += 1;
   }
-  if (drift) fail(`one or more releases are missing from ${ctx.destPrefix}`);
-  log(`all published releases are mirrored to ${ctx.destPrefix}`);
+  if (skipped > 0) log(`skipped ${skipped} release(s) without a source image`);
+  if (nativeDriftCount > 0) log(`${nativeDriftCount} release(s) have native tag drift`);
+  if (imageDrift > 0) fail(`${imageDrift} release image(s) are missing from ${ctx.destPrefix}`);
+  if (nativeDriftCount > 0 && ctx.requireNatives)
+    fail(`${nativeDriftCount} release(s) have native tags missing from ${ctx.destPrefix}`);
+  log(`all published release images are mirrored to ${ctx.destPrefix}`);
 };
 
 const makeContext = (run: RunCommand): Context => {
@@ -377,6 +398,7 @@ const makeContext = (run: RunCommand): Context => {
     destPrefix: envString("ECR_MIRROR_PREFIX", "public.ecr.aws/supabase/cli"),
     timeoutSec: envNumber("ECR_MIRROR_TIMEOUT", 900),
     pollSec: envNumber("ECR_MIRROR_POLL_INTERVAL", 30),
+    requireNatives: envString("ECR_MIRROR_REQUIRE_NATIVES", "0") === "1",
     nativesFile: process.env["NATIVE_ARTIFACTS_FILE"],
     token: process.env["MIRROR_DISPATCH_TOKEN"],
     githubRepository: envString("GITHUB_REPOSITORY", "supabase/slim-services"),

@@ -265,15 +265,51 @@ exit 1
 `,
     );
     const result = run(["sync"], { PATH: `${stub}:/usr/bin:/bin` });
-    expect(result.exitCode).not.toBe(0);
+    expect(result.exitCode, result.stderr.toString()).toBe(0);
     expect(result.stdout.toString()).toContain("out of sync: postgres 15.14.1.159 natives");
     expect(result.stdout.toString()).toContain(
       "out of sync native: postgres 15.14.1.159-native-linux-arm64",
     );
+    expect(result.stdout.toString()).toContain("1 release(s) have native tag drift");
+
+    const required = run(["sync"], { PATH: `${stub}:/usr/bin:/bin`, ECR_MIRROR_REQUIRE_NATIVES: "1" });
+    expect(required.exitCode).not.toBe(0);
+    expect(required.stderr.toString()).toContain("native tags missing");
   });
 
-  test("fails --request when natives remain stale", () => {
-    const stub = mkdtempSync(join(tmpdir(), "ecr-stale-"));
+  test("skips a release without a source image and audits the rest", () => {
+    const stub = mkdtempSync(join(tmpdir(), "ecr-skip-"));
+    writeStub(
+      stub,
+      "gh",
+      `#!/usr/bin/env bash
+cat <<'EOF'
+[[{"tag_name":"postgres-15.8.1.085","draft":false,"prerelease":false},{"tag_name":"postgres-15.14.1.159","draft":false,"prerelease":false}]]
+EOF
+`,
+    );
+    writeStub(
+      stub,
+      "regctl",
+      `#!/bin/sh
+case "$3" in *15.8.1.085*) exit 1 ;; esac
+if [ "$1" = manifest ] && [ "$2" = head ]; then
+  case "$3" in *native*) exit 1 ;; esac
+  printf "%s\\n" "${DIGEST}"; exit 0
+fi
+if [ "$1" = image ] && [ "$2" = digest ]; then printf "%s\\n" "${DIGEST}"; exit 0; fi
+exit 1
+`,
+    );
+    const result = run(["sync"], { PATH: `${stub}:/usr/bin:/bin` });
+    expect(result.exitCode, result.stderr.toString() + result.stdout.toString()).toBe(0);
+    expect(result.stdout.toString()).toContain("skipped: postgres 15.8.1.085 has no source image");
+    expect(result.stdout.toString()).toContain("in sync: postgres 15.14.1.159");
+    expect(result.stdout.toString()).toContain("skipped 1 release(s) without a source image");
+  });
+
+  test("--request does not wait for natives unless required", () => {
+    const stub = mkdtempSync(join(tmpdir(), "ecr-nowait-"));
     const nativeDigest = `sha256:${"c".repeat(64)}`;
     writeStub(
       stub,
@@ -306,9 +342,49 @@ exit 1
       ECR_MIRROR_POLL_INTERVAL: "0",
       ECR_MIRROR_TIMEOUT: "1",
     });
+    expect(result.exitCode, result.stderr.toString() + result.stdout.toString()).toBe(0);
+    expect(result.stdout.toString()).not.toContain("waiting for postgres natives");
+    expect(result.stdout.toString()).toContain("1 release(s) have native tag drift");
+  });
+
+  test("fails --request when natives remain stale and are required", () => {
+    const stub = mkdtempSync(join(tmpdir(), "ecr-stale-"));
+    const nativeDigest = `sha256:${"c".repeat(64)}`;
+    writeStub(
+      stub,
+      "gh",
+      `#!/bin/sh
+case "$*" in *dispatches*) cat >/dev/null; exit 0 ;; esac
+cat <<'EOF'
+[[{"tag_name":"postgres-15.14.1.159","draft":false,"prerelease":false}]]
+EOF
+`,
+    );
+    writeStub(
+      stub,
+      "regctl",
+      `#!/bin/sh
+if [ "$1" = manifest ] && [ "$2" = head ]; then
+  case "$3" in *native*) printf "%s\\n" "${nativeDigest}"; exit 0 ;; esac
+  printf "%s\\n" "${DIGEST}"; exit 0
+fi
+if [ "$1" = image ] && [ "$2" = digest ]; then
+  case "$3" in *native*) printf "%s\\n" "sha256:${"b".repeat(64)}"; exit 0 ;; esac
+  printf "%s\\n" "${DIGEST}"; exit 0
+fi
+exit 1
+`,
+    );
+    const result = run(["sync", "--request"], {
+      PATH: `${stub}:/usr/bin:/bin`,
+      MIRROR_DISPATCH_TOKEN: "token",
+      ECR_MIRROR_POLL_INTERVAL: "0",
+      ECR_MIRROR_TIMEOUT: "1",
+      ECR_MIRROR_REQUIRE_NATIVES: "1",
+    });
     expect(result.exitCode).not.toBe(0);
     expect(result.stdout.toString()).toContain("out of sync: postgres 15.14.1.159 natives");
-    expect(result.stderr.toString()).toContain("one or more releases are missing");
+    expect(result.stderr.toString()).toContain("native tags missing");
   });
 
   test("waits until natives match after dispatch", () => {
@@ -350,6 +426,7 @@ exit 1
       MIRROR_DISPATCH_TOKEN: "token",
       ECR_MIRROR_POLL_INTERVAL: "0",
       ECR_MIRROR_TIMEOUT: "30",
+      ECR_MIRROR_REQUIRE_NATIVES: "1",
     });
     expect(result.exitCode, result.stderr.toString() + result.stdout.toString()).toBe(0);
     expect(result.stdout.toString()).toContain("waiting for postgres natives");
