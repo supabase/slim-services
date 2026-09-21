@@ -30,6 +30,10 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: .bun-version
+
       - name: Install regctl
         shell: bash
         run: |
@@ -62,4 +66,4 @@ jobs:
           else
             unset MIRROR_DISPATCH_TOKEN
           fi
-          scripts/ecr-mirror.sh sync "${args[@]}"
+          bun scripts/ecr-mirror.ts sync "${args[@]}"

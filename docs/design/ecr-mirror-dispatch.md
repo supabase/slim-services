@@ -1,39 +1,48 @@
 # ECR Public mirroring via supabase/cli dispatch
 
 Slim images are published to `ghcr.io/supabase/cli/<service>:<version>` by
-`.github/workflows/service-release.yml`. This document describes how those
-images are also mirrored to AWS ECR Public, reusing the mirror machinery and
-AWS credentials that already live in `supabase/cli`, so this repository needs
-no AWS access of its own.
+`.github/workflows/service-release.yml`. Native archives are published to
+GitHub Releases and as OCI artifacts on the same GHCR repository under
+`<version>-native-<target>`. This document describes how both are mirrored to
+AWS ECR Public, reusing the mirror machinery and AWS credentials in
+`supabase/cli`, so this repository needs no AWS access of its own.
+
+CLI consumption, env-hint candidate order, and shipped digest-pin lag are
+recorded in supabase/cli
+[ADR 0026](https://github.com/supabase/cli/blob/develop/docs/adr/0026-slim-artifact-mirrors.md).
 
 ## Flow
 
-1. The `publish-image` job publishes the multi-platform image to GHCR and
-   records its index digest in `published-image.json`.
-2. The `mirror-ecr` job sends a `repository_dispatch` event to `supabase/cli`
-   (`scripts/ecr-mirror.sh request`), then polls the destination anonymously
-   until its index digest equals the GHCR index digest, or fails after a
-   timeout (15 minutes by default).
-3. The `publish-release` job appends the ECR references to the release notes
-   when the mirror was verified.
-4. `.github/workflows/ecr-mirror-check.yml` runs daily and fails when any
-   published non-draft/non-prerelease tag that maps to a configured service
-   (by `<service>-` prefix) is missing from ECR Public or resolves to a
-   different digest. The daily audit does not apply `tag_pattern`, so older
-   tags that no longer match the current pattern stay in the compare set.
-   Run it manually with `request: true` to re-request out-of-sync tags
-   (this is also the backfill path for releases that predate mirroring).
+1. `publish-image` publishes the multi-platform image to GHCR.
+2. `publish-natives` (after `build`) pushes the native triplet
+   (`tar.zst`, `manifest.json`, checksum) to
+   `ghcr.io/supabase/cli/<service>:<version>-native-<target>` for
+   `linux-arm64`, `linux-amd64`, and `darwin-arm64`. Do not use
+   `<version>-linux-*`; those tags are image platform manifests.
+   This job is best-effort (`continue-on-error`) and must not fail
+   `publish-release`.
+3. `mirror-ecr` needs both publish jobs. It dispatches `mirror-slim-image`
+   with the **image** `service` / `version` / `digest` plus
+   `natives: [{tag, digest}, ...]`. Catalog sync reads only the image fields.
+4. The cli handler copies the image (digest-preserving `regctl image copy`)
+   and then copies each native tag. Image destination digest must match or
+   the sender fails the release (once `CLI_MIRROR_DISPATCH_TOKEN` exists).
+   Native copy is best-effort: failure must not fail `publish-release`.
+5. Do not skip the dispatch when the image destination already matches;
+   natives may have changed. Never prune untagged GHCR or ECR manifests:
+   already-shipped CLIs still pin old image digests until a catalog PR ships.
+6. `publish-release` `--clobber`s GitHub Release assets on `force=true`.
+   GHCR image tags move on push. ECR Public tags are always mutable;
+   `aws ecr-public create-repository` accepts no `--image-tag-mutability` flag.
+7. Daily `ecr-mirror-check.yml` compares images **and** native tags. Manual
+   `request: true` backfills.
 
 Release-time mirroring (`service-release.yml` `mirror-ecr`) is skipped,
 with a workflow notice, until the `CLI_MIRROR_DISPATCH_TOKEN` secret
-exists. Once the secret is set, a failed or unverified mirror fails the
-release: a release is only done when both registries serve the same
-digest. The daily audit always runs; it needs only `gh` and `regctl`.
-Dispatch (`request: true`) still requires the token.
+exists. Once the secret is set, a failed or unverified **image** mirror
+fails the release. Native ECR copy never gates the GitHub Release.
 
 ## Dispatch contract
-
-The event sent to `POST /repos/supabase/cli/dispatches`:
 
 ```json
 {
@@ -43,49 +52,46 @@ The event sent to `POST /repos/supabase/cli/dispatches`:
     "version": "v16.2",
     "source": "ghcr.io/supabase/cli/postgrest:v16.2",
     "digest": "sha256:…",
-    "destination": "public.ecr.aws/supabase/cli/postgrest:v16.2"
+    "destination": "public.ecr.aws/supabase/cli/postgrest:v16.2",
+    "natives": [
+      {
+        "tag": "v16.2-native-linux-arm64",
+        "digest": "sha256:…"
+      }
+    ]
   }
 }
 ```
 
-The handling workflow in `supabase/cli` must:
+The handler in `supabase/cli` must:
 
 - Trigger on `repository_dispatch` with `types: [mirror-slim-image]`.
-- Copy `source` to `destination` with a digest-preserving tool
-  (`regctl image copy`, `crane cp`, or `akhilerm/tag-push-action`).
-  `docker buildx imagetools create` may rewrite the index and change its
-  digest; verification here would then fail the release.
-- Reject a `source` outside `ghcr.io/supabase/cli/` and a `destination`
-  outside `public.ecr.aws/supabase/cli/`, and verify that `source` resolves
-  to `digest` before copying. The payload arrives with whatever authority
-  holds the dispatch token, so the handler validates it independently.
-- Create the ECR Public repository when it does not exist, or the
-  `cli/<service>` repositories must be created up front. ECR does not create
-  repositories on push.
+- Derive source and destination from `service` + `version`; do not trust
+  payload URL strings except to require they match the derived values.
+- Copy image by digest with `regctl image copy` (not `docker buildx
+  imagetools create`).
+- Copy each native tag the same way, without `--referrers`. Raise the job
+  timeout still under the sender’s poll window.
+- Create `cli/<service>` if missing. Do not pass a mutability flag.
+- Treat `natives[]` as optional extra data. Catalog sync consumes only
+  image `service` / `version` / `digest`.
 
-This repository treats the dispatch as fire-and-forget: success is defined
-purely by the destination digest matching, which `scripts/ecr-mirror.sh`
-verifies with anonymous pulls.
+This repository treats image-mirror success as the destination digest
+matching, which `bun scripts/ecr-mirror.ts` verifies with anonymous pulls.
+Native destination drift is reported by the daily audit.
 
-## Setup checklist
+## Follow-up
 
-1. Land the `mirror-slim-image` handler in `supabase/cli` (see contract
-   above).
-2. Create the `cli/<service>` ECR Public repositories for the services in
-   `.github/service-release-sources.json`, or grant the handler's role
-   `ecr-public:CreateRepository`.
-3. Create a token that can send `repository_dispatch` to `supabase/cli`
-   (fine-grained PAT with contents read/write on `supabase/cli`, or a GitHub
-   App installation token) and store it in this repository as the
-   `CLI_MIRROR_DISPATCH_TOKEN` actions secret.
-4. Backfill existing releases: run the `ECR mirror check` workflow with
-   `request: true`.
+Agent sandbox default allowlists often permit `public.ecr.aws` and
+`ghcr.io` but deny the blob CDNs those registries redirect to
+(`*.cloudfront.net`, `pkg-containers.githubusercontent.com`), and they
+proxy-scope GitHub release assets to attached repositories
+([claude-code#71629](https://github.com/anthropics/claude-code/issues/71629)).
+This cut does not add S3 on `*.amazonaws.com` or a second cloud vendor.
+Record drift; do not treat a successful GitHub Release as proof every
+sandbox can download natives.
 
 ## Naming
 
-The destination keeps the `cli/` namespace (`public.ecr.aws/supabase/cli/…`)
-instead of joining the existing upstream mirrors at
-`public.ecr.aws/supabase/<service>` because slim tags reuse upstream version
-strings; `supabase/postgrest:v16.2` is already the upstream image. Keeping
-the path identical to GHCR also lets consumers switch registries by swapping
-only the registry host prefix.
+Keep the `cli/` namespace (`public.ecr.aws/supabase/cli/…`) so slim tags
+do not collide with upstream `public.ecr.aws/supabase/<service>`.
