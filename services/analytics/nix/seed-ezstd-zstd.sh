@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
 # mixRelease copies mixFodDeps with cp --no-preserve=mode, so ezstd's compile
-# hook loses +x. Restore it and seed libzstd so the hook does not git clone
-# Facebook zstd inside the sandbox.
+# hook loses +x. Restore a seed-checking stub (the upstream script needs
+# sysctl/git/cmake) and seed libzstd so the NIF can link.
 set -euo pipefail
 
 mix_deps_path="${1:?mix deps path required}"
 zstd_lib="${2:?zstd lib prefix required}"
 zstd_dev="${3:?zstd include prefix required}"
-bash_bin="${4:-}"
 
 ezstd="$mix_deps_path/ezstd"
 [[ -d "$ezstd" ]] || {
@@ -18,20 +17,6 @@ ezstd="$mix_deps_path/ezstd"
   printf 'ezstd compile hook missing: %s\n' "$ezstd/build_deps.sh" >&2
   exit 1
 }
-# make runs ./build_deps.sh; Darwin sandbox PATH may not include bash.
-if [[ -n "$bash_bin" ]]; then
-  [[ -x "$bash_bin" ]] || {
-    printf 'bash interpreter is not executable: %s\n' "$bash_bin" >&2
-    exit 1
-  }
-  hook_tmp="$ezstd/build_deps.sh.tmp"
-  {
-    printf '#!%s\n' "$bash_bin"
-    tail -n +2 "$ezstd/build_deps.sh"
-  } >"$hook_tmp"
-  mv -f "$hook_tmp" "$ezstd/build_deps.sh"
-fi
-chmod 0755 "$ezstd/build_deps.sh"
 
 # ezstd's Makefile treats this path as "already fetched"; keep the upstream
 # layout it compiles against (-I/_build/deps/zstd/lib and -lzstd).
@@ -54,3 +39,16 @@ done
   printf 'pinned zstd has no headers under %s/include\n' "$zstd_dev" >&2
   exit 1
 }
+
+# make runs ./build_deps.sh before compiling the NIF. Replace the upstream
+# hook: it probes sysctl/lsb_release even when libzstd.a is already seeded.
+cat >"$ezstd/build_deps.sh" <<'EOF'
+#!/bin/sh
+set -eu
+file="_build/deps/zstd/lib/libzstd.a"
+if [ ! -f "$file" ]; then
+  printf 'ezstd zstd seed missing: %s\n' "$file" >&2
+  exit 1
+fi
+EOF
+chmod 0755 "$ezstd/build_deps.sh"

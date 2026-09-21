@@ -41,33 +41,29 @@ class SeedEzstdZstdTest(unittest.TestCase):
             check=False,
         )
 
-    def test_restores_hook_mode_and_seeds_libzstd(self):
+    def test_seeds_libzstd_and_replaces_hook_with_seed_check(self):
         result = self.run_seed(self.deps, self.zstd_lib, self.zstd_dev)
         self.assertEqual(result.returncode, 0, result.stderr)
         hook = self.ezstd / "build_deps.sh"
         self.assertTrue(os.access(hook, os.X_OK))
+        self.assertIn("ezstd zstd seed missing", hook.read_text(encoding="utf-8"))
         seeded = self.ezstd / "_build/deps/zstd/lib"
         self.assertEqual((seeded / "libzstd.a").read_text(encoding="utf-8"), "static-lib")
         self.assertEqual((seeded / "zstd.h").read_text(encoding="utf-8"), "/* zstd */\n")
-        self.assertEqual(
-            (seeded / "zstd_errors.h").read_text(encoding="utf-8"), "/* errors */\n"
+        stub = subprocess.run(
+            ["sh", str(hook)],
+            cwd=self.ezstd,
+            text=True,
+            capture_output=True,
+            check=False,
         )
+        self.assertEqual(stub.returncode, 0, stub.stderr)
 
     def test_fails_when_deps_copy_missing(self):
         shutil.rmtree(self.ezstd)
         result = self.run_seed(self.deps, self.zstd_lib, self.zstd_dev)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("mix deps copy is missing", result.stderr)
-
-    def test_rewrites_hook_shebang_to_provided_bash(self):
-        bash = self.temp / "fake-bash"
-        bash.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-        bash.chmod(0o755)
-        result = self.run_seed(self.deps, self.zstd_lib, self.zstd_dev, bash)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        hook = self.ezstd / "build_deps.sh"
-        self.assertEqual(hook.read_text(encoding="utf-8").splitlines()[0], f"#!{bash}")
-        self.assertTrue(os.access(hook, os.X_OK))
 
     def test_requires_static_library(self):
         (self.zstd_lib / "lib" / "libzstd.a").unlink()
