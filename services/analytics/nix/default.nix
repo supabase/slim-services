@@ -225,7 +225,8 @@ let
 
     nativeBuildInputs = [
       rustToolchain
-    ];
+    ]
+    ++ lib.optionals hasEzstdHex [ pkgs.bash ];
 
     preConfigure = ''
       # rustler_precompiled checks its cache before hitting the network;
@@ -247,7 +248,8 @@ let
     ''
     + lib.optionalString hasEzstdHex ''
       bash ${./seed-ezstd-zstd.sh} "$MIX_DEPS_PATH" \
-        ${lib.getLib zstdForEzstd} ${lib.getDev zstdForEzstd}
+        ${lib.getLib zstdForEzstd} ${lib.getDev zstdForEzstd} \
+        ${pkgs.bash}/bin/bash
     '';
 
     removeCookie = false;

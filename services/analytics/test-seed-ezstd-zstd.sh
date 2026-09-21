@@ -59,6 +59,16 @@ class SeedEzstdZstdTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("mix deps copy is missing", result.stderr)
 
+    def test_rewrites_hook_shebang_to_provided_bash(self):
+        bash = self.temp / "fake-bash"
+        bash.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        bash.chmod(0o755)
+        result = self.run_seed(self.deps, self.zstd_lib, self.zstd_dev, bash)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        hook = self.ezstd / "build_deps.sh"
+        self.assertEqual(hook.read_text(encoding="utf-8").splitlines()[0], f"#!{bash}")
+        self.assertTrue(os.access(hook, os.X_OK))
+
     def test_requires_static_library(self):
         (self.zstd_lib / "lib" / "libzstd.a").unlink()
         result = self.run_seed(self.deps, self.zstd_lib, self.zstd_dev)

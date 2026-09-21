@@ -7,6 +7,7 @@ set -euo pipefail
 mix_deps_path="${1:?mix deps path required}"
 zstd_lib="${2:?zstd lib prefix required}"
 zstd_dev="${3:?zstd include prefix required}"
+bash_bin="${4:-}"
 
 ezstd="$mix_deps_path/ezstd"
 [[ -d "$ezstd" ]] || {
@@ -17,6 +18,19 @@ ezstd="$mix_deps_path/ezstd"
   printf 'ezstd compile hook missing: %s\n' "$ezstd/build_deps.sh" >&2
   exit 1
 }
+# make runs ./build_deps.sh; Darwin sandbox PATH may not include bash.
+if [[ -n "$bash_bin" ]]; then
+  [[ -x "$bash_bin" ]] || {
+    printf 'bash interpreter is not executable: %s\n' "$bash_bin" >&2
+    exit 1
+  }
+  hook_tmp="$ezstd/build_deps.sh.tmp"
+  {
+    printf '#!%s\n' "$bash_bin"
+    tail -n +2 "$ezstd/build_deps.sh"
+  } >"$hook_tmp"
+  mv -f "$hook_tmp" "$ezstd/build_deps.sh"
+fi
 chmod 0755 "$ezstd/build_deps.sh"
 
 # ezstd's Makefile treats this path as "already fetched"; keep the upstream
