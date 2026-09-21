@@ -154,26 +154,25 @@ let
   # Mix writes a stable textual lockfile format. Resolve the exact Hex package
   # versions from the checked-out release so their precompiled NIF asset names
   # advance with future releases instead of requiring a packaging edit.
+  mixLockText = builtins.readFile "${sourceRoot}/mix.lock";
+  hexLockParts =
+    package:
+    lib.splitString "\"${package}\": {:hex, :${package}, \"" mixLockText;
   lockedHexVersion =
     package:
     let
-      marker = "\"${package}\": {:hex, :${package}, \"";
-      parts = lib.splitString marker (builtins.readFile "${sourceRoot}/mix.lock");
+      parts = hexLockParts package;
     in
     if builtins.length parts != 2 then
       throw "could not resolve ${package} from mix.lock"
     else
       builtins.head (lib.splitString "\"" (builtins.elemAt parts 1));
+  # Top-level mix.lock hex entry, not an unused optional of another package.
+  hasLockedHex = package: builtins.length (hexLockParts package) == 2;
 
   explorerVersion = lockedHexVersion "explorer";
   sqlFmtVersion = lockedHexVersion "sql_fmt";
-  # Top-level mix.lock hex entry, not an unused optional of another package.
-  hasEzstdHex =
-    builtins.length (
-      lib.splitString "\"ezstd\": {:hex, :ezstd, \"" (
-        builtins.readFile "${sourceRoot}/mix.lock"
-      )
-    ) == 2;
+  hasEzstdHex = hasLockedHex "ezstd";
   # Shared pin leaves BUILD_STATIC off; ezstd links -lzstd from libzstd.a.
   # PIC so the NIF can load that archive on linux/amd64.
   zstdForEzstd =

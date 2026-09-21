@@ -36,8 +36,9 @@ in
     ${lib.optionalString pkgs.stdenv.isLinux ''
       # Native addons may NEEDED the program interpreter. Putting bundled glibc
       # on their rpath makes ld-linux loadable as a DSO and segfaults (sharp
-      # 0.35 linux-x64). libc comes from the Node process; copy extra DSOs
-      # into node/dylib and keep non-store $ORIGIN entries (libvips).
+      # 0.35 linux-x64). libc comes from the Node process. Keep non-store
+      # $ORIGIN rpath (libvips) and copy other NEEDED DSOs into node/dylib
+      # only when that rpath would not already find them.
       addon_elfs() {
         find "$out/app" "$out/node/dylib" -type f \( -name '*.node' -o -name '*.so' -o -name '*.so.*' \) 2>/dev/null
       }
@@ -49,6 +50,23 @@ in
             return 1 ;;
         esac
       }
+      soname_on_preserved_rpath() {
+        local elf="$1" soname="$2" origin_dir rpath cand
+        origin_dir="$(dirname "$elf")"
+        rpath="$(${pkgs.patchelf}/bin/patchelf --print-rpath "$elf" 2>/dev/null || true)"
+        IFS=: read -r -a rpath_entries <<< "$rpath"
+        for rpath in "''${rpath_entries[@]}"; do
+          case "$rpath" in
+            ""|/nix/store/*) continue ;;
+            \$ORIGIN) cand="$origin_dir/$soname" ;;
+            \$ORIGIN/*) cand="$origin_dir/''${rpath#\$ORIGIN/}/$soname" ;;
+            /*) cand="$rpath/$soname" ;;
+            *) cand="$origin_dir/$rpath/$soname" ;;
+          esac
+          [ -e "$cand" ] && return 0
+        done
+        return 1
+      }
       for _ in 1 2 3 4 5 6; do
         copied=0
         while IFS= read -r elf; do
@@ -58,6 +76,7 @@ in
             [ -n "$soname" ] || continue
             should_skip_soname "$soname" && continue
             [ -e "$out/node/dylib/$soname" ] && continue
+            soname_on_preserved_rpath "$elf" "$soname" && continue
             found="$(find "$out/app" -type f -name "$soname" 2>/dev/null | head -n 1)"
             [ -n "$found" ] || continue
             cp -L "$found" "$out/node/dylib/$soname"

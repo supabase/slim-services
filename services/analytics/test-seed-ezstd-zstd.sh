@@ -53,7 +53,7 @@ class SeedEzstdZstdTest(unittest.TestCase):
             (seeded / "zstd_errors.h").read_text(encoding="utf-8"), "/* errors */\n"
         )
 
-    def test_skips_unlocked_ezstd(self):
+    def test_fails_when_deps_copy_missing(self):
         shutil.rmtree(self.ezstd)
         result = self.run_seed(self.deps, self.zstd_lib, self.zstd_dev)
         self.assertNotEqual(result.returncode, 0)
