@@ -352,7 +352,11 @@ reconciles every matching stable upstream release from that adoption boundary
 onward. It dispatches at most three versions per service per poll while keeping
 no more than twelve release workflows active across the repository. Active
 versions and versions attempted unsuccessfully within the previous six hours
-are skipped without blocking later missing versions. The cooldown starts from
+are skipped without blocking later missing versions. Studio tags whose
+self-hosted Next standalone still traces `sharp` (`2026.09.21-sha-512201d`
+until the first image built after [supabase/supabase#50658](https://github.com/supabase/supabase/pull/50658))
+are unreleasable as slim images; see [Studio report](services/studio/REPORT.md).
+The cooldown starts from
 GitHub's final workflow update; a successful workflow whose release is not
 visible gets a ten-minute publication grace instead. Failures therefore remain
 retryable without creating gaps or unbounded hourly fan-out. All configured

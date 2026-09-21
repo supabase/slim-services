@@ -51,6 +51,26 @@ tag. The release planner verifies the tag, reads its SLSA provenance, validates
 the referenced GitHub commit, then runs the standard linux/amd64, linux/arm64,
 and darwin/arm64 artifact-and-image matrix.
 
+## Unreleasable Studio versions (sharp in standalone)
+
+Next 15.5.25+ / 16.3.5 traces optional `sharp` into `.next/standalone`. Slim
+floor-check `require()` of `sharp-linux-x64-*.node` segfaults on linux/amd64
+without matching `sharp-libvips`. This repository does **not** vendor that
+native stack.
+
+- Last slim-buildable tag without that trace: `2026.09.14-sha-4dd8a95`.
+- `2026.09.21-sha-512201d` and any later Docker Hub tag whose standalone tree
+  still contains `@img/sharp-*.node` **cannot be built** here. Do not force
+  rebuild them.
+- Slim packaging resumes on the first Studio tag whose self-hosted Next config
+  keeps sharp out of the standalone output (`images.unoptimized` plus
+  `outputFileTracingExcludes` for `sharp` / `@img`, as in
+  [supabase/supabase#50658](https://github.com/supabase/supabase/pull/50658)).
+  Until then, only keep the latest *buildable* Studio release; do not carry a
+  recipe for the broken window.
+
+This is an explicit unreleasable-window decision, not a `release_floor` bump.
+
 Measurements will enter the generated README tables from the first published
 native Studio release manifest.
 

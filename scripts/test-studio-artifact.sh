@@ -4,7 +4,6 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 python3 - "$ROOT_DIR" <<'PY'
-import json
 import os
 import pathlib
 import shutil
@@ -28,7 +27,6 @@ class StudioArtifactBoundaryTest(unittest.TestCase):
         self.rootfs = self.temp / "rootfs"
         self.manifest = self.temp / "manifest.json"
         self.standalone.mkdir()
-        self.installed_store.mkdir(parents=True)
         self.rootfs.mkdir()
 
     def write_required_runtime(self, root):
@@ -125,114 +123,10 @@ class StudioArtifactBoundaryTest(unittest.TestCase):
         self.assertTrue(valid_alias.is_symlink())
         self.assertEqual(valid_alias.resolve(strict=True), valid_destination.resolve())
 
-    def write_sharp_native_without_libvips(
-        self, platform_arch, lib_name, libvips_version="1.3.3"
-    ):
-        stores = self.standalone / "app/node_modules/.pnpm"
-        sharp_pkg = (
-            stores
-            / f"@img+sharp-{platform_arch}@0.35.4/node_modules/@img/sharp-{platform_arch}"
-        )
-        (sharp_pkg / "lib").mkdir(parents=True)
-        (sharp_pkg / "lib" / f"sharp-{platform_arch}-0.35.4.node").write_text(
-            "addon", encoding="utf-8"
-        )
-        (sharp_pkg / "package.json").write_text(
-            json.dumps(
-                {
-                    "name": f"@img/sharp-{platform_arch}",
-                    "version": "0.35.4",
-                    "optionalDependencies": {
-                        f"@img/sharp-libvips-{platform_arch}": libvips_version
-                    },
-                }
-            )
-            + "\n",
-            encoding="utf-8",
-        )
-        libvips_pkg = (
-            self.installed_store
-            / f"@img+sharp-libvips-{platform_arch}@{libvips_version}/node_modules/@img/sharp-libvips-{platform_arch}"
-        )
-        (libvips_pkg / "lib").mkdir(parents=True)
-        (libvips_pkg / "lib" / lib_name).write_text("libvips", encoding="utf-8")
-        (libvips_pkg / "package.json").write_text(
-            f'{{"name":"@img/sharp-libvips-{platform_arch}","version":"{libvips_version}"}}\n',
-            encoding="utf-8",
-        )
-        return sharp_pkg, lib_name
-
-    def test_next_standalone_copies_missing_sharp_libvips_optional(self):
-        sharp_pkg, lib_name = self.write_sharp_native_without_libvips(
-            "linux-x64", "libvips-cpp.so.8.18.6"
-        )
-
-        result = self.run_script(NORMALIZE, self.standalone, self.installed_store)
-
-        self.assertEqual(result.returncode, 0, result.stderr)
-        sibling = sharp_pkg.parent / "sharp-libvips-linux-x64"
-        self.assertTrue(sibling.is_symlink())
-        self.assertTrue((sibling / "lib" / lib_name).is_file(), sibling.resolve())
-
-    def test_next_standalone_copies_missing_sharp_libvips_darwin(self):
-        sharp_pkg, lib_name = self.write_sharp_native_without_libvips(
-            "darwin-arm64", "libvips-cpp.42.dylib"
-        )
-
-        result = self.run_script(NORMALIZE, self.standalone, self.installed_store)
-
-        self.assertEqual(result.returncode, 0, result.stderr)
-        sibling = sharp_pkg.parent / "sharp-libvips-darwin-arm64"
-        self.assertTrue(sibling.is_symlink())
-        self.assertTrue((sibling / "lib" / lib_name).is_file(), sibling.resolve())
-
-    def test_next_standalone_copies_pinned_libvips_not_lexicographic_last(self):
-        sharp_pkg, lib_name = self.write_sharp_native_without_libvips(
-            "linux-x64", "libvips-cpp.so.8.18.6", libvips_version="1.2.4"
-        )
-        decoy = (
-            self.installed_store
-            / "@img+sharp-libvips-linux-x64@1.3.3/node_modules/@img/sharp-libvips-linux-x64"
-        )
-        (decoy / "lib").mkdir(parents=True)
-        (decoy / "lib" / lib_name).write_text("decoy", encoding="utf-8")
-
-        result = self.run_script(NORMALIZE, self.standalone, self.installed_store)
-
-        self.assertEqual(result.returncode, 0, result.stderr)
-        sibling = sharp_pkg.parent / "sharp-libvips-linux-x64"
-        self.assertEqual(
-            (sibling / "lib" / lib_name).read_text(encoding="utf-8"),
-            "libvips",
-        )
-        self.assertIn("1.2.4", str(sibling.resolve()))
-
-    def test_next_standalone_keeps_existing_sharp_libvips_sibling(self):
-        stores = self.standalone / "app/node_modules/.pnpm"
-        img = stores / "@img+sharp-linux-x64@0.35.4/node_modules/@img"
-        (img / "sharp-linux-x64/lib").mkdir(parents=True)
-        (img / "sharp-linux-x64/lib/sharp-linux-x64-0.35.4.node").write_text(
-            "addon", encoding="utf-8"
-        )
-        (img / "sharp-libvips-linux-x64/lib").mkdir(parents=True)
-        (img / "sharp-libvips-linux-x64/lib/libvips-cpp.so.8.18.6").write_text(
-            "present", encoding="utf-8"
-        )
-
-        result = self.run_script(NORMALIZE, self.standalone, self.installed_store)
-
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertFalse((img / "sharp-libvips-linux-x64").is_symlink())
-        self.assertEqual(
-            (img / "sharp-libvips-linux-x64/lib/libvips-cpp.so.8.18.6").read_text(
-                encoding="utf-8"
-            ),
-            "present",
-        )
-
     def test_next_standalone_materialization_fails_when_exact_target_is_missing(self):
         stores = self.standalone / "app/node_modules/.pnpm"
         (stores / "node_modules").mkdir(parents=True)
+        self.installed_store.mkdir(parents=True)
         (stores / "node_modules/escape-string-regexp").symlink_to(
             "../escape-string-regexp@4.0.0/node_modules/escape-string-regexp"
         )

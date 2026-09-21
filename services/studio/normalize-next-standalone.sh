@@ -30,7 +30,6 @@ installed_store="$2"
 python3 - "$standalone_root" "$installed_store" <<'PY'
 from __future__ import annotations
 
-import json
 import os
 import pathlib
 import shutil
@@ -130,85 +129,4 @@ for link, destination, source in repairs:
         shutil.copytree(source, destination, symlinks=True)
     else:
         shutil.copy2(source, destination, follow_symlinks=False)
-
-# Next 15.5.25+ traces sharp's .node without optional sharp-libvips. Copy the
-# matching prebuild so the .node $ORIGIN sibling rpath can resolve.
-standalone_stores: list[pathlib.Path] = []
-for directory, dirnames, _filenames in os.walk(
-    standalone, topdown=True, onerror=report_scan_error, followlinks=False
-):
-    dirnames.sort()
-    path = pathlib.Path(directory)
-    if path.name == ".pnpm" and path.parent.name == "node_modules":
-        standalone_stores.append(path)
-for store in standalone_stores:
-    for sharp_node in store.glob(
-        "@img+sharp-*/node_modules/@img/sharp-*/lib/*.node"
-    ):
-        sharp_pkg = sharp_node.parent.parent
-        arch_name = sharp_pkg.name
-        if not (
-            arch_name.startswith("sharp-linux-")
-            or arch_name.startswith("sharp-darwin-")
-        ):
-            continue
-        libvips_name = "sharp-libvips-" + arch_name.removeprefix("sharp-")
-        sibling = sharp_pkg.parent / libvips_name
-        if sibling.exists():
-            continue
-        scoped = f"@img/{libvips_name}"
-        pin = None
-        for pkg_json in (
-            installed
-            / sharp_pkg.parents[2].name
-            / "node_modules"
-            / "@img"
-            / arch_name
-            / "package.json",
-            sharp_pkg / "package.json",
-        ):
-            if not pkg_json.is_file():
-                continue
-            try:
-                data = json.loads(pkg_json.read_text(encoding="utf-8"))
-            except json.JSONDecodeError as error:
-                raise SystemExit(f"{pkg_json}: invalid JSON ({error})") from error
-            deps: dict[str, object] = {}
-            for key in ("optionalDependencies", "dependencies"):
-                extra = data.get(key) or {}
-                if isinstance(extra, dict):
-                    deps.update(extra)
-            candidate = deps.get(scoped)
-            if isinstance(candidate, str) and candidate:
-                pin = candidate
-                break
-        if pin is not None and any(ch in pin for ch in "^~*<>= "):
-            raise SystemExit(
-                f"{sharp_node}: {scoped} pin {pin!r} is not an exact version"
-            )
-        pattern = (
-            f"@img+{libvips_name}@{pin}/node_modules/@img/{libvips_name}"
-            if pin is not None
-            else f"@img+{libvips_name}@*/node_modules/@img/{libvips_name}"
-        )
-        matches = sorted(p for p in installed.glob(pattern) if inside(p, installed))
-        if pin is None and len(matches) > 1:
-            raise SystemExit(
-                f"{sharp_node}: {scoped} is unpinned and the store has multiple versions"
-            )
-        if not matches:
-            raise SystemExit(
-                f"{sharp_node}: missing optional {libvips_name} in installed pnpm store"
-            )
-        source = matches[0]
-        store_pkg = source.parents[2]
-        dest_store = store / store_pkg.name
-        if not dest_store.exists():
-            if not inside(source, installed):
-                raise SystemExit(
-                    f"{sharp_node}: installed {libvips_name} is outside the store"
-                )
-            shutil.copytree(store_pkg, dest_store, symlinks=True)
-        dest_pkg = dest_store / "node_modules" / "@img" / libvips_name
-        sibling.symlink_to(os.path.relpath(dest_pkg, sibling.parent))
 PY
