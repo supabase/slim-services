@@ -174,6 +174,12 @@ let
         builtins.readFile "${sourceRoot}/mix.lock"
       )
     ) == 2;
+  # Shared pin leaves BUILD_STATIC off; ezstd links -lzstd from libzstd.a.
+  # PIC so the NIF can load that archive on linux/amd64.
+  zstdForEzstd =
+    (pkgs.zstd.override { enableStatic = true; }).overrideAttrs (old: {
+      cmakeFlags = old.cmakeFlags ++ [ "-DCMAKE_POSITION_INDEPENDENT_CODE=ON" ];
+    });
 
   # These two dependencies currently publish the NIF 2.15 variant selected by
   # rustler_precompiled under OTP 27. Fail closed on an OTP-generation change
@@ -242,7 +248,7 @@ let
     ''
     + lib.optionalString hasEzstdHex ''
       bash ${./seed-ezstd-zstd.sh} "$MIX_DEPS_PATH" \
-        ${lib.getLib pkgs.zstd} ${lib.getDev pkgs.zstd}
+        ${lib.getLib zstdForEzstd} ${lib.getDev zstdForEzstd}
     '';
 
     removeCookie = false;

@@ -131,7 +131,7 @@ for link, destination, source in repairs:
         shutil.copy2(source, destination, follow_symlinks=False)
 
 # Next 15.5.25+ traces sharp's .node without optional sharp-libvips. Copy the
-# matching prebuild so the .node ELF $ORIGIN sibling rpath can resolve.
+# matching prebuild so the .node $ORIGIN sibling rpath can resolve.
 standalone_stores: list[pathlib.Path] = []
 for directory, dirnames, _filenames in os.walk(
     standalone, topdown=True, onerror=report_scan_error, followlinks=False
@@ -142,13 +142,16 @@ for directory, dirnames, _filenames in os.walk(
         standalone_stores.append(path)
 for store in standalone_stores:
     for sharp_node in store.glob(
-        "@img+sharp-linux-*/node_modules/@img/sharp-linux-*/lib/*.node"
+        "@img+sharp-*/node_modules/@img/sharp-*/lib/*.node"
     ):
         sharp_pkg = sharp_node.parent.parent
         arch_name = sharp_pkg.name
-        if not arch_name.startswith("sharp-linux-"):
+        if not (
+            arch_name.startswith("sharp-linux-")
+            or arch_name.startswith("sharp-darwin-")
+        ):
             continue
-        libvips_name = "sharp-libvips-linux-" + arch_name[len("sharp-linux-") :]
+        libvips_name = "sharp-libvips-" + arch_name.removeprefix("sharp-")
         sibling = sharp_pkg.parent / libvips_name
         if sibling.exists():
             continue

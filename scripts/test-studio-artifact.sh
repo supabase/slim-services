@@ -124,26 +124,31 @@ class StudioArtifactBoundaryTest(unittest.TestCase):
         self.assertTrue(valid_alias.is_symlink())
         self.assertEqual(valid_alias.resolve(strict=True), valid_destination.resolve())
 
-    def test_next_standalone_copies_missing_sharp_libvips_optional(self):
+    def write_sharp_native_without_libvips(self, platform_arch, lib_name):
         stores = self.standalone / "app/node_modules/.pnpm"
         sharp_pkg = (
-            stores / "@img+sharp-linux-x64@0.35.4/node_modules/@img/sharp-linux-x64"
+            stores
+            / f"@img+sharp-{platform_arch}@0.35.4/node_modules/@img/sharp-{platform_arch}"
         )
         (sharp_pkg / "lib").mkdir(parents=True)
-        (sharp_pkg / "lib" / "sharp-linux-x64-0.35.4.node").write_text(
+        (sharp_pkg / "lib" / f"sharp-{platform_arch}-0.35.4.node").write_text(
             "addon", encoding="utf-8"
         )
         libvips_pkg = (
             self.installed_store
-            / "@img+sharp-libvips-linux-x64@1.3.3/node_modules/@img/sharp-libvips-linux-x64"
+            / f"@img+sharp-libvips-{platform_arch}@1.3.3/node_modules/@img/sharp-libvips-{platform_arch}"
         )
         (libvips_pkg / "lib").mkdir(parents=True)
-        (libvips_pkg / "lib" / "libvips-cpp.so.8.18.6").write_text(
-            "libvips", encoding="utf-8"
-        )
+        (libvips_pkg / "lib" / lib_name).write_text("libvips", encoding="utf-8")
         (libvips_pkg / "package.json").write_text(
-            '{"name":"@img/sharp-libvips-linux-x64","version":"1.3.3"}\n',
+            f'{{"name":"@img/sharp-libvips-{platform_arch}","version":"1.3.3"}}\n',
             encoding="utf-8",
+        )
+        return sharp_pkg, lib_name
+
+    def test_next_standalone_copies_missing_sharp_libvips_optional(self):
+        sharp_pkg, lib_name = self.write_sharp_native_without_libvips(
+            "linux-x64", "libvips-cpp.so.8.18.6"
         )
 
         result = self.run_script(NORMALIZE, self.standalone, self.installed_store)
@@ -151,10 +156,19 @@ class StudioArtifactBoundaryTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         sibling = sharp_pkg.parent / "sharp-libvips-linux-x64"
         self.assertTrue(sibling.is_symlink())
-        self.assertTrue(
-            (sibling / "lib" / "libvips-cpp.so.8.18.6").is_file(),
-            sibling.resolve(),
+        self.assertTrue((sibling / "lib" / lib_name).is_file(), sibling.resolve())
+
+    def test_next_standalone_copies_missing_sharp_libvips_darwin(self):
+        sharp_pkg, lib_name = self.write_sharp_native_without_libvips(
+            "darwin-arm64", "libvips-cpp.42.dylib"
         )
+
+        result = self.run_script(NORMALIZE, self.standalone, self.installed_store)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        sibling = sharp_pkg.parent / "sharp-libvips-darwin-arm64"
+        self.assertTrue(sibling.is_symlink())
+        self.assertTrue((sibling / "lib" / lib_name).is_file(), sibling.resolve())
 
     def test_next_standalone_keeps_existing_sharp_libvips_sibling(self):
         stores = self.standalone / "app/node_modules/.pnpm"
