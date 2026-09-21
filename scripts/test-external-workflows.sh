@@ -415,6 +415,7 @@ def test_repository_checks_runs_dynamic_and_external_contracts():
         "scripts/test-portable-postgres.sh",
         "scripts/test-portable-postgrest.sh",
         "scripts/test-studio-artifact.sh",
+        "services/analytics/test-seed-ezstd-zstd.sh",
         "scripts/test-license-compliance.sh",
         "scripts/test-poll-service-releases.sh",
         "scripts/test-identity.sh",

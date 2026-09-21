@@ -12,6 +12,9 @@
 #   pinned darwin tarballs are fetched as fixed-output derivations and seeded
 #   into the rustler_precompiled cache (checksums are verified against the
 #   checksum file inside each hex package).
+# - A locked ezstd hex package compiles a C++ NIF that would git clone zstd.
+#   Releases without that lock entry keep the older path; locked releases seed
+#   libzstd from the shared package set after mixRelease's mode-stripping copy.
 # - config/prod.exs sets cache_static_manifest; the asset pipeline (npm/
 #   esbuild) is skipped like realtime's, so a stub cache_manifest.json is
 #   installed to keep endpoint boot happy (UI assets 404, API unaffected).
@@ -151,19 +154,31 @@ let
   # Mix writes a stable textual lockfile format. Resolve the exact Hex package
   # versions from the checked-out release so their precompiled NIF asset names
   # advance with future releases instead of requiring a packaging edit.
+  mixLockText = builtins.readFile "${sourceRoot}/mix.lock";
+  hexLockParts =
+    package:
+    lib.splitString "\"${package}\": {:hex, :${package}, \"" mixLockText;
   lockedHexVersion =
     package:
     let
-      marker = "\"${package}\": {:hex, :${package}, \"";
-      parts = lib.splitString marker (builtins.readFile "${sourceRoot}/mix.lock");
+      parts = hexLockParts package;
     in
     if builtins.length parts != 2 then
       throw "could not resolve ${package} from mix.lock"
     else
       builtins.head (lib.splitString "\"" (builtins.elemAt parts 1));
+  # Top-level mix.lock hex entry, not an unused optional of another package.
+  hasLockedHex = package: builtins.length (hexLockParts package) == 2;
 
   explorerVersion = lockedHexVersion "explorer";
   sqlFmtVersion = lockedHexVersion "sql_fmt";
+  hasEzstdHex = hasLockedHex "ezstd";
+  # Shared pin leaves BUILD_STATIC off; ezstd links -lzstd from libzstd.a.
+  # PIC so the NIF can load that archive on linux/amd64.
+  zstdForEzstd =
+    (pkgs.zstd.override { enableStatic = true; }).overrideAttrs (old: {
+      cmakeFlags = old.cmakeFlags ++ [ "-DCMAKE_POSITION_INDEPENDENT_CODE=ON" ];
+    });
 
   # These two dependencies currently publish the NIF 2.15 variant selected by
   # rustler_precompiled under OTP 27. Fail closed on an OTP-generation change
@@ -229,6 +244,10 @@ let
       mkdir -p .cargo
       cat ${cargoDeps}/.cargo/config.toml >> .cargo/config.toml
       ln -sfn ${cargoDeps} cargo-vendor-dir
+    ''
+    + lib.optionalString hasEzstdHex ''
+      bash ${./seed-ezstd-zstd.sh} "$MIX_DEPS_PATH" \
+        ${lib.getLib zstdForEzstd} ${lib.getDev zstdForEzstd}
     '';
 
     removeCookie = false;
