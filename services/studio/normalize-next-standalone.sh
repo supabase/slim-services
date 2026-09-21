@@ -129,4 +129,45 @@ for link, destination, source in repairs:
         shutil.copytree(source, destination, symlinks=True)
     else:
         shutil.copy2(source, destination, follow_symlinks=False)
+
+# Next 15.5.25+ traces sharp's .node without optional sharp-libvips. Copy the
+# matching prebuild so the .node ELF $ORIGIN sibling rpath can resolve.
+standalone_stores: list[pathlib.Path] = []
+for directory, dirnames, _filenames in os.walk(
+    standalone, topdown=True, onerror=report_scan_error, followlinks=False
+):
+    dirnames.sort()
+    path = pathlib.Path(directory)
+    if path.name == ".pnpm" and path.parent.name == "node_modules":
+        standalone_stores.append(path)
+for store in standalone_stores:
+    for sharp_node in store.glob(
+        "@img+sharp-linux-*/node_modules/@img/sharp-linux-*/lib/*.node"
+    ):
+        sharp_pkg = sharp_node.parent.parent
+        arch_name = sharp_pkg.name
+        if not arch_name.startswith("sharp-linux-"):
+            continue
+        libvips_name = "sharp-libvips-linux-" + arch_name[len("sharp-linux-") :]
+        sibling = sharp_pkg.parent / libvips_name
+        if sibling.exists():
+            continue
+        matches = sorted(
+            installed.glob(f"@img+{libvips_name}@*/node_modules/@img/{libvips_name}")
+        )
+        if not matches:
+            raise SystemExit(
+                f"{sharp_node}: missing optional {libvips_name} in installed pnpm store"
+            )
+        source = matches[-1]
+        store_pkg = source.parents[2]
+        dest_store = store / store_pkg.name
+        if not dest_store.exists():
+            if not inside(source, installed):
+                raise SystemExit(
+                    f"{sharp_node}: installed {libvips_name} is outside the store"
+                )
+            shutil.copytree(store_pkg, dest_store, symlinks=True)
+        dest_pkg = dest_store / "node_modules" / "@img" / libvips_name
+        sibling.symlink_to(os.path.relpath(dest_pkg, sibling.parent))
 PY

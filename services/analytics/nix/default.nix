@@ -12,6 +12,9 @@
 #   pinned darwin tarballs are fetched as fixed-output derivations and seeded
 #   into the rustler_precompiled cache (checksums are verified against the
 #   checksum file inside each hex package).
+# - A locked ezstd hex package compiles a C++ NIF that would git clone zstd.
+#   Releases without that lock entry keep the older path; locked releases seed
+#   libzstd from the shared package set after mixRelease's mode-stripping copy.
 # - config/prod.exs sets cache_static_manifest; the asset pipeline (npm/
 #   esbuild) is skipped like realtime's, so a stub cache_manifest.json is
 #   installed to keep endpoint boot happy (UI assets 404, API unaffected).
@@ -164,6 +167,13 @@ let
 
   explorerVersion = lockedHexVersion "explorer";
   sqlFmtVersion = lockedHexVersion "sql_fmt";
+  # Top-level mix.lock hex entry, not an unused optional of another package.
+  hasEzstdHex =
+    builtins.length (
+      lib.splitString "\"ezstd\": {:hex, :ezstd, \"" (
+        builtins.readFile "${sourceRoot}/mix.lock"
+      )
+    ) == 2;
 
   # These two dependencies currently publish the NIF 2.15 variant selected by
   # rustler_precompiled under OTP 27. Fail closed on an OTP-generation change
@@ -229,6 +239,10 @@ let
       mkdir -p .cargo
       cat ${cargoDeps}/.cargo/config.toml >> .cargo/config.toml
       ln -sfn ${cargoDeps} cargo-vendor-dir
+    ''
+    + lib.optionalString hasEzstdHex ''
+      bash ${./seed-ezstd-zstd.sh} "$MIX_DEPS_PATH" \
+        ${lib.getLib pkgs.zstd} ${lib.getDev pkgs.zstd}
     '';
 
     removeCookie = false;

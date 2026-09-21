@@ -64,6 +64,7 @@ jobs:
           scripts/test-oci-mirror.sh
           scripts/test-upstream-runtime.sh
           scripts/test-studio-artifact.sh
+          services/analytics/test-seed-ezstd-zstd.sh
           scripts/test-nix-release.sh
           services/postgres/test-start-lifecycle.sh
           scripts/test-image-artifact-archive.sh

@@ -34,9 +34,39 @@ in
           path.write_bytes(b"#!/usr/bin/env node\n" + data.split(b"\n", 1)[1])
   PY
     ${lib.optionalString pkgs.stdenv.isLinux ''
-      # Native addons are built against Nix's absolute RUNPATH. Keep their
-      # existing relative entries, then point them at the copied Node closure
-      # and bundled glibc family from any depth under app/.
+      # Native addons may NEEDED the program interpreter. Putting bundled glibc
+      # on their rpath makes ld-linux loadable as a DSO and segfaults (sharp
+      # 0.35 linux-x64). libc comes from the Node process; copy extra DSOs
+      # into node/dylib and keep non-store $ORIGIN entries (libvips).
+      addon_elfs() {
+        find "$out/app" "$out/node/dylib" -type f \( -name '*.node' -o -name '*.so' -o -name '*.so.*' \) 2>/dev/null
+      }
+      should_skip_soname() {
+        case "$1" in
+          libc.so*|ld-linux*|libdl.so*|libpthread.so*|libm.so*|libresolv.so*|librt.so*|libutil.so*|libgcc_s.so*|libstdc++.so*)
+            return 0 ;;
+          *)
+            return 1 ;;
+        esac
+      }
+      for _ in 1 2 3 4 5 6; do
+        copied=0
+        while IFS= read -r elf; do
+          [ -n "$elf" ] || continue
+          ${pkgs.file}/bin/file "$elf" 2>/dev/null | grep -q "ELF" || continue
+          while IFS= read -r soname; do
+            [ -n "$soname" ] || continue
+            should_skip_soname "$soname" && continue
+            [ -e "$out/node/dylib/$soname" ] && continue
+            found="$(find "$out/app" -type f -name "$soname" 2>/dev/null | head -n 1)"
+            [ -n "$found" ] || continue
+            cp -L "$found" "$out/node/dylib/$soname"
+            chmod u+w "$out/node/dylib/$soname"
+            copied=1
+          done < <(${pkgs.patchelf}/bin/patchelf --print-needed "$elf" 2>/dev/null || true)
+        done < <(addon_elfs)
+        [ "$copied" = 0 ] && break
+      done
       while IFS= read -r elf; do
         [ -n "$elf" ] || continue
         ${pkgs.file}/bin/file "$elf" 2>/dev/null | grep -q "ELF" || continue
@@ -56,13 +86,10 @@ in
           esac
         done
         rel_dylib="$(${pkgs.python3}/bin/python3 -c "import os,sys; print(os.path.relpath(sys.argv[1], sys.argv[2]))" "$out/node/dylib" "$(dirname "$elf")")"
-        rel_glibc="$(${pkgs.python3}/bin/python3 -c "import os,sys; print(os.path.relpath(sys.argv[1], sys.argv[2]))" "$out/lib" "$(dirname "$elf")")"
-        new_rpath="\$ORIGIN/$rel_dylib:\$ORIGIN/$rel_glibc"
+        new_rpath="\$ORIGIN/$rel_dylib"
         [ -n "$preserved_rpath" ] && new_rpath="$new_rpath:$preserved_rpath"
         ${pkgs.patchelf}/bin/patchelf --set-rpath "$new_rpath" "$elf"
-      done < <(
-        find "$out/app" -type f \( -name '*.node' -o -name '*.so' -o -name '*.so.*' \) 2>/dev/null
-      )
+      done < <(find "$out/app" -type f \( -name '*.node' -o -name '*.so' -o -name '*.so.*' \) 2>/dev/null)
     ''}
     ${lib.optionalString pkgs.stdenv.isDarwin ''
       # Re-run the Darwin closure pass after the application files are staged:
