@@ -90,16 +90,19 @@ def dot_rooted_entries():
 
 
 class ExtractUpstreamArchiveTest(unittest.TestCase):
-    def invoke(self, archive, rootfs, mapping=MAPPING, executables=EXECUTABLES):
+    def invoke(self, archive, rootfs, mapping=MAPPING, executables=EXECUTABLES, optional=None):
+        command = [
+            sys.executable,
+            str(SCRIPT),
+            str(archive),
+            str(rootfs),
+            json.dumps(mapping, sort_keys=True),
+            json.dumps(executables),
+        ]
+        if optional is not None:
+            command.append(json.dumps(optional, sort_keys=True))
         return subprocess.run(
-            [
-                sys.executable,
-                str(SCRIPT),
-                str(archive),
-                str(rootfs),
-                json.dumps(mapping, sort_keys=True),
-                json.dumps(executables),
-            ],
+            command,
             cwd=ROOT_DIR,
             text=True,
             capture_output=True,
@@ -183,7 +186,9 @@ class ExtractUpstreamArchiveTest(unittest.TestCase):
                 installed = rootfs / destination
                 self.assertEqual(installed.read_bytes(), ROOTED_CONTENTS[source][0])
 
-    def assert_rejected(self, entries, label, diagnostic, mapping=MAPPING, executables=EXECUTABLES):
+    def assert_rejected(
+        self, entries, label, diagnostic, mapping=MAPPING, executables=EXECUTABLES, optional=None
+    ):
         with self.subTest(label=label):
             with tempfile.TemporaryDirectory() as directory:
                 directory = pathlib.Path(directory)
@@ -191,7 +196,7 @@ class ExtractUpstreamArchiveTest(unittest.TestCase):
                 rootfs = directory / "rootfs"
                 write_archive(archive, entries)
 
-                result = self.invoke(archive, rootfs, mapping, executables)
+                result = self.invoke(archive, rootfs, mapping, executables, optional)
 
                 self.assertNotEqual(result.returncode, 0, result.stdout)
                 self.assertIn(diagnostic, result.stderr)
@@ -251,6 +256,44 @@ class ExtractUpstreamArchiveTest(unittest.TestCase):
         ]
         for entries, label in cases:
             self.assert_rejected(entries, label, "non-regular archive member")
+
+    def test_optional_members_install_when_present_and_may_be_absent(self):
+        optional = {"NOTICE": "share/licenses/mailpit/NOTICE"}
+        notice = (b"optional notice\n", 0o644)
+        with tempfile.TemporaryDirectory() as directory:
+            directory = pathlib.Path(directory)
+            archive = directory / "with-optional.tar.gz"
+            rootfs = directory / "rootfs"
+            write_archive(archive, valid_entries() + [("NOTICE", *notice)])
+
+            result = self.invoke(archive, rootfs, optional=optional)
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            installed = rootfs / optional["NOTICE"]
+            self.assertEqual(installed.read_bytes(), notice[0])
+            self.assertEqual(stat.S_IMODE(installed.stat().st_mode), notice[1])
+            report = json.loads(result.stdout)
+            self.assertIn("NOTICE", report["members"])
+
+        with tempfile.TemporaryDirectory() as directory:
+            directory = pathlib.Path(directory)
+            archive = directory / "without-optional.tar.gz"
+            rootfs = directory / "rootfs"
+            write_archive(archive, valid_entries())
+
+            result = self.invoke(archive, rootfs, optional=optional)
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse((rootfs / optional["NOTICE"]).exists())
+            report = json.loads(result.stdout)
+            self.assertEqual(set(report["members"]), set(MAPPING))
+
+        self.assert_rejected(
+            valid_entries() + [("unexpected", b"x", 0o644)],
+            "extra member beside optional",
+            "archive members do not match mapping",
+            optional=optional,
+        )
 
     def test_rejects_missing_and_extra_members(self):
         self.assert_rejected(valid_entries()[:-1], "missing member", "archive members do not match mapping")

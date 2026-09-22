@@ -29,29 +29,43 @@ def _relative_path(value: Any, label: str, *, nested: bool) -> str:
     return value
 
 
-def _load_inputs(mapping_raw: str, executables_raw: str) -> tuple[dict[str, str], set[str]]:
-    try:
-        mapping_value = json.loads(mapping_raw)
-        executables_value = json.loads(executables_raw)
-    except json.JSONDecodeError as error:
-        raise ArchiveError(f"mapping/executables JSON is invalid: {error.msg}") from error
-
+def _parse_mapping(mapping_value: Any, label: str) -> dict[str, str]:
     if not isinstance(mapping_value, dict):
-        raise ArchiveError("mapping JSON must be an object")
-    if not isinstance(executables_value, list):
-        raise ArchiveError("executables JSON must be an array")
-
+        raise ArchiveError(f"{label} JSON must be an object")
     mapping: dict[str, str] = {}
     destinations: set[str] = set()
     for source_value, destination_value in mapping_value.items():
-        source = _relative_path(source_value, "mapping source", nested=True)
-        destination = _relative_path(destination_value, "mapping destination", nested=True)
+        source = _relative_path(source_value, f"{label} source", nested=True)
+        destination = _relative_path(destination_value, f"{label} destination", nested=True)
         if source in mapping:
             raise ArchiveError(f"duplicate mapping source: {source}")
         if destination in destinations:
             raise ArchiveError(f"duplicate destination: {destination}")
         mapping[source] = destination
         destinations.add(destination)
+    return mapping
+
+
+def _load_inputs(
+    mapping_raw: str, executables_raw: str, optional_raw: str = "{}"
+) -> tuple[dict[str, str], set[str], dict[str, str]]:
+    try:
+        mapping_value = json.loads(mapping_raw)
+        executables_value = json.loads(executables_raw)
+        optional_value = json.loads(optional_raw)
+    except json.JSONDecodeError as error:
+        raise ArchiveError(f"mapping/executables JSON is invalid: {error.msg}") from error
+
+    if not isinstance(executables_value, list):
+        raise ArchiveError("executables JSON must be an array")
+
+    mapping = _parse_mapping(mapping_value, "mapping")
+    optional = _parse_mapping(optional_value, "optional mapping")
+    for source, destination in optional.items():
+        if source in mapping:
+            raise ArchiveError(f"duplicate mapping source: {source}")
+        if destination in mapping.values():
+            raise ArchiveError(f"duplicate destination: {destination}")
 
     executables: set[str] = set()
     for executable_value in executables_value:
@@ -64,11 +78,14 @@ def _load_inputs(mapping_raw: str, executables_raw: str) -> tuple[dict[str, str]
         raise ArchiveError(
             "executables are absent from mapping: " + ", ".join(unknown_executables)
         )
-    return mapping, executables
+    return mapping, executables, optional
 
 
 def _validate_members(
-    archive: tarfile.TarFile, mapping: dict[str, str], executables: set[str]
+    archive: tarfile.TarFile,
+    mapping: dict[str, str],
+    executables: set[str],
+    optional: dict[str, str],
 ) -> list[tuple[tarfile.TarInfo, str, str, int]]:
     members = archive.getmembers()
     seen_raw: set[str] = set()
@@ -118,6 +135,8 @@ def _validate_members(
             root_member_seen = True
         normalized_members.append((member, normalized_name))
 
+    combined = dict(mapping)
+    combined.update(optional)
     seen_normalized: set[str] = set()
     regular_members: set[str] = set()
     validated: list[tuple[tarfile.TarInfo, str, str, int]] = []
@@ -132,19 +151,22 @@ def _validate_members(
         if member.isdir():
             continue
         regular_members.add(name)
-        if name not in mapping:
+        if name not in combined:
             continue
         mode = member.mode
         is_executable = bool(mode & 0o111)
         if (name in executables) != is_executable:
             raise ArchiveError(f"executable mode mismatch: {name}")
-        validated.append((member, name, mapping[name], mode & 0o777))
+        validated.append((member, name, combined[name], mode & 0o777))
 
+    # Required members must be present. Optional members may be absent so an
+    # older archive layout still matches; anything else is still rejected.
     expected = set(mapping)
+    allowed = set(combined)
     actual = regular_members
-    if actual != expected:
+    if not expected <= actual <= allowed:
         missing = sorted(expected - actual)
-        extra = sorted(actual - expected)
+        extra = sorted(actual - allowed)
         details = []
         if missing:
             details.append("missing=" + ",".join(missing))
@@ -216,13 +238,14 @@ def normalize(
     rootfs: pathlib.Path,
     mapping_raw: str,
     executables_raw: str,
+    optional_raw: str = "{}",
 ) -> dict[str, dict[str, dict[str, str]]]:
-    mapping, executables = _load_inputs(mapping_raw, executables_raw)
+    mapping, executables, optional = _load_inputs(mapping_raw, executables_raw, optional_raw)
     if not mapping:
         raise ArchiveError("mapping JSON must not be empty")
     try:
         with tarfile.open(archive_path, "r:*") as archive:
-            validated = _validate_members(archive, mapping, executables)
+            validated = _validate_members(archive, mapping, executables, optional)
             _prepare_destinations(rootfs, [destination for _, _, destination, _ in validated])
             report = _install(archive, rootfs, validated)
     except (OSError, tarfile.TarError) as error:
@@ -236,9 +259,16 @@ def main() -> int:
     parser.add_argument("rootfs", type=pathlib.Path)
     parser.add_argument("mapping_json")
     parser.add_argument("executables_json")
+    parser.add_argument("optional_mapping_json", nargs="?", default="{}")
     args = parser.parse_args()
     try:
-        report = normalize(args.archive, args.rootfs, args.mapping_json, args.executables_json)
+        report = normalize(
+            args.archive,
+            args.rootfs,
+            args.mapping_json,
+            args.executables_json,
+            args.optional_mapping_json,
+        )
     except ArchiveError as error:
         print(f"error: {error}", file=os.sys.stderr)
         return 1
