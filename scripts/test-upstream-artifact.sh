@@ -178,6 +178,29 @@ class UpstreamArtifactTest(unittest.TestCase):
             {"name": archive.name, "sha256": archive_sha256},
         )
 
+    def test_unset_optional_mapping_json_parses(self):
+        env = self.env.copy()
+        env.pop("UPSTREAM_ARCHIVE_OPTIONAL_MAPPING_JSON", None)
+        result = subprocess.run(
+            [
+                "/bin/bash",
+                str(ROOT_DIR / "scripts" / "build-artifact-from-upstream.sh"),
+                "mailpit",
+                "v1.30.2",
+            ],
+            cwd=ROOT_DIR,
+            env=env,
+            text=True,
+            capture_output=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("mapping/executables JSON is invalid", result.stderr)
+        manifest = json.loads((self.artifact_dir / "manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(
+            manifest["provenance"]["installed_members"]["mailpit"]["destination"],
+            "bin/mailpit",
+        )
+
     def test_linux_archive_libc_override_is_recorded(self):
         result = self.run_build(ARTIFACT_LIBC="musl")
         self.assertEqual(result.returncode, 0, result.stderr)
