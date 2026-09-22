@@ -340,18 +340,28 @@ if release_lines:
         line_floor = line["release_floor"]
         if line_floor not in candidates:
             raise SystemExit(1)
+    # One oldest tag per line before the rest, so a newer OrioleDB tag is not
+    # stuck behind every older stock 15/17 tag in the per-service dispatch cap.
+    buckets = [[] for _ in line_patterns]
+    for candidate in sorted(eligible, key=version_key):
+        matched_index = next(
+            index
+            for index, (line_pattern, _line_floor) in enumerate(line_patterns)
+            if line_pattern.fullmatch(candidate)
+        )
+        buckets[matched_index].append(candidate)
+    ordered = []
+    while any(buckets):
+        for bucket in buckets:
+            if bucket:
+                ordered.append(bucket.pop(0))
 else:
     if release_floor not in candidates:
         raise SystemExit(1)
     floor_key = version_key(release_floor)
     eligible = {candidate for candidate in candidates if version_key(candidate) >= floor_key}
-print(
-    *sorted(
-        eligible,
-        key=version_key,
-    ),
-    sep="\n",
-)
+    ordered = sorted(eligible, key=version_key)
+print(*ordered, sep="\n")
 PY
     )"; then
       printf 'could not reconcile Docker Hub tags for %s from floor %s (%s); continuing\n' \

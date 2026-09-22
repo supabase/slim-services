@@ -71,30 +71,69 @@ ordered_services=(postgres postgrest auth realtime storage edge-runtime studio a
 display_names=("Postgres" "PostgREST" "Auth" "Realtime" "Storage" "Edge Runtime" "Studio" "Analytics" "PgMeta" "Pooler")
 
 rows_tsv=""
-for i in "${!ordered_services[@]}"; do
-  service="${ordered_services[$i]}"
-  display="${display_names[$i]}"
-  manifest_version="$(python3 - "$ARTIFACTS_DIR" "$service" <<'PY'
+ORDERED_SERVICES="$(IFS=,; printf '%s' "${ordered_services[*]}")"
+DISPLAY_NAMES="$(IFS=$'\t'; printf '%s' "${display_names[*]}")"
+while IFS=$'\t' read -r service display version; do
+  [[ -n "$service" ]] || continue
+  recipe_vars="$(
+    SOURCE_REF="$version"
+    VERSION="$version"
+    # shellcheck disable=SC1090
+    source "$(recipe_file "$service")" >/dev/null 2>&1
+    printf '%s\t%s\t%s' "${UPSTREAM_IMAGE:-}" "${UPSTREAM_COMPARE_IMAGE:-}" "${RESULTS_NOTE:-}"
+  )"
+  rows_tsv+="$service"$'\t'"$display"$'\t'"$recipe_vars"$'\t'"$version"$'\n'
+done < <(
+  ORDERED_SERVICES="$ORDERED_SERVICES" DISPLAY_NAMES="$DISPLAY_NAMES" \
+    python3 - "$ROOT_DIR" "$ARTIFACTS_DIR" <<'PY'
 import glob
 import json
 import os
+import re
 import sys
 
-artifacts_dir, service = sys.argv[1:]
-manifests = glob.glob(os.path.join(artifacts_dir, service, "*", "linux-arm64", "manifest.json"))
-if manifests:
-    with open(max(manifests, key=os.path.getmtime), encoding="utf-8") as fh:
-        print(json.load(fh).get("version", ""))
+root, artifacts_dir = sys.argv[1:]
+with open(os.path.join(root, ".github", "service-release-sources.json"), encoding="utf-8") as fh:
+    release_config = json.load(fh)["services"]
+services = os.environ["ORDERED_SERVICES"].split(",")
+displays = os.environ["DISPLAY_NAMES"].split("\t")
+
+def version_key(value):
+    return tuple(
+        (0, int(part)) if part.isdigit() else (1, part)
+        for part in re.findall(r"\d+|\D+", value)
+    )
+
+def manifest_version(path):
+    with open(path, encoding="utf-8") as fh:
+        return json.load(fh).get("version", "")
+
+def postgres_line_label(pattern):
+    if "orioledb" in pattern:
+        return "Postgres OrioleDB"
+    if pattern.startswith("^15"):
+        return "Postgres 15"
+    if pattern.startswith("^17"):
+        return "Postgres 17"
+    return "Postgres"
+
+for service, display in zip(services, displays):
+    manifests = glob.glob(os.path.join(artifacts_dir, service, "*", "linux-arm64", "manifest.json"))
+    lines = release_config.get(service, {}).get("release_lines")
+    if not lines:
+        version = manifest_version(max(manifests, key=os.path.getmtime)) if manifests else ""
+        print(service, display, version, sep="\t")
+        continue
+    for line in lines:
+        pattern = re.compile(line["tag_pattern"])
+        matched = [path for path in manifests if pattern.fullmatch(manifest_version(path))]
+        if not matched:
+            continue
+        version = max((manifest_version(path) for path in matched), key=version_key)
+        label = postgres_line_label(line["tag_pattern"]) if service == "postgres" else display
+        print(service, label, version, sep="\t")
 PY
-)"
-  recipe_vars="$(
-    SOURCE_REF="$manifest_version"
-    # shellcheck disable=SC1090
-    source "$(recipe_file "$service")" >/dev/null 2>&1
-    printf '%s\t%s\t%s\n' "${UPSTREAM_IMAGE:-}" "${UPSTREAM_COMPARE_IMAGE:-}" "${RESULTS_NOTE:-}"
-  )"
-  rows_tsv+="$service"$'\t'"$display"$'\t'"$recipe_vars"$'\n'
-done
+)
 
 # Host-native darwin-arm64 table: driven by darwin manifests only; services
 # without one are omitted (or, with --merge, keep their existing row).
@@ -136,13 +175,17 @@ for line in os.environ["ROWS_TSV"].splitlines():
     if not line.strip():
         continue
     service, display = line.split("\t")[:2]
+    version = line.split("\t")[5] if len(line.split("\t")) > 5 else ""
 
-    manifests = glob.glob(os.path.join(artifacts_dir, service, "*", "darwin-arm64", "manifest.json"))
-    if not manifests:
+    manifest_path = (
+        os.path.join(artifacts_dir, service, version, "darwin-arm64", "manifest.json")
+        if version
+        else ""
+    )
+    if not manifest_path or not os.path.isfile(manifest_path):
         if merge and display in kept:
             rows.append(kept[display])
         continue
-    manifest_path = max(manifests, key=os.path.getmtime)
     with open(manifest_path, encoding="utf-8") as fh:
         manifest = json.load(fh)
 
@@ -274,10 +317,14 @@ directional = False
 for line in os.environ["ROWS_TSV"].splitlines():
     if not line.strip():
         continue
-    service, display, upstream_image, compare_image, note = (line.split("\t") + [""] * 5)[:5]
+    service, display, upstream_image, compare_image, note, version = (line.split("\t") + [""] * 6)[:6]
 
-    manifests = glob.glob(os.path.join(artifacts_dir, service, "*", "linux-arm64", "manifest.json"))
-    if not manifests:
+    manifest_path = (
+        os.path.join(artifacts_dir, service, version, "linux-arm64", "manifest.json")
+        if version
+        else ""
+    )
+    if not manifest_path or not os.path.isfile(manifest_path):
         if merge and display in kept:
             rows.append(kept[display])
             continue
@@ -286,7 +333,6 @@ for line in os.environ["ROWS_TSV"].splitlines():
             print(f"[tables] WARNING: {msg}", file=sys.stderr)
             continue
         raise SystemExit(f"[tables] ERROR: {msg}")
-    manifest_path = max(manifests, key=os.path.getmtime)
     with open(manifest_path, encoding="utf-8") as fh:
         manifest = json.load(fh)
 
@@ -356,13 +402,13 @@ saved = total_upstream - total_slim
 totals = (
     "| Metric | Compressed size |\n"
     "|---|---:|\n"
-    f"| Upstream ARM64 images total ({len(rows)} services) | `{total_upstream:.1f} MiB` |\n"
+    f"| Upstream ARM64 images total ({len(rows)} rows) | `{total_upstream:.1f} MiB` |\n"
     f"| Current slim images total | `{total_slim:.1f} MiB` |\n"
     f"| Current total reduction vs upstream | `{saved:.1f} MiB / {saved / total_upstream * 100:.1f}%` |"
 )
 
 release_summary = (
-    f"For the latest published Linux ARM64 release set ({len(rows)} services), upstream images\n"
+    f"For the latest published Linux ARM64 release set ({len(rows)} rows), upstream images\n"
     f"total **{total_upstream:.1f} MiB** compressed; the slim set totals **{total_slim:.1f} MiB** "
     f"(**{saved / total_upstream * 100:.1f}%**\n"
     "smaller — exact numbers below). Every published service also has measured\n"

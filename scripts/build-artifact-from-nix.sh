@@ -65,12 +65,19 @@ else
 fi
 
 python3 - "$release_dir/release.json" "$service" "$VERSION" "$actual_ref" "$source_repository" "$source_metadata" <<'PY'
-import json, sys
+import json, re, sys
 path, service, version, commit, repository, source_raw = sys.argv[1:]
 source = json.loads(source_raw)
 hashes = {"vendorHash": source["vendorHash"]} if "vendorHash" in source else {}
 release = {"service": service, "version": version, "sourceCommit": commit,
            "sourceRepository": repository, "source": source, "hashes": hashes}
+if service == "postgres":
+    if re.fullmatch(r"17\.[0-9]+\.[0-9]+\.[0-9]{3}-orioledb", version):
+        release["postgresMajor"] = "orioledb-17"
+    elif version.split(".", 1)[0] in {"15", "17"}:
+        release["postgresMajor"] = version.split(".", 1)[0]
+    else:
+        raise SystemExit(f"postgres release must select major 15, 17, or orioledb-17 (got {version})")
 with open(path, "w", encoding="utf-8") as stream:
     json.dump(release, stream, indent=2)
     stream.write("\n")

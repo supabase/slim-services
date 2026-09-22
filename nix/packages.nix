@@ -206,11 +206,12 @@ let
           builtins.elem major [
             "15"
             "17"
+            "orioledb-17"
           ]
         then
           major
         else
-          throw "postgres release must select major 15 or 17 (got ${major})";
+          throw "postgres release must select major 15, 17, or orioledb-17 (got ${major})";
       hasPostgresNixpkgs =
         upstream ? inputs
         && upstream.inputs ? nixpkgs
@@ -238,7 +239,13 @@ let
           {
             upstream = requireReleaseSource;
             portablePostgres = ./portable-postgres;
-            psql_cli = if postgresMajor == "15" then postgresPackages.legacyPackages.psql_15_cli else null;
+            psql_cli =
+              if postgresMajor == "15" then
+                postgresPackages.legacyPackages.psql_15_cli
+              else if postgresMajor == "orioledb-17" then
+                postgresPackages.legacyPackages.psql_orioledb-17_cli
+              else
+                null;
             psql_17_cli = if postgresMajor == "17" then postgresPackages.legacyPackages.psql_17_cli else null;
             postgres_major = postgresMajor;
           };

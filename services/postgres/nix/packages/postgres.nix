@@ -125,10 +125,10 @@ let
     let
       postgresql = getPostgresqlPackage version latestOnly;
       extensionsToUse =
-        if variant == "cli" then
-          cliExtensionsForVersion version
-        else if (builtins.elem version [ "orioledb-17" ]) then
+        if (builtins.elem version [ "orioledb-17" ]) then
           orioledbExtensions
+        else if variant == "cli" then
+          cliExtensionsForVersion version
         else if (builtins.elem version [ "17" ]) then
           dbExtensions17
         else
@@ -316,6 +316,10 @@ let
       # glibcLocalesMinimal on Linux (initdb locale support).
       latestOnly = true;
     };
+    psql_orioledb-17_cli = makePostgres "orioledb-17" {
+      variant = "cli";
+      latestOnly = true;
+    };
   };
 
   # PG15 portable output is added by this overlay. The pinned source's
@@ -327,6 +331,11 @@ let
       inherit upstream portablePostgres;
       psql_cli = cliPackages.psql_15_cli;
       postgres_major = "15";
+    };
+    psql_orioledb-17_cli_portable = pkgs.callPackage ./postgres-portable.nix {
+      inherit upstream portablePostgres;
+      psql_cli = cliPackages.psql_orioledb-17_cli;
+      postgres_major = "orioledb-17";
     };
   };
 
