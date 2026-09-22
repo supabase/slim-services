@@ -200,7 +200,14 @@ let
       };
       postgresMajor =
         let
-          major = releaseData.postgresMajor or (builtins.head (builtins.split "\\." releaseVersion));
+          # A 17.x.x.NNN-orioledb tag is not stock 17. The release document
+          # sets postgresMajor; this fallback covers a document that omitted it.
+          fromVersion =
+            if builtins.match "17\\.[0-9]+\\.[0-9]+\\.[0-9]{3}-orioledb" releaseVersion != null then
+              "orioledb-17"
+            else
+              builtins.head (builtins.split "\\." releaseVersion);
+          major = releaseData.postgresMajor or fromVersion;
         in
         if
           builtins.elem major [

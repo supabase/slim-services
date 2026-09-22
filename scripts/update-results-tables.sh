@@ -85,6 +85,7 @@ while IFS=$'\t' read -r service display version; do
   rows_tsv+="$service"$'\t'"$display"$'\t'"$recipe_vars"$'\t'"$version"$'\n'
 done < <(
   ORDERED_SERVICES="$ORDERED_SERVICES" DISPLAY_NAMES="$DISPLAY_NAMES" \
+    MERGE="$merge" \
     python3 - "$ROOT_DIR" "$ARTIFACTS_DIR" <<'PY'
 import glob
 import json
@@ -128,6 +129,10 @@ for service, display in zip(services, displays):
         pattern = re.compile(line["tag_pattern"])
         matched = [path for path in manifests if pattern.fullmatch(manifest_version(path))]
         if not matched:
+            # --merge keeps an existing row only when this line is still emitted.
+            if os.environ.get("MERGE") == "1":
+                label = postgres_line_label(line["tag_pattern"]) if service == "postgres" else display
+                print(service, label, "", sep="\t")
             continue
         version = max((manifest_version(path) for path in matched), key=version_key)
         label = postgres_line_label(line["tag_pattern"]) if service == "postgres" else display
@@ -166,6 +171,9 @@ def existing_rows(path, marker):
         m = re.match(r"^\| ([^|]+?) \| `", line)
         if m:
             rows[m.group(1)] = line
+    # The single Postgres row was stock 17. Keep it until a Postgres 17 refresh.
+    if "Postgres 17" not in rows and "Postgres" in rows:
+        rows["Postgres 17"] = rows["Postgres"]
     return rows
 
 kept = existing_rows(os.path.join(root, "README.md"), "host-native") if merge else {}
@@ -276,6 +284,9 @@ def existing_rows(path, marker):
         m = re.match(r"^\| ([^|]+?) \| `", line)
         if m:
             rows[m.group(1)] = line
+    # The single Postgres row was stock 17. Keep it until a Postgres 17 refresh.
+    if "Postgres 17" not in rows and "Postgres" in rows:
+        rows["Postgres 17"] = rows["Postgres"]
     return rows
 
 kept = existing_rows(os.path.join(root, "README.md"), "results") if merge else {}
