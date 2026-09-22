@@ -330,6 +330,13 @@ post-publication confirmation.
 
 - Portable archives, platform manifests, and a combined `SHA256SUMS` are
   attached to the GitHub release `<service>-<version>`.
+- The same archives are also published as OCI artifacts at
+  `ghcr.io/supabase/cli/<service>:<version>-native-<target>` and, through
+  the `supabase/cli` mirror handler, copied to ECR Public and to a
+  public-read S3 bucket
+  (`https://supabase-cli-artifacts.s3.us-east-1.amazonaws.com/<service>/<version>/`),
+  so the CLI can fetch them where GitHub release assets are blocked. See
+  `docs/design/ecr-mirror-dispatch.md`.
 - The exact smoked Linux images are published as a multi-platform image at
   `ghcr.io/supabase/cli/<service>:<version>`.
 
