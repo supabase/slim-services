@@ -224,7 +224,10 @@ require_cmd docker
 ensure_image "$image"
 
 log "storage helper copy and BusyBox toolbox contract"
-docker run --rm -i --entrypoint /usr/bin/sh "$image" -s <<'SH'
+storage_volume="postgres-storage-smoke-$RUN_ID"
+create_volume "$storage_volume"
+docker run --rm -i --mount "type=volume,src=$storage_volume,dst=/tmp/storage-copy" \
+  --entrypoint /usr/bin/sh "$image" -s <<'SH'
 set -eu
 
 test -x /usr/local/bin/cp
@@ -238,15 +241,18 @@ printf 'snapshot data\n' >/tmp/storage-copy/source/file
 /usr/bin/busybox setfattr -n user.storage-smoke -v preserved /tmp/storage-copy/source/file
 /usr/local/bin/cp -a --reflink=auto /tmp/storage-copy/source /tmp/storage-copy/copy
 /usr/bin/busybox setfattr -x user.storage-smoke /tmp/storage-copy/copy/file
+test "$(cat /tmp/storage-copy/copy/file)" = 'snapshot data'
+test "$(/usr/bin/busybox stat -c '%a %u:%g %Y' /tmp/storage-copy/source/file)" = \
+  "$(/usr/bin/busybox stat -c '%a %u:%g %Y' /tmp/storage-copy/copy/file)"
 
-exec 9>/tmp/storage-helper.lock
+exec 9>/tmp/storage-copy/.lock
 /usr/bin/busybox flock -n 9
-if /usr/bin/sh -c 'exec 8>"$1"; /usr/bin/busybox flock -n 8' sh /tmp/storage-helper.lock; then
+if /usr/bin/sh -c 'exec 8>"$1"; /usr/bin/busybox flock -n 8' sh /tmp/storage-copy/.lock; then
   echo "BusyBox flock did not retain the lock on the open file descriptor" >&2
   exit 1
 fi
 
-retention_dir=/tmp/storage-retention
+retention_dir=/tmp/storage-copy/retention
 mkdir -p "$retention_dir"
 /usr/bin/busybox touch -t 202001010000.01 "$retention_dir/old"
 /usr/bin/busybox touch -t 202001010000.02 "$retention_dir/middle"

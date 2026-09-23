@@ -497,8 +497,6 @@ let
           # Snapshot copies need GNU cp's xattr-preserving archive behavior.
           mkdir -p "$out/usr/local/bin"
           cp -L ${pkgs.pkgsStatic.coreutils}/bin/cp "$out/usr/local/bin/cp"
-          ln -sf ../local/bin/cp "$out/usr/bin/cp"
-          ln -sf ../usr/local/bin/cp "$out/bin/cp"
         ''}
         ${lib.optionalString (lib.elem "ca" cfg.tools) ''
           mkdir -p "$out/etc/ssl/certs"
