@@ -1,17 +1,20 @@
 /**
- * Mirror published slim images and native OCI tags to AWS ECR Public through
- * the mirror workflow hosted in the dispatch repository (supabase/cli by
- * default). Always dispatch: an unchanged image digest must not skip the
- * request, because native tags may have moved. Never prune untagged
- * manifests; already-shipped CLIs still pin those digests.
+ * Mirror published slim images to AWS ECR Public and native triplets to ECR
+ * Public and the public S3 bucket, through the mirror workflow hosted in the
+ * dispatch repository (supabase/cli by default). Each destination is checked
+ * independently, so one failing mirror never hides or blocks another. Always
+ * dispatch: an unchanged image digest must not skip the request, because
+ * native tags may have moved. Never prune untagged manifests; already-shipped
+ * CLIs still pin those digests.
  *
  * Run: `bun scripts/ecr-mirror.ts payload|published-digest|destination-repo|request|verify|sync …`
  */
 
-import { mkdtempSync, readFileSync } from "node:fs";
+import { appendFileSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { CHECKSUM_TYPE } from "./publish-native-oci.ts";
 import { DIGEST_PATTERN, NATIVE_TARGETS, ScriptError } from "./slim-native.ts";
 
 export { NATIVE_TARGETS, ScriptError } from "./slim-native.ts";
@@ -35,19 +38,27 @@ const usage = `Usage:
   bun scripts/ecr-mirror.ts destination-repo SERVICE
   bun scripts/ecr-mirror.ts request SERVICE VERSION DIGEST
   bun scripts/ecr-mirror.ts verify SERVICE VERSION DIGEST
-  bun scripts/ecr-mirror.ts sync [--request]
+  bun scripts/ecr-mirror.ts sync [--request] [--all] [SERVICE[:VERSION] ...]
 
-Mirror published slim images and native OCI tags to AWS ECR Public through
-the mirror workflow hosted in the dispatch repository (supabase/cli by
-default). Always dispatch: an unchanged image digest must not skip the
-request, because native tags may have moved. Never prune untagged
-manifests; already-shipped CLIs still pin those digests.
+Mirror published slim images to AWS ECR Public and native triplets to ECR
+Public and the public S3 bucket, through the mirror workflow hosted in the
+dispatch repository (supabase/cli by default). Always dispatch: an unchanged
+image digest must not skip the request, because native tags may have moved.
+Never prune untagged manifests; already-shipped CLIs still pin those digests.
 
-sync audits every published GitHub Release. A release whose GHCR image is
-missing is skipped and counted, not fatal. Native tag drift is reported
-but only fails the audit (and, with --request, only waits for the native
-copy) when ECR_MIRROR_REQUIRE_NATIVES=1; the cli handler copies natives
-best-effort.`;
+request dispatches one release and waits for its image on ECR Public and its
+natives on S3 within one shared timeout, reporting each destination.
+
+sync audits the latest published release of each service release line
+(postgres keeps one per major), or every release with --all. SERVICE narrows
+that to one service; SERVICE:VERSION selects exactly that release, even an
+older one. A release whose GHCR image is missing is skipped and counted,
+not fatal. With --request it dispatches every out-of-sync release first and
+then waits for all of them within one shared timeout, so an unreachable
+destination cannot stall the backfill of the others. Image drift on ECR Public and native drift
+on S3 fail the audit. Native tag drift on ECR Public is reported but only
+fails the audit (and is only waited for) when ECR_MIRROR_REQUIRE_NATIVES=1;
+the cli handler copies those natives best-effort.`;
 
 const log = (message: string): void => {
   console.log(`[slim] ${message}`);
@@ -74,7 +85,10 @@ const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\
 export const nativeTagPattern = (version: string): RegExp =>
   new RegExp(`^${escapeRegExp(version)}-native-(${NATIVE_TARGETS.join("|")})$`);
 
-type ServiceConfig = { readonly tag_pattern: string };
+type ServiceConfig = {
+  readonly tag_pattern: string;
+  readonly release_lines?: ReadonlyArray<{ readonly tag_pattern: string }>;
+};
 type ReleaseConfig = { readonly services: Readonly<Record<string, ServiceConfig>> };
 
 export const loadReleaseConfig = (path: string): ReleaseConfig => {
@@ -143,31 +157,73 @@ export const renderPayload = (options: {
   return { client_payload, event_type: options.eventType };
 };
 
-export const publishedReleases = (
-  config: ReleaseConfig,
-  releasePages: unknown,
-): ReadonlyArray<{ readonly service: string; readonly version: string }> => {
+export type PublishedRelease = {
+  readonly service: string;
+  readonly version: string;
+  readonly publishedAt: string;
+};
+
+export const publishedReleases = (config: ReleaseConfig, releasePages: unknown): ReadonlyArray<PublishedRelease> => {
   const prefixes = Object.keys(config.services)
     .map((name) => ({ prefix: `${name}-`, service: name }))
     .sort((left, right) => right.prefix.length - left.prefix.length);
   if (!Array.isArray(releasePages)) return [];
-  const rows: Array<{ service: string; version: string }> = [];
+  const rows: PublishedRelease[] = [];
   for (const page of releasePages) {
     if (!Array.isArray(page)) continue;
     for (const release of page) {
       if (typeof release !== "object" || release === null) continue;
-      const record = release as { tag_name?: unknown; draft?: unknown; prerelease?: unknown };
+      const record = release as { tag_name?: unknown; draft?: unknown; prerelease?: unknown; published_at?: unknown };
       if (record.draft || record.prerelease) continue;
       const tag = typeof record.tag_name === "string" ? record.tag_name : "";
       for (const { prefix, service } of prefixes) {
         if (tag.startsWith(prefix)) {
-          rows.push({ service, version: tag.slice(prefix.length) });
+          rows.push({
+            service,
+            version: tag.slice(prefix.length),
+            publishedAt: typeof record.published_at === "string" ? record.published_at : "",
+          });
           break;
         }
       }
     }
   }
   return rows;
+};
+
+const versionKey = (version: string): ReadonlyArray<number> =>
+  (version.split("-")[0]?.match(/[0-9]+/g) ?? []).map(Number);
+
+const newer = (left: PublishedRelease, right: PublishedRelease): boolean => {
+  const a = versionKey(left.version);
+  const b = versionKey(right.version);
+  for (let index = 0; index < Math.max(a.length, b.length); index += 1) {
+    const difference = (a[index] ?? -1) - (b[index] ?? -1);
+    if (difference !== 0) return difference > 0;
+  }
+  return left.publishedAt > right.publishedAt;
+};
+
+/**
+ * The newest release of each service release line (postgres keeps one per major). Releases
+ * outside every current tag pattern are history and never selected.
+ */
+export const latestReleases = (
+  config: ReleaseConfig,
+  releases: ReadonlyArray<PublishedRelease>,
+): ReadonlyArray<PublishedRelease> => {
+  const latest = new Map<string, PublishedRelease>();
+  for (const release of releases) {
+    const entry = config.services[release.service];
+    if (entry === undefined) continue;
+    const patterns = (entry.release_lines ?? [entry]).map(({ tag_pattern }) => new RegExp(tag_pattern));
+    const line = patterns.findIndex((pattern) => pattern.test(release.version));
+    if (line < 0) continue;
+    const key = `${release.service}\0${line}`;
+    const current = latest.get(key);
+    if (current === undefined || newer(release, current)) latest.set(key, release);
+  }
+  return [...latest.values()];
 };
 
 const defaultSpawn: RunCommand = (argv, options) => {
@@ -196,6 +252,7 @@ type Context = {
   readonly eventType: string;
   readonly sourcePrefix: string;
   readonly destPrefix: string;
+  readonly s3BaseUrl: string;
   readonly timeoutSec: number;
   readonly pollSec: number;
   readonly requireNatives: boolean;
@@ -259,51 +316,122 @@ const collectSourceNatives = (ctx: Context, service: string, version: string): R
   return rows;
 };
 
-const nativesOutOfSync = (
+type MirrorKind = "image" | "native" | "s3-native";
+
+type MirrorCheck = {
+  readonly kind: MirrorKind;
+  readonly name: string;
+  readonly expected: string;
+  readonly live: () => string;
+};
+
+const KIND_LABEL: Readonly<Record<MirrorKind, string>> = {
+  image: "",
+  native: " native",
+  "s3-native": " S3 native",
+};
+
+const checksumLayerDigest = (ctx: Context, service: string, digest: string): string => {
+  const result = ctx.run([
+    "regctl",
+    "manifest",
+    "get",
+    `${ctx.sourcePrefix}/${service}@${digest}`,
+    "--format",
+    "raw-body",
+  ]);
+  if (!result.ok) return "";
+  try {
+    const parsed: unknown = JSON.parse(result.stdout);
+    const layers = typeof parsed === "object" && parsed !== null ? (parsed as { layers?: unknown }).layers : undefined;
+    if (!Array.isArray(layers)) return "";
+    const layer = layers.find(
+      (entry) => typeof entry === "object" && entry !== null && (entry as { mediaType?: unknown }).mediaType === CHECKSUM_TYPE,
+    ) as { digest?: unknown } | undefined;
+    return typeof layer?.digest === "string" && DIGEST_PATTERN.test(layer.digest) ? layer.digest : "";
+  } catch {
+    return "";
+  }
+};
+
+const objectDigest = (ctx: Context, url: string): string => {
+  const result = ctx.run(["curl", "-fsSL", "--retry", "2", url]);
+  if (!result.ok) return "";
+  return `sha256:${new Bun.CryptoHasher("sha256").update(result.stdout).digest("hex")}`;
+};
+
+const releaseChecks = (
   ctx: Context,
   service: string,
+  version: string,
+  digest: string,
   natives: ReadonlyArray<NativeArtifact>,
-  quiet = false,
-): boolean => {
-  let drift = false;
-  for (const { tag, digest } of natives) {
-    const live = destinationDigest(ctx, `${ctx.destPrefix}/${service}:${tag}`);
-    if (live === digest) {
-      if (!quiet) log(`in sync native: ${service} ${tag} (${digest})`);
-    } else {
-      if (!quiet) log(`out of sync native: ${service} ${tag} (expected ${digest}, got ${live || "none"})`);
-      drift = true;
-    }
+): ReadonlyArray<MirrorCheck> => {
+  const image = `${ctx.destPrefix}/${service}:${version}`;
+  const checks: MirrorCheck[] = [
+    { kind: "image", name: `${service} ${version}`, expected: digest, live: () => destinationDigest(ctx, image) },
+  ];
+  const tagRe = nativeTagPattern(version);
+  for (const { tag, digest: nativeDigest } of natives) {
+    const reference = `${ctx.destPrefix}/${service}:${tag}`;
+    checks.push({
+      kind: "native",
+      name: `${service} ${tag}`,
+      expected: nativeDigest,
+      live: () => destinationDigest(ctx, reference),
+    });
+    const target = tagRe.exec(tag)?.[1];
+    if (target === undefined) continue;
+    const url = `${ctx.s3BaseUrl}/${service}/${version}/${service}-${version}-${target}.SHA256SUMS`;
+    checks.push({
+      kind: "s3-native",
+      name: `${service} ${version} ${target}`,
+      expected: checksumLayerDigest(ctx, service, nativeDigest),
+      live: () => objectDigest(ctx, url),
+    });
   }
-  return drift;
+  return checks;
 };
 
-const verifyRelease = async (ctx: Context, service: string, version: string, digest: string): Promise<void> => {
-  ensureAnon(ctx);
-  const destinationRef = `${ctx.destPrefix}/${service}:${version}`;
+const inSync = (check: MirrorCheck): boolean => {
+  const live = check.live();
+  const label = KIND_LABEL[check.kind];
+  if (check.expected !== "" && live === check.expected) {
+    log(`in sync${label}: ${check.name} (${check.expected})`);
+    return true;
+  }
+  log(`out of sync${label}: ${check.name} (expected ${check.expected || "unknown"}, got ${live || "none"})`);
+  return false;
+};
+
+// Native ECR copies are best-effort on the cli side, so they are only waited
+// on and enforced under ECR_MIRROR_REQUIRE_NATIVES=1.
+const required = (ctx: Context, check: MirrorCheck): boolean => check.kind !== "native" || ctx.requireNatives;
+
+/**
+ * Polls every required check against one shared deadline, so a mirror that
+ * never converges (for example an ECR Public outage) costs one timeout rather
+ * than one per release and never holds back the other destinations.
+ */
+const settle = async (ctx: Context, checks: ReadonlyArray<MirrorCheck>): Promise<ReadonlyArray<MirrorCheck>> => {
   const deadline = Date.now() + ctx.timeoutSec * 1000;
+  let waiting = checks.filter((check) => required(ctx, check));
   for (;;) {
-    const live = destinationDigest(ctx, destinationRef);
-    if (live === digest) {
-      log(`verified ${destinationRef}@${digest}`);
-      return;
-    }
-    if (Date.now() >= deadline)
-      fail(
-        `destination did not match within ${ctx.timeoutSec}s: ${destinationRef} (expected ${digest}, got ${live || "none"})`,
-      );
-    log(`waiting for ${destinationRef} (expected ${digest}, got ${live || "none"})`);
+    waiting = waiting.filter((check) => check.expected !== "" && check.live() !== check.expected);
+    if (waiting.length === 0 || Date.now() >= deadline) break;
+    log(`waiting for ${waiting.map((check) => `${check.name}${KIND_LABEL[check.kind]}`).join(", ")}`);
     await Bun.sleep(ctx.pollSec * 1000);
   }
+  return checks.filter((check) => !inSync(check));
 };
 
-const requestRelease = async (
+const dispatch = (
   ctx: Context,
   service: string,
   version: string,
   digest: string,
   natives?: ReadonlyArray<NativeArtifact>,
-): Promise<void> => {
+): boolean => {
   if (ctx.token === undefined || ctx.token.trim() === "")
     fail("MIRROR_DISPATCH_TOKEN is required to send repository_dispatch");
   log(`requesting mirror of ${ctx.sourcePrefix}/${service}:${version}@${digest} via ${ctx.dispatchRepo}`);
@@ -311,26 +439,46 @@ const requestRelease = async (
     env: { GH_TOKEN: ctx.token },
     stdin: `${JSON.stringify(payloadFor(ctx, service, version, digest, natives), null, 2)}\n`,
   });
-  if (!sent.ok) fail(`repository_dispatch to ${ctx.dispatchRepo} failed`);
-  await verifyRelease(ctx, service, version, digest);
+  if (!sent.ok) log(`repository_dispatch to ${ctx.dispatchRepo} failed for ${service} ${version}`);
+  return sent.ok;
 };
 
-const waitNatives = async (
-  ctx: Context,
-  service: string,
-  natives: ReadonlyArray<NativeArtifact>,
-): Promise<boolean> => {
-  const deadline = Date.now() + ctx.timeoutSec * 1000;
-  while (nativesOutOfSync(ctx, service, natives, true)) {
-    if (Date.now() >= deadline) {
-      nativesOutOfSync(ctx, service, natives);
-      return false;
-    }
-    log(`waiting for ${service} natives`);
-    await Bun.sleep(ctx.pollSec * 1000);
+const DRIFT_MESSAGES: Readonly<Record<MirrorKind, (count: number, ctx: Context) => string>> = {
+  image: (count, ctx) => `${count} release image(s) are missing from ${ctx.destPrefix}`,
+  native: (count, ctx) => `${count} native tag(s) missing from ${ctx.destPrefix}`,
+  "s3-native": (count, ctx) => `${count} native artifact(s) missing from ${ctx.s3BaseUrl}`,
+};
+
+const driftFailures = (ctx: Context, stale: ReadonlyArray<MirrorCheck>): string[] => {
+  const failures: string[] = [];
+  for (const kind of ["image", "native", "s3-native"] as const) {
+    const count = stale.filter((check) => check.kind === kind).length;
+    if (count === 0) continue;
+    const message = DRIFT_MESSAGES[kind](count, ctx);
+    log(message);
+    if (kind !== "native" || ctx.requireNatives) failures.push(message);
   }
-  nativesOutOfSync(ctx, service, natives);
-  return true;
+  return failures;
+};
+
+const writeGithubOutput = (key: string, value: string): void => {
+  const path = process.env["GITHUB_OUTPUT"];
+  if (path !== undefined && path.trim() !== "") appendFileSync(path, `${key}=${value}\n`);
+};
+
+const requestRelease = async (ctx: Context, service: string, version: string, digest: string): Promise<void> => {
+  const natives = loadNatives(ctx.nativesFile, version);
+  if (!dispatch(ctx, service, version, digest, natives)) fail(`repository_dispatch to ${ctx.dispatchRepo} failed`);
+  const stale = await settle(ctx, releaseChecks(ctx, service, version, digest, natives ?? []));
+  if (!stale.some((check) => check.kind === "image")) writeGithubOutput("mirrored", "true");
+  const failures = driftFailures(ctx, stale);
+  if (failures.length > 0) fail(failures.join("; "));
+};
+
+const verifyRelease = async (ctx: Context, service: string, version: string, digest: string): Promise<void> => {
+  const stale = await settle(ctx, releaseChecks(ctx, service, version, digest, []));
+  if (stale.length > 0)
+    fail(`destination did not match within ${ctx.timeoutSec}s: ${ctx.destPrefix}/${service}:${version}`);
 };
 
 const listReleasePages = (ctx: Context): unknown => {
@@ -345,12 +493,32 @@ const listReleasePages = (ctx: Context): unknown => {
   return JSON.parse(result.stdout);
 };
 
-const syncReleases = async (ctx: Context, request: boolean): Promise<void> => {
-  const releases = publishedReleases(ctx.config, listReleasePages(ctx));
+const syncReleases = async (
+  ctx: Context,
+  request: boolean,
+  all: boolean,
+  selectors: ReadonlyArray<string>,
+): Promise<void> => {
+  const filters = selectors.map((selector) => {
+    const separator = selector.indexOf(":");
+    const service = separator < 0 ? selector : selector.slice(0, separator);
+    const version = separator < 0 ? undefined : selector.slice(separator + 1);
+    if (ctx.config.services[service] === undefined) fail(`unknown release service: ${service}`);
+    return { service, version };
+  });
+  const published = publishedReleases(ctx.config, listReleasePages(ctx));
+  const current = new Set(all ? published : latestReleases(ctx.config, published));
+  const releases = published.filter((release) =>
+    filters.length === 0
+      ? current.has(release)
+      : filters.some(({ service, version }) =>
+          service !== release.service ? false : version === undefined ? current.has(release) : version === release.version,
+        ),
+  );
   if (releases.length === 0) fail("no published releases found");
-  let imageDrift = 0;
-  let nativeDriftCount = 0;
+  const drifted: MirrorCheck[] = [];
   let skipped = 0;
+  let undelivered = 0;
   for (const { service, version } of releases) {
     const source = `${ctx.sourcePrefix}/${service}:${version}`;
     const sourceDigest = manifestHead(ctx, source);
@@ -359,32 +527,19 @@ const syncReleases = async (ctx: Context, request: boolean): Promise<void> => {
       skipped += 1;
       continue;
     }
-    const live = destinationDigest(ctx, `${ctx.destPrefix}/${service}:${version}`);
     const natives = collectSourceNatives(ctx, service, version);
-    let nativeDrift = nativesOutOfSync(ctx, service, natives);
-    if (live === sourceDigest && !nativeDrift) {
-      log(`in sync: ${service} ${version} (${sourceDigest})`);
-      continue;
-    }
-    if (live !== sourceDigest) log(`out of sync: ${service} ${version} (expected ${sourceDigest}, got ${live || "none"})`);
-    else log(`out of sync: ${service} ${version} natives`);
-    if (!request) {
-      if (live !== sourceDigest) imageDrift += 1;
-      if (nativeDrift) nativeDriftCount += 1;
-      continue;
-    }
-    await requestRelease(ctx, service, version, sourceDigest, natives);
-    nativeDrift = ctx.requireNatives
-      ? !(await waitNatives(ctx, service, natives))
-      : nativesOutOfSync(ctx, service, natives);
-    if (nativeDrift) nativeDriftCount += 1;
+    const checks = releaseChecks(ctx, service, version, sourceDigest, natives);
+    const releaseDrift = checks.filter((check) => !inSync(check));
+    if (releaseDrift.length === 0) continue;
+    if (request && !dispatch(ctx, service, version, sourceDigest, natives)) undelivered += 1;
+    drifted.push(...releaseDrift);
   }
+  const stale = request ? await settle(ctx, drifted) : drifted;
   if (skipped > 0) log(`skipped ${skipped} release(s) without a source image`);
-  if (nativeDriftCount > 0) log(`${nativeDriftCount} release(s) have native tag drift`);
-  if (imageDrift > 0) fail(`${imageDrift} release image(s) are missing from ${ctx.destPrefix}`);
-  if (nativeDriftCount > 0 && ctx.requireNatives)
-    fail(`${nativeDriftCount} release(s) have native tags missing from ${ctx.destPrefix}`);
-  log(`all published release images are mirrored to ${ctx.destPrefix}`);
+  const failures = driftFailures(ctx, stale);
+  if (undelivered > 0) failures.push(`${undelivered} mirror request(s) could not be dispatched to ${ctx.dispatchRepo}`);
+  if (failures.length > 0) fail(failures.join("; "));
+  log(`all published releases are mirrored to ${ctx.destPrefix} and ${ctx.s3BaseUrl}`);
 };
 
 const makeContext = (run: RunCommand): Context => {
@@ -396,6 +551,7 @@ const makeContext = (run: RunCommand): Context => {
     eventType: envString("MIRROR_EVENT_TYPE", "mirror-slim-image"),
     sourcePrefix: envString("SOURCE_IMAGE_PREFIX", "ghcr.io/supabase/cli"),
     destPrefix: envString("ECR_MIRROR_PREFIX", "public.ecr.aws/supabase/cli"),
+    s3BaseUrl: envString("S3_MIRROR_BASE_URL", "https://supabase-cli-artifacts.s3.us-east-1.amazonaws.com"),
     timeoutSec: envNumber("ECR_MIRROR_TIMEOUT", 900),
     pollSec: envNumber("ECR_MIRROR_POLL_INTERVAL", 30),
     requireNatives: envString("ECR_MIRROR_REQUIRE_NATIVES", "0") === "1",
@@ -460,14 +616,15 @@ export const main = async (argv: ReadonlyArray<string>, run: RunCommand = defaul
     return;
   }
   if (command === "sync") {
-    let request = false;
     const rest = argv.slice(1);
-    if (rest[0] === "--request") {
-      request = true;
-      rest.shift();
-    }
-    if (rest.length !== 0) throw new ScriptError(usage, 2);
-    await syncReleases(ctx, request);
+    const flags = rest.filter((arg) => arg.startsWith("-"));
+    if (flags.some((flag) => flag !== "--request" && flag !== "--all")) throw new ScriptError(usage, 2);
+    await syncReleases(
+      ctx,
+      flags.includes("--request"),
+      flags.includes("--all"),
+      rest.filter((arg) => !arg.startsWith("-")),
+    );
     return;
   }
   throw new ScriptError(usage, 2);

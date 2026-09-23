@@ -10,6 +10,16 @@ name: ECR mirror check
         required: false
         type: boolean
         default: false
+      services:
+        description: Space-separated services or service:version releases to audit (default all services).
+        required: false
+        type: string
+        default: ""
+      all_releases:
+        description: Audit every published release instead of the latest of each release line.
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -20,7 +30,7 @@ concurrency:
 
 jobs:
   check:
-    name: check ECR Public mirrors
+    name: check ECR Public and S3 mirrors
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
@@ -52,12 +62,14 @@ jobs:
           chmod +x "$RUNNER_TEMP/regctl"
           echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
 
-      - name: Compare published releases against ECR Public
+      - name: Compare published releases against ECR Public and S3
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           MIRROR_DISPATCH_TOKEN: ${{ secrets.CLI_MIRROR_DISPATCH_TOKEN }}
+          ALL_RELEASES: ${{ inputs.all_releases }}
           REQUEST: ${{ inputs.request }}
+          SERVICES: ${{ inputs.services }}
         run: |
           set -euo pipefail
           args=()
@@ -66,4 +78,8 @@ jobs:
           else
             unset MIRROR_DISPATCH_TOKEN
           fi
-          bun scripts/ecr-mirror.ts sync "${args[@]}"
+          if [[ "$ALL_RELEASES" == "true" ]]; then
+            args+=(--all)
+          fi
+          read -ra services <<< "${SERVICES:-}"
+          bun scripts/ecr-mirror.ts sync "${args[@]}" "${services[@]}"
