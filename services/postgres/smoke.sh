@@ -223,6 +223,45 @@ fi
 require_cmd docker
 ensure_image "$image"
 
+log "storage helper copy and BusyBox toolbox contract"
+docker run --rm -i --entrypoint /usr/bin/sh "$image" -s <<'SH'
+set -eu
+
+test -x /usr/local/bin/cp
+case "$(/usr/local/bin/cp --version)" in
+  "cp (GNU coreutils)"*) ;;
+  *) echo "storage helper requires GNU cp at /usr/local/bin/cp" >&2; exit 1 ;;
+esac
+
+mkdir -p /tmp/storage-copy/source
+printf 'snapshot data\n' >/tmp/storage-copy/source/file
+/usr/bin/busybox setfattr -n user.storage-smoke -v preserved /tmp/storage-copy/source/file
+/usr/local/bin/cp -a --reflink=auto /tmp/storage-copy/source /tmp/storage-copy/copy
+/usr/bin/busybox setfattr -x user.storage-smoke /tmp/storage-copy/copy/file
+
+exec 9>/tmp/storage-helper.lock
+/usr/bin/busybox flock -n 9
+if /usr/bin/sh -c 'exec 8>"$1"; /usr/bin/busybox flock -n 8' sh /tmp/storage-helper.lock; then
+  echo "BusyBox flock did not retain the lock on the open file descriptor" >&2
+  exit 1
+fi
+
+retention_dir=/tmp/storage-retention
+mkdir -p "$retention_dir"
+/usr/bin/busybox touch -t 202001010000.01 "$retention_dir/old"
+/usr/bin/busybox touch -t 202001010000.02 "$retention_dir/middle"
+/usr/bin/busybox touch -t 202001010000.03 "$retention_dir/new"
+/usr/bin/busybox find "$retention_dir" -mindepth 1 -maxdepth 1 -type f \
+  -exec /usr/bin/busybox stat -c '%y %n' {} + \
+  | /usr/bin/busybox sort -r \
+  | /usr/bin/busybox tail -n +3 \
+  | /usr/bin/busybox cut -d ' ' -f 4- \
+  | /usr/bin/busybox xargs -r /usr/bin/rm -f
+test -f "$retention_dir/middle"
+test -f "$retention_dir/new"
+test ! -e "$retention_dir/old"
+SH
+
 # shellcheck source=scripts/identity-lib.sh
 source "$ROOT_DIR/scripts/identity-lib.sh"
 load_recipe postgres
