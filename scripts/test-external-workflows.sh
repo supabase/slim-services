@@ -397,7 +397,8 @@ def test_service_release_mirror_ecr_does_not_gate_publish_release():
         "notes=jobs.fetch('publish-release').fetch('steps').find { |s| s['name'] == 'Prepare checksums and release notes' }; "
         "puts JSON.generate({mirror: jobs.key?('mirror-ecr'), natives: jobs.key?('publish-natives'), "
         "mirror_needs: jobs.fetch('mirror-ecr').fetch('needs'), "
-        "needs: jobs.fetch('publish-release').fetch('needs'), notes_env: notes.fetch('env')})"
+        "needs: jobs.fetch('publish-release').fetch('needs'), "
+        "publish_if: jobs.fetch('publish-release').fetch('if'), notes_env: notes.fetch('env')})"
     )
     result = run(["ruby", "-e", ruby, str(ROOT / ".github" / "workflows" / "service-release.yml")])
     assert_true(result.returncode == 0, result.stderr)
