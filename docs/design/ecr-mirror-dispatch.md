@@ -61,8 +61,9 @@ recorded in supabase/cli
    and then waits for all of them within one shared timeout, so an
    unreachable destination (for example ECR Public before its repositories
    and permissions exist) costs one timeout and still lets the S3 copy of
-   every release land. Use the `services` input to backfill in
-   service-sized slices so one run does not flood the cli runners.
+   every release land. Use the `services` input (`postgrest` or
+   `postgrest:v16.2`, space-separated) to backfill in slices so one run does
+   not flood the cli runners.
 
 Release-time mirroring (`service-release.yml` `mirror-ecr`) is skipped,
 with a workflow notice, until the `CLI_MIRROR_DISPATCH_TOKEN` secret

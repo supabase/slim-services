@@ -11,7 +11,7 @@ name: ECR mirror check
         type: boolean
         default: false
       services:
-        description: Space-separated services to audit (default all), to backfill in slices.
+        description: Space-separated services or service:version releases to audit (default all).
         required: false
         type: string
         default: ""

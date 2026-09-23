@@ -587,14 +587,14 @@ exit 1
     expect(result.stderr.toString()).not.toContain("native artifact(s) missing");
   });
 
-  test("audits only the named services", () => {
+  test("audits only the named services and releases", () => {
     const stub = mkdtempSync(join(tmpdir(), "ecr-filter-"));
     writeStub(
       stub,
       "gh",
       `#!/usr/bin/env bash
 cat <<'EOF'
-[[{"tag_name":"postgres-15.14.1.159","draft":false,"prerelease":false},{"tag_name":"postgrest-v16.2","draft":false,"prerelease":false}]]
+[[{"tag_name":"postgres-15.14.1.159","draft":false,"prerelease":false},{"tag_name":"postgrest-v16.2","draft":false,"prerelease":false},{"tag_name":"postgrest-v16.1","draft":false,"prerelease":false}]]
 EOF
 `,
     );
@@ -613,7 +613,13 @@ exit 1
     const result = run(["sync", "postgrest"], { PATH: `${stub}:/usr/bin:/bin` });
     expect(result.exitCode, result.stderr.toString()).toBe(0);
     expect(result.stdout.toString()).toContain("in sync: postgrest v16.2");
+    expect(result.stdout.toString()).toContain("in sync: postgrest v16.1");
     expect(result.stdout.toString()).not.toContain("postgres 15.14.1.159");
+
+    const release = run(["sync", "postgrest:v16.1"], { PATH: `${stub}:/usr/bin:/bin` });
+    expect(release.exitCode, release.stderr.toString()).toBe(0);
+    expect(release.stdout.toString()).toContain("in sync: postgrest v16.1");
+    expect(release.stdout.toString()).not.toContain("v16.2");
 
     const unknown = run(["sync", "kong"], { PATH: `${stub}:/usr/bin:/bin` });
     expect(unknown.exitCode).not.toBe(0);

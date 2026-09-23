@@ -38,7 +38,7 @@ const usage = `Usage:
   bun scripts/ecr-mirror.ts destination-repo SERVICE
   bun scripts/ecr-mirror.ts request SERVICE VERSION DIGEST
   bun scripts/ecr-mirror.ts verify SERVICE VERSION DIGEST
-  bun scripts/ecr-mirror.ts sync [--request] [SERVICE ...]
+  bun scripts/ecr-mirror.ts sync [--request] [SERVICE[:VERSION] ...]
 
 Mirror published slim images to AWS ECR Public and native triplets to ECR
 Public and the public S3 bucket, through the mirror workflow hosted in the
@@ -49,8 +49,9 @@ Never prune untagged manifests; already-shipped CLIs still pin those digests.
 request dispatches one release and waits for its image on ECR Public and its
 natives on S3 within one shared timeout, reporting each destination.
 
-sync audits every published GitHub Release, or only the named services. A
-release whose GHCR image is missing is skipped and counted, not fatal. With
+sync audits every published GitHub Release, or only the named services or
+SERVICE:VERSION releases. A release whose GHCR image is missing is skipped
+and counted, not fatal. With
 --request it dispatches every out-of-sync release first and then waits for
 all of them within one shared timeout, so an unreachable destination cannot
 stall the backfill of the others. Image drift on ECR Public and native drift
@@ -446,11 +447,21 @@ const listReleasePages = (ctx: Context): unknown => {
   return JSON.parse(result.stdout);
 };
 
-const syncReleases = async (ctx: Context, request: boolean, services: ReadonlyArray<string>): Promise<void> => {
-  for (const service of services)
+const syncReleases = async (ctx: Context, request: boolean, selectors: ReadonlyArray<string>): Promise<void> => {
+  const filters = selectors.map((selector) => {
+    const separator = selector.indexOf(":");
+    const service = separator < 0 ? selector : selector.slice(0, separator);
+    const version = separator < 0 ? undefined : selector.slice(separator + 1);
     if (ctx.config.services[service] === undefined) fail(`unknown release service: ${service}`);
+    return { service, version };
+  });
   const releases = publishedReleases(ctx.config, listReleasePages(ctx)).filter(
-    ({ service }) => services.length === 0 || services.includes(service),
+    (release) =>
+      filters.length === 0 ||
+      filters.some(
+        ({ service, version }) =>
+          service === release.service && (version === undefined || version === release.version),
+      ),
   );
   if (releases.length === 0) fail("no published releases found");
   const drifted: MirrorCheck[] = [];
