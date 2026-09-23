@@ -935,12 +935,27 @@ jobs:
       - build
       - publish-image
       - mirror-ecr
-    if: needs.plan.outputs.publish == 'true'
+    # mirror-ecr is waited on for the release notes but never gates the
+    # release: a failed ECR Public mirror still fails the run, and the daily
+    # ECR mirror check reports the drift for backfill.
+    if: >-
+      !cancelled() &&
+      needs.plan.outputs.publish == 'true' &&
+      needs.build.result == 'success' &&
+      needs.publish-image.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       contents: write
     steps:
+      - name: Report ECR Public mirror failure
+        if: needs.mirror-ecr.result != 'success'
+        shell: bash
+        env:
+          MIRROR_RESULT: ${{ needs.mirror-ecr.result }}
+        run: |
+          echo "::warning::ECR Public mirror result is '$MIRROR_RESULT'; publishing the GitHub release without it. Backfill with the ECR mirror check workflow (request: true)."
+
       - name: Checkout packaging repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

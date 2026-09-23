@@ -389,7 +389,7 @@ def test_workflow_downloads_and_verifies_snapshot_before_recipe_build_consumers(
     assert_true("matrix.external != true" not in artifact_nix_cache.get("if", ""), "external artifact source incorrectly skips Nix cache")
 
 
-def test_service_release_mirror_ecr_gates_publish_release():
+def test_service_release_mirror_ecr_does_not_gate_publish_release():
     ruby = (
         "require 'yaml'; require 'json'; "
         "data=YAML.safe_load(File.read(ARGV[0]), aliases: true); "
@@ -406,6 +406,11 @@ def test_service_release_mirror_ecr_gates_publish_release():
     assert_true(parsed["natives"] is True, "jobs.publish-natives is missing")
     assert_true("publish-natives" in parsed["mirror_needs"], "mirror-ecr.needs omits publish-natives")
     assert_true("mirror-ecr" in parsed["needs"], "publish-release.needs omits mirror-ecr")
+    publish_if = parsed["publish_if"]
+    assert_true("!cancelled()" in publish_if, "publish-release must run past a failed mirror-ecr")
+    assert_true("needs.build.result == 'success'" in publish_if, "publish-release must still require build")
+    assert_true("needs.publish-image.result == 'success'" in publish_if, "publish-release must still require publish-image")
+    assert_true("mirror-ecr" not in publish_if, "mirror-ecr must not gate publish-release")
     assert_true(
         "needs.mirror-ecr.outputs.mirrored" in str(parsed["notes_env"].get("MIRRORED", "")),
         "notes step env omits needs.mirror-ecr.outputs.mirrored",
