@@ -66,6 +66,9 @@ append-only for `runtime.env` — it does not rewrite `COPY --chown`.
   `/run/postgresql,/tmp` (native `local-dev.conf` stays `/tmp` only), and
   stays root-writable for CLI `>>` / `>` writes. Create `/run/postgresql`
   at start (`/run` is often tmpfs) and chown it to the drop-to uid.
+  The image provides static GNU `cp` at `/usr/local/bin/cp` for CLI
+  snapshots of stopped database files. The separate storage helper container
+  invokes other filesystem applets through `/usr/bin/busybox`.
 - **storage** and **edge-runtime** stay root. Seed `/mnt` and `/root` from
   the probe. Ship `wget` (storage) and `sh` (edge-runtime) unconditionally
   because the CLI always uses them. Storage ships `dist/scripts/migrate-call.js`
