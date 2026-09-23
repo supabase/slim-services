@@ -33,6 +33,9 @@ including the extension set shipped by that major's upstream Dockerfile.
   Docker argv and user setup, while `supabase-postgres-start` owns initdb,
   migrations, pending-witness handling, and the final server exec using the UID/GID
   generated from the digest-pinned upstream identity.
+- CLI PostgreSQL binaries keep the upstream uid 0 refusal unless
+  `SUPABASE_POSTGRES_ALLOW_ROOT` is exactly `1`. The image entrypoint does not
+  set that variable.
 
 ## What still works (smoke-verified)
 

@@ -55,6 +55,7 @@ jobs:
           scripts/test-portable-node.sh
           scripts/test-portable-beam.sh
           scripts/test-portable-postgres.sh
+          scripts/test-postgres-allow-root.sh
           scripts/test-portable-postgrest.sh
           scripts/test-identity.sh
 

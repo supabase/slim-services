@@ -242,12 +242,20 @@ let
       latestOnly ? false,
     }:
     let
-      # For CLI variant, override PostgreSQL to be portable (no hardcoded /nix/store paths)
+      # CLI bundles are the native server: no hardcoded /nix/store paths, and
+      # uid 0 is allowed only when SUPABASE_POSTGRES_ALLOW_ROOT=1.
       postgresql =
         let
           base = getPostgresqlPackage version latestOnly;
+          allowRoot = pkg:
+            pkg.overrideAttrs (old: {
+              nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [ pkgs.python3 ];
+              postPatch = (old.postPatch or "") + ''
+                python3 ${./postgres-allow-root.py}
+              '';
+            });
         in
-        if variant == "cli" then base.override { portable = true; } else base;
+        if variant == "cli" then allowRoot (base.override { portable = true; }) else base;
       postgres-pkgs = makeOurPostgresPkgs version { inherit variant latestOnly; };
       ourExts = map (ext: {
         name = ext.name;
