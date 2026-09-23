@@ -493,6 +493,10 @@ let
           # avoiding a dynamic /nix/store interpreter in the scratch image.
           cp -L ${pkgs.pkgsStatic.bash}/bin/bash "$out/usr/bin/bash"
           ln -s ../usr/bin/bash "$out/bin/bash"
+
+          # Snapshot copies need GNU cp's xattr-preserving archive behavior.
+          mkdir -p "$out/usr/local/bin"
+          cp -L ${pkgs.pkgsStatic.coreutils}/bin/cp "$out/usr/local/bin/cp"
         ''}
         ${lib.optionalString (lib.elem "ca" cfg.tools) ''
           mkdir -p "$out/etc/ssl/certs"
