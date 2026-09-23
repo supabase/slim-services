@@ -26,7 +26,8 @@ recorded in supabase/cli
    `natives: [{tag, digest}, ...]`. Catalog sync reads only the image fields.
 4. The cli handler copies the image (digest-preserving `regctl image copy`)
    and then copies each native tag. Image destination digest must match or
-   the sender fails the release (once `CLI_MIRROR_DISPATCH_TOKEN` exists).
+   `mirror-ecr` fails (once `CLI_MIRROR_DISPATCH_TOKEN` exists), which marks
+   the run red but does not stop `publish-release`.
    Native copy is best-effort: failure must not fail `publish-release`.
 5. A second cli job copies the same native triplets to a public-read S3
    bucket in a dedicated AWS account, for sandboxes that allow
@@ -58,7 +59,11 @@ recorded in supabase/cli
 Release-time mirroring (`service-release.yml` `mirror-ecr`) is skipped,
 with a workflow notice, until the `CLI_MIRROR_DISPATCH_TOKEN` secret
 exists. Once the secret is set, a failed or unverified **image** mirror
-fails the release. Native ECR copy never gates the GitHub Release.
+fails the `mirror-ecr` job and the run, but the GitHub Release is still
+published (without the ECR lines in its notes, and with a warning). ECR
+Public mirroring never gates the GitHub Release: registry-side problems
+are repaired by backfilling with `ecr-mirror-check.yml` (`request: true`),
+not by rebuilding the release.
 
 ## Dispatch contract
 
