@@ -391,6 +391,27 @@ report](services/vector/REPORT.md), and [imgproxy report](services/imgproxy/REPO
 for historical input digests, normalized layouts, smoke coverage, and
 publication checklists.
 
+### Backfilling mirrors
+
+`.github/workflows/ecr-mirror-check.yml` audits every published release
+daily against ECR Public (images and native tags) and the public S3 bucket
+(native triplets). Run it with `request: true` to re-dispatch the mirror for
+releases that are out of sync. The `services` input narrows the run to whole
+services or to single releases written `SERVICE:VERSION`, space-separated:
+
+```bash
+# one release
+gh workflow run ecr-mirror-check.yml -f request=true -f services=postgrest:v16.2
+
+# two releases of one service and every realtime release
+gh workflow run ecr-mirror-check.yml -f request=true \
+  -f services="postgres:15.14.1.159 postgres:17.6.1.159 realtime"
+```
+
+The same filters work locally with `bun scripts/ecr-mirror.ts sync [--request]
+[SERVICE[:VERSION] ...]`. A release whose destinations are all in sync is
+not dispatched again. See `docs/design/ecr-mirror-dispatch.md`.
+
 After a successful release run, `.github/workflows/release-results.yml`
 downloads the newest published manifest set for every service, regenerates the
 two README tables, and merges the result through a short-lived docs pull
