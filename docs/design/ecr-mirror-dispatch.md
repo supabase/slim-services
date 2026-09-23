@@ -52,7 +52,9 @@ recorded in supabase/cli
    S3 objects are overwritten in place (versioned, so a bad overwrite can
    be recovered on the cli side).
 8. Daily `ecr-mirror-check.yml` compares images on ECR Public, native tags
-   on ECR Public, and native triplets on S3, each independently. A
+   on ECR Public, and native triplets on S3, each independently, for the
+   latest release of each service release line (every release with
+   `all_releases: true`, or exact `SERVICE:VERSION` selections). A
    published release with no GHCR image (older postgres releases predate
    image publication) is skipped and counted, never fatal. ECR image drift
    and S3 native drift fail the audit; ECR native drift is reported and
@@ -63,7 +65,9 @@ recorded in supabase/cli
    and permissions exist) costs one timeout and still lets the S3 copy of
    every release land. Use the `services` input (`postgrest` or
    `postgrest:v16.2`, space-separated) to backfill in slices so one run does
-   not flood the cli runners.
+   not flood the cli runners. A release published before native OCI tags
+   existed has no natives to mirror; rebuild it with `service-release.yml`
+   and `force=true`.
 
 Release-time mirroring (`service-release.yml` `mirror-ecr`) is skipped,
 with a workflow notice, until the `CLI_MIRROR_DISPATCH_TOKEN` secret

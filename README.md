@@ -393,24 +393,30 @@ publication checklists.
 
 ### Backfilling mirrors
 
-`.github/workflows/ecr-mirror-check.yml` audits every published release
-daily against ECR Public (images and native tags) and the public S3 bucket
-(native triplets). Run it with `request: true` to re-dispatch the mirror for
-releases that are out of sync. The `services` input narrows the run to whole
-services or to single releases written `SERVICE:VERSION`, space-separated:
+`.github/workflows/ecr-mirror-check.yml` audits, daily, the latest published
+release of each service release line (postgres keeps one per major) against
+ECR Public (images and native tags) and the public S3 bucket (native
+triplets). Older releases are only audited with `all_releases: true`. Run it
+with `request: true` to re-dispatch the mirror for releases that are out of
+sync. The `services` input narrows the run to whole services or selects
+single releases written `SERVICE:VERSION`, space-separated:
 
 ```bash
-# one release
+# one release, even an older one
 gh workflow run ecr-mirror-check.yml -f request=true -f services=postgrest:v16.2
 
-# two releases of one service and every realtime release
+# two postgres releases and the latest realtime release
 gh workflow run ecr-mirror-check.yml -f request=true \
-  -f services="postgres:15.14.1.159 postgres:17.6.1.159 realtime"
+  -f services="postgres:15.14.1.175 postgres:17.6.1.175 realtime"
 ```
 
 The same filters work locally with `bun scripts/ecr-mirror.ts sync [--request]
-[SERVICE[:VERSION] ...]`. A release whose destinations are all in sync is
-not dispatched again. See `docs/design/ecr-mirror-dispatch.md`.
+[--all] [SERVICE[:VERSION] ...]`. A release whose destinations are all in sync
+is not dispatched again. Natives are mirrored from the GHCR
+`<version>-native-<target>` tags, so a release published before those tags
+existed has nothing to copy: rebuild it with `service-release.yml` and
+`force=true`, which republishes its natives and dispatches the mirror. See
+`docs/design/ecr-mirror-dispatch.md`.
 
 After a successful release run, `.github/workflows/release-results.yml`
 downloads the newest published manifest set for every service, regenerates the

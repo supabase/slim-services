@@ -11,10 +11,15 @@ name: ECR mirror check
         type: boolean
         default: false
       services:
-        description: Space-separated services or service:version releases to audit (default all).
+        description: Space-separated services or service:version releases to audit (default all services).
         required: false
         type: string
         default: ""
+      all_releases:
+        description: Audit every published release instead of the latest of each release line.
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -62,6 +67,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           MIRROR_DISPATCH_TOKEN: ${{ secrets.CLI_MIRROR_DISPATCH_TOKEN }}
+          ALL_RELEASES: ${{ inputs.all_releases }}
           REQUEST: ${{ inputs.request }}
           SERVICES: ${{ inputs.services }}
         run: |
@@ -71,6 +77,9 @@ jobs:
             args+=(--request)
           else
             unset MIRROR_DISPATCH_TOKEN
+          fi
+          if [[ "$ALL_RELEASES" == "true" ]]; then
+            args+=(--all)
           fi
           read -ra services <<< "${SERVICES:-}"
           bun scripts/ecr-mirror.ts sync "${args[@]}" "${services[@]}"

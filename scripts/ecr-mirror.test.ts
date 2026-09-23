@@ -375,7 +375,7 @@ if [ "$1" = image ] && [ "$2" = digest ]; then printf "%s\\n" "${DIGEST}"; exit 
 exit 1
 `,
     );
-    const result = run(["sync"], { PATH: `${stub}:/usr/bin:/bin` });
+    const result = run(["sync", "--all"], { PATH: `${stub}:/usr/bin:/bin` });
     expect(result.exitCode, result.stderr.toString() + result.stdout.toString()).toBe(0);
     expect(result.stdout.toString()).toContain("skipped: postgres 15.8.1.085 has no source image");
     expect(result.stdout.toString()).toContain("in sync: postgres 15.14.1.159");
@@ -587,14 +587,14 @@ exit 1
     expect(result.stderr.toString()).not.toContain("native artifact(s) missing");
   });
 
-  test("audits only the named services and releases", () => {
+  test("audits the latest release of each line unless asked for all or one release", () => {
     const stub = mkdtempSync(join(tmpdir(), "ecr-filter-"));
     writeStub(
       stub,
       "gh",
       `#!/usr/bin/env bash
 cat <<'EOF'
-[[{"tag_name":"postgres-15.14.1.159","draft":false,"prerelease":false},{"tag_name":"postgrest-v16.2","draft":false,"prerelease":false},{"tag_name":"postgrest-v16.1","draft":false,"prerelease":false}]]
+[[{"tag_name":"postgrest-v16.1","draft":false,"prerelease":false,"published_at":"2026-09-20T00:00:00Z"},{"tag_name":"postgrest-v16.2","draft":false,"prerelease":false,"published_at":"2026-09-01T00:00:00Z"},{"tag_name":"postgres-15.14.1.159","draft":false,"prerelease":false},{"tag_name":"postgres-15.14.1.160","draft":false,"prerelease":false},{"tag_name":"postgres-17.6.1.173","draft":false,"prerelease":false},{"tag_name":"postgres-16.0.0.001","draft":false,"prerelease":false}]]
 EOF
 `,
     );
@@ -610,11 +610,25 @@ if [ "$1" = image ] && [ "$2" = digest ]; then printf "%s\\n" "${DIGEST}"; exit 
 exit 1
 `,
     );
+    const latest = run(["sync"], { PATH: `${stub}:/usr/bin:/bin` });
+    expect(latest.exitCode, latest.stderr.toString()).toBe(0);
+    const audited = latest.stdout
+      .toString()
+      .split("\n")
+      .filter((line) => line.startsWith("[slim] in sync: "))
+      .map((line) => line.slice("[slim] in sync: ".length).split(" (")[0]);
+    expect(audited.sort()).toEqual(["postgres 15.14.1.160", "postgres 17.6.1.173", "postgrest v16.2"]);
+
     const result = run(["sync", "postgrest"], { PATH: `${stub}:/usr/bin:/bin` });
     expect(result.exitCode, result.stderr.toString()).toBe(0);
     expect(result.stdout.toString()).toContain("in sync: postgrest v16.2");
-    expect(result.stdout.toString()).toContain("in sync: postgrest v16.1");
-    expect(result.stdout.toString()).not.toContain("postgres 15.14.1.159");
+    expect(result.stdout.toString()).not.toContain("v16.1");
+    expect(result.stdout.toString()).not.toContain("postgres 15.14.1.160");
+
+    const all = run(["sync", "--all", "postgrest"], { PATH: `${stub}:/usr/bin:/bin` });
+    expect(all.exitCode, all.stderr.toString()).toBe(0);
+    expect(all.stdout.toString()).toContain("in sync: postgrest v16.1");
+    expect(all.stdout.toString()).toContain("in sync: postgrest v16.2");
 
     const release = run(["sync", "postgrest:v16.1"], { PATH: `${stub}:/usr/bin:/bin` });
     expect(release.exitCode, release.stderr.toString()).toBe(0);

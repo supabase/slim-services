@@ -38,7 +38,7 @@ const usage = `Usage:
   bun scripts/ecr-mirror.ts destination-repo SERVICE
   bun scripts/ecr-mirror.ts request SERVICE VERSION DIGEST
   bun scripts/ecr-mirror.ts verify SERVICE VERSION DIGEST
-  bun scripts/ecr-mirror.ts sync [--request] [SERVICE[:VERSION] ...]
+  bun scripts/ecr-mirror.ts sync [--request] [--all] [SERVICE[:VERSION] ...]
 
 Mirror published slim images to AWS ECR Public and native triplets to ECR
 Public and the public S3 bucket, through the mirror workflow hosted in the
@@ -49,12 +49,13 @@ Never prune untagged manifests; already-shipped CLIs still pin those digests.
 request dispatches one release and waits for its image on ECR Public and its
 natives on S3 within one shared timeout, reporting each destination.
 
-sync audits every published GitHub Release, or only the named services or
-SERVICE:VERSION releases. A release whose GHCR image is missing is skipped
-and counted, not fatal. With
---request it dispatches every out-of-sync release first and then waits for
-all of them within one shared timeout, so an unreachable destination cannot
-stall the backfill of the others. Image drift on ECR Public and native drift
+sync audits the latest published release of each service release line
+(postgres keeps one per major), or every release with --all. SERVICE narrows
+that to one service; SERVICE:VERSION selects exactly that release, even an
+older one. A release whose GHCR image is missing is skipped and counted,
+not fatal. With --request it dispatches every out-of-sync release first and
+then waits for all of them within one shared timeout, so an unreachable
+destination cannot stall the backfill of the others. Image drift on ECR Public and native drift
 on S3 fail the audit. Native tag drift on ECR Public is reported but only
 fails the audit (and is only waited for) when ECR_MIRROR_REQUIRE_NATIVES=1;
 the cli handler copies those natives best-effort.`;
@@ -84,7 +85,10 @@ const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\
 export const nativeTagPattern = (version: string): RegExp =>
   new RegExp(`^${escapeRegExp(version)}-native-(${NATIVE_TARGETS.join("|")})$`);
 
-type ServiceConfig = { readonly tag_pattern: string };
+type ServiceConfig = {
+  readonly tag_pattern: string;
+  readonly release_lines?: ReadonlyArray<{ readonly tag_pattern: string }>;
+};
 type ReleaseConfig = { readonly services: Readonly<Record<string, ServiceConfig>> };
 
 export const loadReleaseConfig = (path: string): ReleaseConfig => {
@@ -153,31 +157,73 @@ export const renderPayload = (options: {
   return { client_payload, event_type: options.eventType };
 };
 
-export const publishedReleases = (
-  config: ReleaseConfig,
-  releasePages: unknown,
-): ReadonlyArray<{ readonly service: string; readonly version: string }> => {
+export type PublishedRelease = {
+  readonly service: string;
+  readonly version: string;
+  readonly publishedAt: string;
+};
+
+export const publishedReleases = (config: ReleaseConfig, releasePages: unknown): ReadonlyArray<PublishedRelease> => {
   const prefixes = Object.keys(config.services)
     .map((name) => ({ prefix: `${name}-`, service: name }))
     .sort((left, right) => right.prefix.length - left.prefix.length);
   if (!Array.isArray(releasePages)) return [];
-  const rows: Array<{ service: string; version: string }> = [];
+  const rows: PublishedRelease[] = [];
   for (const page of releasePages) {
     if (!Array.isArray(page)) continue;
     for (const release of page) {
       if (typeof release !== "object" || release === null) continue;
-      const record = release as { tag_name?: unknown; draft?: unknown; prerelease?: unknown };
+      const record = release as { tag_name?: unknown; draft?: unknown; prerelease?: unknown; published_at?: unknown };
       if (record.draft || record.prerelease) continue;
       const tag = typeof record.tag_name === "string" ? record.tag_name : "";
       for (const { prefix, service } of prefixes) {
         if (tag.startsWith(prefix)) {
-          rows.push({ service, version: tag.slice(prefix.length) });
+          rows.push({
+            service,
+            version: tag.slice(prefix.length),
+            publishedAt: typeof record.published_at === "string" ? record.published_at : "",
+          });
           break;
         }
       }
     }
   }
   return rows;
+};
+
+const versionKey = (version: string): ReadonlyArray<number> =>
+  (version.split("-")[0]?.match(/[0-9]+/g) ?? []).map(Number);
+
+const newer = (left: PublishedRelease, right: PublishedRelease): boolean => {
+  const a = versionKey(left.version);
+  const b = versionKey(right.version);
+  for (let index = 0; index < Math.max(a.length, b.length); index += 1) {
+    const difference = (a[index] ?? -1) - (b[index] ?? -1);
+    if (difference !== 0) return difference > 0;
+  }
+  return left.publishedAt > right.publishedAt;
+};
+
+/**
+ * The newest release of each service release line (postgres keeps one per major). Releases
+ * outside every current tag pattern are history and never selected.
+ */
+export const latestReleases = (
+  config: ReleaseConfig,
+  releases: ReadonlyArray<PublishedRelease>,
+): ReadonlyArray<PublishedRelease> => {
+  const latest = new Map<string, PublishedRelease>();
+  for (const release of releases) {
+    const entry = config.services[release.service];
+    if (entry === undefined) continue;
+    const patterns = (entry.release_lines ?? [entry]).map(({ tag_pattern }) => new RegExp(tag_pattern));
+    const line = patterns.findIndex((pattern) => pattern.test(release.version));
+    if (line < 0) continue;
+    const key = `${release.service}\0${line}`;
+    const current = latest.get(key);
+    if (current === undefined || newer(release, current)) latest.set(key, release);
+  }
+  return [...latest.values()];
 };
 
 const defaultSpawn: RunCommand = (argv, options) => {
@@ -447,7 +493,12 @@ const listReleasePages = (ctx: Context): unknown => {
   return JSON.parse(result.stdout);
 };
 
-const syncReleases = async (ctx: Context, request: boolean, selectors: ReadonlyArray<string>): Promise<void> => {
+const syncReleases = async (
+  ctx: Context,
+  request: boolean,
+  all: boolean,
+  selectors: ReadonlyArray<string>,
+): Promise<void> => {
   const filters = selectors.map((selector) => {
     const separator = selector.indexOf(":");
     const service = separator < 0 ? selector : selector.slice(0, separator);
@@ -455,13 +506,14 @@ const syncReleases = async (ctx: Context, request: boolean, selectors: ReadonlyA
     if (ctx.config.services[service] === undefined) fail(`unknown release service: ${service}`);
     return { service, version };
   });
-  const releases = publishedReleases(ctx.config, listReleasePages(ctx)).filter(
-    (release) =>
-      filters.length === 0 ||
-      filters.some(
-        ({ service, version }) =>
-          service === release.service && (version === undefined || version === release.version),
-      ),
+  const published = publishedReleases(ctx.config, listReleasePages(ctx));
+  const current = new Set(all ? published : latestReleases(ctx.config, published));
+  const releases = published.filter((release) =>
+    filters.length === 0
+      ? current.has(release)
+      : filters.some(({ service, version }) =>
+          service !== release.service ? false : version === undefined ? current.has(release) : version === release.version,
+        ),
   );
   if (releases.length === 0) fail("no published releases found");
   const drifted: MirrorCheck[] = [];
@@ -565,10 +617,14 @@ export const main = async (argv: ReadonlyArray<string>, run: RunCommand = defaul
   }
   if (command === "sync") {
     const rest = argv.slice(1);
-    const request = rest[0] === "--request";
-    if (request) rest.shift();
-    if (rest.some((service) => service.startsWith("-"))) throw new ScriptError(usage, 2);
-    await syncReleases(ctx, request, rest);
+    const flags = rest.filter((arg) => arg.startsWith("-"));
+    if (flags.some((flag) => flag !== "--request" && flag !== "--all")) throw new ScriptError(usage, 2);
+    await syncReleases(
+      ctx,
+      flags.includes("--request"),
+      flags.includes("--all"),
+      rest.filter((arg) => !arg.startsWith("-")),
+    );
     return;
   }
   throw new ScriptError(usage, 2);
