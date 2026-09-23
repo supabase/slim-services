@@ -1,7 +1,9 @@
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
+
+import { CHECKSUM_TYPE, NATIVE_TARGETS } from "./publish-native-oci.ts";
 
 const ROOT = join(import.meta.dir, "..");
 const SCRIPT = join(import.meta.dir, "ecr-mirror.ts");
@@ -15,6 +17,8 @@ const run = (args: ReadonlyArray<string>, env: Record<string, string> = {}) => {
   };
   if (!("MIRROR_DISPATCH_TOKEN" in env)) delete merged["MIRROR_DISPATCH_TOKEN"];
   if (!("NATIVE_ARTIFACTS_FILE" in env)) delete merged["NATIVE_ARTIFACTS_FILE"];
+  if (!("GITHUB_OUTPUT" in env)) delete merged["GITHUB_OUTPUT"];
+  if (!("S3_MIRROR_BASE_URL" in env)) merged["S3_MIRROR_BASE_URL"] = "file:///nonexistent-slim-s3";
   const cleaned: Record<string, string> = {};
   for (const [key, value] of Object.entries(merged)) {
     if (value !== undefined) cleaned[key] = value;
@@ -30,6 +34,25 @@ const run = (args: ReadonlyArray<string>, env: Record<string, string> = {}) => {
 const writeStub = (dir: string, name: string, body: string): void => {
   writeFileSync(join(dir, name), body);
   chmodSync(join(dir, name), 0o755);
+};
+
+const SUMS = "sums\n";
+const SUMS_DIGEST = `sha256:${new Bun.CryptoHasher("sha256").update(SUMS).digest("hex")}`;
+
+// `regctl manifest get` branch returning a native manifest whose checksum layer is SUMS.
+const NATIVE_MANIFEST_GET = `if [ "$1" = manifest ] && [ "$2" = get ]; then
+  printf '%s\\n' '${JSON.stringify({ layers: [{ mediaType: CHECKSUM_TYPE, digest: SUMS_DIGEST }] })}'; exit 0
+fi`;
+
+/** Serves SUMS as every target's S3 SHA256SUMS object through a file:// base URL. */
+const s3Mirror = (releases: ReadonlyArray<readonly [string, string]>): string => {
+  const root = mkdtempSync(join(tmpdir(), "ecr-s3-"));
+  for (const [service, version] of releases) {
+    mkdirSync(join(root, service, version), { recursive: true });
+    for (const target of NATIVE_TARGETS)
+      writeFileSync(join(root, service, version, `${service}-${version}-${target}.SHA256SUMS`), SUMS);
+  }
+  return `file://${root}`;
 };
 
 describe("ecr-mirror payload", () => {
@@ -161,6 +184,51 @@ exit 1
     expect(result.stdout.toString()).not.toContain("destination already matches");
   });
 
+  test("reports the image mirror and S3 natives independently", () => {
+    const stub = mkdtempSync(join(tmpdir(), "ecr-req-s3-"));
+    const natives = join(stub, "natives.json");
+    const output = join(stub, "github-output");
+    const nativeDigest = `sha256:${"c".repeat(64)}`;
+    writeFileSync(natives, JSON.stringify([{ tag: "v16.2-native-linux-arm64", digest: nativeDigest }]));
+    writeStub(
+      stub,
+      "regctl",
+      `#!/bin/sh
+${NATIVE_MANIFEST_GET}
+if [ "$1" = image ] && [ "$2" = digest ]; then
+  case "$3" in *native*) printf "%s\\n" "${nativeDigest}"; exit 0 ;; esac
+  [ -n "$FAKE_IMAGE" ] && printf "%s\\n" "$FAKE_IMAGE"; exit 0
+fi
+exit 1
+`,
+    );
+    writeStub(stub, "gh", "#!/bin/sh\ncat >/dev/null\nexit 0\n");
+    const env = {
+      PATH: `${stub}:/usr/bin:/bin`,
+      MIRROR_DISPATCH_TOKEN: "token",
+      NATIVE_ARTIFACTS_FILE: natives,
+      GITHUB_OUTPUT: output,
+      ECR_MIRROR_POLL_INTERVAL: "0",
+      ECR_MIRROR_TIMEOUT: "1",
+    };
+
+    const s3Stale = run(["request", "postgrest", "v16.2", DIGEST], { ...env, FAKE_IMAGE: DIGEST });
+    expect(s3Stale.exitCode).not.toBe(0);
+    expect(s3Stale.stderr.toString()).toContain("1 native artifact(s) missing");
+    expect(readFileSync(output, "utf8")).toBe("mirrored=true\n");
+
+    writeFileSync(output, "");
+    const ecrDown = run(["request", "postgrest", "v16.2", DIGEST], {
+      ...env,
+      FAKE_IMAGE: "",
+      S3_MIRROR_BASE_URL: s3Mirror([["postgrest", "v16.2"]]),
+    });
+    expect(ecrDown.exitCode).not.toBe(0);
+    expect(ecrDown.stdout.toString()).toContain("in sync S3 native: postgrest v16.2 linux-arm64");
+    expect(ecrDown.stderr.toString()).toContain("1 release image(s) are missing");
+    expect(readFileSync(output, "utf8")).toBe("");
+  });
+
   test("destination digest uses empty task-local configs", async () => {
     const stub = mkdtempSync(join(tmpdir(), "ecr-anon-"));
     const trace = join(stub, "regctl-trace");
@@ -237,7 +305,7 @@ exit 1
     expect(result.stderr.toString()).not.toContain("no published releases found");
   });
 
-  test("reports native drift when the image matches", () => {
+  test("reports native ECR drift without failing unless natives are required", () => {
     const stub = mkdtempSync(join(tmpdir(), "ecr-native-drift-"));
     const nativeDigest = `sha256:${"c".repeat(64)}`;
     writeStub(
@@ -257,6 +325,7 @@ if [ "$1" = manifest ] && [ "$2" = head ]; then
   case "$3" in *native*) printf "%s\\n" "${nativeDigest}"; exit 0 ;; esac
   printf "%s\\n" "${DIGEST}"; exit 0
 fi
+${NATIVE_MANIFEST_GET}
 if [ "$1" = image ] && [ "$2" = digest ]; then
   case "$3" in *native*) printf "%s\\n" "sha256:${"b".repeat(64)}"; exit 0 ;; esac
   printf "%s\\n" "${DIGEST}"; exit 0
@@ -264,17 +333,22 @@ fi
 exit 1
 `,
     );
-    const result = run(["sync"], { PATH: `${stub}:/usr/bin:/bin` });
+    const s3 = s3Mirror([["postgres", "15.14.1.159"]]);
+    const result = run(["sync"], { PATH: `${stub}:/usr/bin:/bin`, S3_MIRROR_BASE_URL: s3 });
     expect(result.exitCode, result.stderr.toString()).toBe(0);
-    expect(result.stdout.toString()).toContain("out of sync: postgres 15.14.1.159 natives");
     expect(result.stdout.toString()).toContain(
       "out of sync native: postgres 15.14.1.159-native-linux-arm64",
     );
-    expect(result.stdout.toString()).toContain("1 release(s) have native tag drift");
+    expect(result.stdout.toString()).toContain("in sync S3 native: postgres 15.14.1.159 linux-arm64");
+    expect(result.stdout.toString()).toContain("3 native tag(s) missing from public.ecr.aws/supabase/cli");
 
-    const required = run(["sync"], { PATH: `${stub}:/usr/bin:/bin`, ECR_MIRROR_REQUIRE_NATIVES: "1" });
+    const required = run(["sync"], {
+      PATH: `${stub}:/usr/bin:/bin`,
+      S3_MIRROR_BASE_URL: s3,
+      ECR_MIRROR_REQUIRE_NATIVES: "1",
+    });
     expect(required.exitCode).not.toBe(0);
-    expect(required.stderr.toString()).toContain("native tags missing");
+    expect(required.stderr.toString()).toContain("native tag(s) missing");
   });
 
   test("skips a release without a source image and audits the rest", () => {
@@ -329,6 +403,7 @@ if [ "$1" = manifest ] && [ "$2" = head ]; then
   case "$3" in *native*) printf "%s\\n" "${nativeDigest}"; exit 0 ;; esac
   printf "%s\\n" "${DIGEST}"; exit 0
 fi
+${NATIVE_MANIFEST_GET}
 if [ "$1" = image ] && [ "$2" = digest ]; then
   case "$3" in *native*) printf "%s\\n" "sha256:${"b".repeat(64)}"; exit 0 ;; esac
   printf "%s\\n" "${DIGEST}"; exit 0
@@ -338,13 +413,14 @@ exit 1
     );
     const result = run(["sync", "--request"], {
       PATH: `${stub}:/usr/bin:/bin`,
+      S3_MIRROR_BASE_URL: s3Mirror([["postgres", "15.14.1.159"]]),
       MIRROR_DISPATCH_TOKEN: "token",
       ECR_MIRROR_POLL_INTERVAL: "0",
       ECR_MIRROR_TIMEOUT: "1",
     });
     expect(result.exitCode, result.stderr.toString() + result.stdout.toString()).toBe(0);
-    expect(result.stdout.toString()).not.toContain("waiting for postgres natives");
-    expect(result.stdout.toString()).toContain("1 release(s) have native tag drift");
+    expect(result.stdout.toString()).not.toContain("waiting for");
+    expect(result.stdout.toString()).toContain("3 native tag(s) missing from public.ecr.aws/supabase/cli");
   });
 
   test("fails --request when natives remain stale and are required", () => {
@@ -368,6 +444,7 @@ if [ "$1" = manifest ] && [ "$2" = head ]; then
   case "$3" in *native*) printf "%s\\n" "${nativeDigest}"; exit 0 ;; esac
   printf "%s\\n" "${DIGEST}"; exit 0
 fi
+${NATIVE_MANIFEST_GET}
 if [ "$1" = image ] && [ "$2" = digest ]; then
   case "$3" in *native*) printf "%s\\n" "sha256:${"b".repeat(64)}"; exit 0 ;; esac
   printf "%s\\n" "${DIGEST}"; exit 0
@@ -377,14 +454,15 @@ exit 1
     );
     const result = run(["sync", "--request"], {
       PATH: `${stub}:/usr/bin:/bin`,
+      S3_MIRROR_BASE_URL: s3Mirror([["postgres", "15.14.1.159"]]),
       MIRROR_DISPATCH_TOKEN: "token",
       ECR_MIRROR_POLL_INTERVAL: "0",
       ECR_MIRROR_TIMEOUT: "1",
       ECR_MIRROR_REQUIRE_NATIVES: "1",
     });
     expect(result.exitCode).not.toBe(0);
-    expect(result.stdout.toString()).toContain("out of sync: postgres 15.14.1.159 natives");
-    expect(result.stderr.toString()).toContain("native tags missing");
+    expect(result.stdout.toString()).toContain("waiting for postgres 15.14.1.159-native-linux-arm64 native");
+    expect(result.stderr.toString()).toContain("native tag(s) missing");
   });
 
   test("waits until natives match after dispatch", () => {
@@ -408,6 +486,7 @@ if [ "$1" = manifest ] && [ "$2" = head ]; then
   case "$3" in *native*) printf "%s\\n" "${nativeDigest}"; exit 0 ;; esac
   printf "%s\\n" "${DIGEST}"; exit 0
 fi
+${NATIVE_MANIFEST_GET}
 if [ "$1" = image ] && [ "$2" = digest ]; then
   case "$3" in *native*)
     n=0; [ -f "$FAKE_COUNT" ] && n=$(cat "$FAKE_COUNT")
@@ -422,6 +501,7 @@ exit 1
     );
     const result = run(["sync", "--request"], {
       PATH: `${stub}:/usr/bin:/bin`,
+      S3_MIRROR_BASE_URL: s3Mirror([["postgres", "15.14.1.159"]]),
       FAKE_COUNT: join(stub, "native-dest.count"),
       MIRROR_DISPATCH_TOKEN: "token",
       ECR_MIRROR_POLL_INTERVAL: "0",
@@ -429,9 +509,114 @@ exit 1
       ECR_MIRROR_REQUIRE_NATIVES: "1",
     });
     expect(result.exitCode, result.stderr.toString() + result.stdout.toString()).toBe(0);
-    expect(result.stdout.toString()).toContain("waiting for postgres natives");
+    expect(result.stdout.toString()).toContain("waiting for postgres 15.14.1.159-native-linux-arm64 native");
     expect(result.stdout.toString()).toContain(
       "in sync native: postgres 15.14.1.159-native-linux-arm64",
     );
+  });
+
+  test("fails on S3 native drift while ECR Public is in sync", () => {
+    const stub = mkdtempSync(join(tmpdir(), "ecr-s3-drift-"));
+    writeStub(
+      stub,
+      "gh",
+      `#!/usr/bin/env bash
+cat <<'EOF'
+[[{"tag_name":"postgres-15.14.1.159","draft":false,"prerelease":false}]]
+EOF
+`,
+    );
+    writeStub(
+      stub,
+      "regctl",
+      `#!/bin/sh
+if [ "$1" = manifest ] && [ "$2" = head ]; then printf "%s\\n" "${DIGEST}"; exit 0; fi
+${NATIVE_MANIFEST_GET}
+if [ "$1" = image ] && [ "$2" = digest ]; then printf "%s\\n" "${DIGEST}"; exit 0; fi
+exit 1
+`,
+    );
+    const result = run(["sync"], { PATH: `${stub}:/usr/bin:/bin` });
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stdout.toString()).toContain("in sync native: postgres 15.14.1.159-native-linux-arm64");
+    expect(result.stdout.toString()).toContain("out of sync S3 native: postgres 15.14.1.159 linux-arm64");
+    expect(result.stderr.toString()).toContain("3 native artifact(s) missing from file:///nonexistent-slim-s3");
+    expect(result.stderr.toString()).not.toContain("release image(s)");
+  });
+
+  test("--request dispatches every release before waiting when ECR Public never converges", () => {
+    const stub = mkdtempSync(join(tmpdir(), "ecr-outage-"));
+    const dispatches = join(stub, "dispatches");
+    writeStub(
+      stub,
+      "gh",
+      `#!/bin/sh
+case "$*" in *dispatches*) cat >> '${dispatches}'; exit 0 ;; esac
+cat <<'EOF'
+[[{"tag_name":"postgres-15.14.1.159","draft":false,"prerelease":false},{"tag_name":"postgrest-v16.2","draft":false,"prerelease":false}]]
+EOF
+`,
+    );
+    writeStub(
+      stub,
+      "regctl",
+      `#!/bin/sh
+if [ "$1" = manifest ] && [ "$2" = head ]; then printf "%s\\n" "${DIGEST}"; exit 0; fi
+${NATIVE_MANIFEST_GET}
+exit 1
+`,
+    );
+    const result = run(["sync", "--request"], {
+      PATH: `${stub}:/usr/bin:/bin`,
+      S3_MIRROR_BASE_URL: s3Mirror([
+        ["postgres", "15.14.1.159"],
+        ["postgrest", "v16.2"],
+      ]),
+      MIRROR_DISPATCH_TOKEN: "token",
+      ECR_MIRROR_POLL_INTERVAL: "0",
+      ECR_MIRROR_TIMEOUT: "1",
+    });
+    expect(result.exitCode).not.toBe(0);
+    const sent = readFileSync(dispatches, "utf8");
+    expect(sent).toContain('"source": "ghcr.io/supabase/cli/postgres:15.14.1.159"');
+    expect(sent).toContain('"source": "ghcr.io/supabase/cli/postgrest:v16.2"');
+    expect(result.stdout.toString()).toContain("in sync S3 native: postgrest v16.2 linux-amd64");
+    expect(result.stderr.toString()).toContain(
+      "2 release image(s) are missing from public.ecr.aws/supabase/cli",
+    );
+    expect(result.stderr.toString()).not.toContain("native artifact(s) missing");
+  });
+
+  test("audits only the named services", () => {
+    const stub = mkdtempSync(join(tmpdir(), "ecr-filter-"));
+    writeStub(
+      stub,
+      "gh",
+      `#!/usr/bin/env bash
+cat <<'EOF'
+[[{"tag_name":"postgres-15.14.1.159","draft":false,"prerelease":false},{"tag_name":"postgrest-v16.2","draft":false,"prerelease":false}]]
+EOF
+`,
+    );
+    writeStub(
+      stub,
+      "regctl",
+      `#!/bin/sh
+if [ "$1" = manifest ] && [ "$2" = head ]; then
+  case "$3" in *native*) exit 1 ;; esac
+  printf "%s\\n" "${DIGEST}"; exit 0
+fi
+if [ "$1" = image ] && [ "$2" = digest ]; then printf "%s\\n" "${DIGEST}"; exit 0; fi
+exit 1
+`,
+    );
+    const result = run(["sync", "postgrest"], { PATH: `${stub}:/usr/bin:/bin` });
+    expect(result.exitCode, result.stderr.toString()).toBe(0);
+    expect(result.stdout.toString()).toContain("in sync: postgrest v16.2");
+    expect(result.stdout.toString()).not.toContain("postgres 15.14.1.159");
+
+    const unknown = run(["sync", "kong"], { PATH: `${stub}:/usr/bin:/bin` });
+    expect(unknown.exitCode).not.toBe(0);
+    expect(unknown.stderr.toString()).toContain("unknown release service: kong");
   });
 });

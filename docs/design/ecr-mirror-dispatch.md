@@ -25,18 +25,24 @@ recorded in supabase/cli
    with the **image** `service` / `version` / `digest` plus
    `natives: [{tag, digest}, ...]`. Catalog sync reads only the image fields.
 4. The cli handler copies the image (digest-preserving `regctl image copy`)
-   and then copies each native tag. Image destination digest must match or
-   `mirror-ecr` fails (once `CLI_MIRROR_DISPATCH_TOKEN` exists), which marks
-   the run red but does not stop `publish-release`.
-   Native copy is best-effort: failure must not fail `publish-release`.
-5. A second cli job copies the same native triplets to a public-read S3
-   bucket in a dedicated AWS account, for sandboxes that allow
-   `*.amazonaws.com` but block registry blob CDNs and unattached GitHub
-   release assets. It re-fetches each native from GHCR by digest, checks
-   the archive against its `SHA256SUMS` and the manifest against the
-   dispatch fields, then uploads under the release asset names to
+   and then copies each native tag. `mirror-ecr` waits, within one shared
+   timeout, for the image digest on ECR Public and each native `SHA256SUMS`
+   on S3, and reports each destination separately. Either one missing fails
+   `mirror-ecr` (once `CLI_MIRROR_DISPATCH_TOKEN` exists), which marks the
+   run red but does not stop `publish-release`; the ECR lines in the release
+   notes only depend on the image check. Native ECR copy is best-effort and
+   only enforced under `ECR_MIRROR_REQUIRE_NATIVES=1`.
+5. A second cli job, independent of the ECR job, copies the same native
+   triplets to a public-read S3 bucket in a dedicated AWS account, for
+   sandboxes that allow `*.amazonaws.com` but block registry blob CDNs and
+   unattached GitHub release assets. An ECR Public outage or permission gap
+   never holds it back. It verifies the source image digest, re-fetches each
+   native from GHCR by digest, checks the archive against its `SHA256SUMS`
+   and the manifest against the dispatch fields, then uploads under the
+   release asset names to
    `https://supabase-cli-artifacts.s3.us-east-1.amazonaws.com/<service>/<version>/<service>-<version>-<target>.{tar.zst,manifest.json,SHA256SUMS}`.
-   Also best-effort; the release never waits on it.
+   This repository verifies an S3 copy by hashing the anonymous
+   `SHA256SUMS` object against the checksum layer digest of the GHCR native.
 6. Do not skip the dispatch when the image destination already matches;
    natives may have changed. Never prune untagged GHCR or ECR manifests:
    already-shipped CLIs still pin old image digests until a catalog PR ships.
@@ -45,25 +51,27 @@ recorded in supabase/cli
    `aws ecr-public create-repository` accepts no `--image-tag-mutability` flag.
    S3 objects are overwritten in place (versioned, so a bad overwrite can
    be recovered on the cli side).
-8. Daily `ecr-mirror-check.yml` compares images **and** native tags. A
+8. Daily `ecr-mirror-check.yml` compares images on ECR Public, native tags
+   on ECR Public, and native triplets on S3, each independently. A
    published release with no GHCR image (older postgres releases predate
-   image publication) is skipped and counted, never fatal. Image drift
-   fails the audit; native drift is reported and only fails it when
-   `ECR_MIRROR_REQUIRE_NATIVES=1`. Manual `request: true` backfills:
-   it dispatches and verifies each image, and only waits for the native
-   copy under the same flag, so a handler that copies images only cannot
-   stall the run. Each dispatch also re-runs the S3 copy. Run the first
-   backfill in service-sized slices rather than one shot; each image
-   verify can take up to 15 minutes.
+   image publication) is skipped and counted, never fatal. ECR image drift
+   and S3 native drift fail the audit; ECR native drift is reported and
+   only fails it when `ECR_MIRROR_REQUIRE_NATIVES=1`. Manual
+   `request: true` backfills: it dispatches every out-of-sync release first
+   and then waits for all of them within one shared timeout, so an
+   unreachable destination (for example ECR Public before its repositories
+   and permissions exist) costs one timeout and still lets the S3 copy of
+   every release land. Use the `services` input to backfill in
+   service-sized slices so one run does not flood the cli runners.
 
 Release-time mirroring (`service-release.yml` `mirror-ecr`) is skipped,
 with a workflow notice, until the `CLI_MIRROR_DISPATCH_TOKEN` secret
-exists. Once the secret is set, a failed or unverified **image** mirror
-fails the `mirror-ecr` job and the run, but the GitHub Release is still
-published (without the ECR lines in its notes, and with a warning). ECR
-Public mirroring never gates the GitHub Release: registry-side problems
-are repaired by backfilling with `ecr-mirror-check.yml` (`request: true`),
-not by rebuilding the release.
+exists. Once the secret is set, a failed or unverified image mirror or S3
+native copy fails the `mirror-ecr` job and the run, but the GitHub Release
+is still published (with a warning, and without the ECR lines in its notes
+when the image did not verify). Mirroring never gates the GitHub Release:
+mirror-side problems are repaired by backfilling with
+`ecr-mirror-check.yml` (`request: true`), not by rebuilding the release.
 
 ## Dispatch contract
 
@@ -104,10 +112,10 @@ The handler in `supabase/cli` must:
   Use a credential that can only `PutObject` on that bucket.
 
 This repository treats image-mirror success as the destination digest
-matching, which `bun scripts/ecr-mirror.ts` verifies with anonymous pulls.
-Native destination drift is reported by the daily audit and becomes a
-failure only once `ECR_MIRROR_REQUIRE_NATIVES=1` is set, which should wait
-until the cli handler on `develop` copies natives.
+matching, which `bun scripts/ecr-mirror.ts` verifies with anonymous pulls,
+and S3 success as the anonymous `SHA256SUMS` object matching the GHCR
+checksum layer. ECR native drift is reported by the daily audit and becomes
+a failure only once `ECR_MIRROR_REQUIRE_NATIVES=1` is set.
 
 ## Follow-up
 
