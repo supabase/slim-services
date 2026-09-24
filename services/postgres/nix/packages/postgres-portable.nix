@@ -227,14 +227,21 @@ let
       #  1. source stage-shared-config.sh after the config templates are
       #     copied into PGDATA;
       #  2. initdb with the selected upstream Dockerfile's locale contract and
-      #     a temporary password file. The source shape is asserted below.
+      #     a temporary password file. The source shape is asserted below;
+      #  3. skip the getkey chmod when the file is already executable, so a
+      #     non-owner user can boot a root-installed bundle.
       init=$out/share/supabase-cli/bin/supabase-postgres-init.sh
       ${pkgs.patch}/bin/patch "$init" < ${./postgres-init-pwfile.patch}
       substituteInPlace "$init" \
         --replace-fail '@INITDB_ARGS@' ${lib.escapeShellArg (lib.escapeShellArgs initdbArgs)}
       sed -i \
         -e '/pg_ident.conf.template/a\	. "$BUNDLE_DIR/share/supabase-cli/bin/stage-shared-config.sh"' \
+        -e 's|^\([[:space:]]*\)chmod +x "$GETKEY_SCRIPT"$|\1[ -x "$GETKEY_SCRIPT" ] \|\| chmod +x "$GETKEY_SCRIPT"|' \
         $init
+      if grep -Eq '^[[:space:]]*chmod \+x "\$GETKEY_SCRIPT"$' $init; then
+        echo "init script still chmods the bundled getkey script unconditionally" >&2
+        exit 1
+      fi
       for want in "stage-shared-config.sh" "--pwfile="; do
         grep -q -- "$want" $init || {
           echo "init-script patch anchor missing: $want" >&2
