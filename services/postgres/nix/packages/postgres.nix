@@ -244,16 +244,69 @@ let
     let
       # CLI bundles are the native server: no hardcoded /nix/store paths, and
       # uid 0 is allowed only when SUPABASE_POSTGRES_ALLOW_ROOT=1.
+      # generic.nix postgresqlWithPackages rebuilds from the original
+      # callPackage arguments, so this bundle installs the patched server.
       postgresql =
         let
           base = getPostgresqlPackage version latestOnly;
-          allowRoot = pkg:
-            pkg.overrideAttrs (old: {
-              nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [ pkgs.python3 ];
-              postPatch = (old.postPatch or "") + ''
-                python3 ${./postgres-allow-root.py}
+          bundleWith =
+            server: f:
+            pkgs.buildEnv {
+              name = "postgresql-and-plugins-${server.version}";
+              version = server.version;
+              paths = f server.pkgs ++ [
+                server
+                server.lib
+              ];
+              nativeBuildInputs = [ pkgs.makeWrapper ];
+              pathsToLink = [
+                "/"
+                "/bin"
+              ];
+              postBuild = ''
+                mkdir -p $out/bin
+                rm $out/bin/{pg_config,postgres,pg_ctl}
+                cp --target-directory=$out/bin ${server}/bin/{postgres,pg_config,pg_ctl}
+                wrapProgram $out/bin/postgres --set NIX_PGLIBDIR $out/lib
+                check_allow_root() {
+                  if [ ! -e "$1" ] || ! grep -aq SUPABASE_POSTGRES_ALLOW_ROOT "$1"; then
+                    echo "allow-root gate missing from $1" >&2
+                    exit 1
+                  fi
+                }
+                check_allow_root $out/bin/.postgres-wrapped
+                check_allow_root $out/bin/pg_ctl
+                check_allow_root $out/bin/initdb
+                check_allow_root $out/bin/pg_resetwal
+                check_allow_root $out/bin/pg_rewind
+                check_allow_root $out/bin/pg_upgrade
+                if [ -e ${server}/bin/pg_createsubscriber ]; then
+                  check_allow_root $out/bin/pg_createsubscriber
+                fi
               '';
-            });
+              passthru = {
+                inherit (server)
+                  version
+                  revision
+                  patchset
+                  psqlSchema
+                  isOrioleDB
+                  ;
+              };
+            };
+          allowRoot = pkg:
+            let
+              patched = pkg.overrideAttrs (old: {
+                nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [ pkgs.python3 ];
+                postPatch = (old.postPatch or "") + ''
+                  python3 ${./postgres-allow-root.py}
+                '';
+                passthru = (old.passthru or { }) // {
+                  withPackages = bundleWith patched;
+                };
+              });
+            in
+            patched;
         in
         if variant == "cli" then allowRoot (base.override { portable = true; }) else base;
       postgres-pkgs = makeOurPostgresPkgs version { inherit variant latestOnly; };

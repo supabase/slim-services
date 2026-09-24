@@ -3,6 +3,7 @@
 
 The upstream checks stay in place. A sandbox that cannot drop privileges sets
 the variable to 1; any other value, including unset, still refuses uid 0.
+The real and effective user ID mismatch refusal stays unchanged.
 """
 
 from __future__ import annotations
@@ -17,16 +18,14 @@ MARKERS = (
     "cannot be run as root",
     'cannot be executed by \\"root\\"',
     "not permitted",
-    "real and effective user IDs must match",
 )
 CONDITIONS = (
     "if (geteuid() == 0)",
-    "if (getuid() != geteuid())",
     "if (os_user_effective_id == 0)",
 )
 # Expected number of refusal sites, not occurrences of the variable name.
 REQUIRED = {
-    "src/backend/main/main.c": 2,
+    "src/backend/main/main.c": 1,
     "src/bin/initdb/initdb.c": 1,
     "src/bin/pg_ctl/pg_ctl.c": 1,
     "src/bin/pg_resetwal/pg_resetwal.c": 1,
@@ -206,6 +205,11 @@ check_root(const char *progname)
             _fail("dropped the initdb uid comment")
         if f"if (geteuid() == 0 && {GATE})" not in initdb:
             _fail("initdb condition was not gated")
+        main = (root / "src/backend/main/main.c").read_text()
+        if "\tif (getuid() != geteuid())\n" not in main:
+            _fail("removed the uid mismatch refusal")
+        if ENV in main.split("if (getuid() != geteuid())", 1)[1]:
+            _fail("gated the uid mismatch refusal")
         upgrade = (root / "src/bin/pg_upgrade/option.c").read_text()
         if f"if (os_user_effective_id == 0 && {GATE})" not in upgrade:
             _fail("pg_upgrade condition was not gated")
