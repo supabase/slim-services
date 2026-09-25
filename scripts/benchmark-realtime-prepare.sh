@@ -61,6 +61,9 @@ measure_native() {
   before_tenant="$(harness_psql "$db" -tAc "SELECT COALESCE((SELECT migrations_ran FROM _realtime.tenants WHERE external_id = 'realtime-dev'), -1)")"
   before_ledger="$(harness_psql "$db" -tAc 'SELECT count(*) FROM realtime.schema_migrations' 2>/dev/null || echo 0)"
   before_partitions="$(harness_psql "$db" -tAc "SELECT count(*) FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'realtime' AND c.relname LIKE 'messages_%'" 2>/dev/null || echo 0)"
+  if [[ "$variant" == changed ]]; then
+    [[ "$before_metadata" -gt 0 && "$before_tenant" == "$before_ledger" && "$before_ledger" -gt 0 && "$before_partitions" -gt 0 ]] || fail "changed native prepare did not complete catalog setup on trial $trial"
+  fi
 
   local port=4000 logfile="$RUNNER_TEMP/${variant}-${trial}-server.log" total_started ready_at
   total_started="$(python3 -c 'import time; print(time.monotonic_ns())')"
@@ -121,15 +124,9 @@ measure_docker() {
   before_tenant="$(harness_psql "$prepare_db" -tAc "SELECT COALESCE((SELECT migrations_ran FROM _realtime.tenants WHERE external_id = 'realtime-dev'), -1)")"
   before_ledger="$(harness_psql "$prepare_db" -tAc 'SELECT count(*) FROM realtime.schema_migrations' 2>/dev/null || echo 0)"
   before_partitions="$(harness_psql "$prepare_db" -tAc "SELECT count(*) FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'realtime' AND c.relname LIKE 'messages_%'" 2>/dev/null || echo 0)"
-  [[ "$before_metadata" -gt 0 ]] || fail "$variant Docker prepare did not migrate metadata on trial $trial"
-  harness_psql "$prepare_db" -c "INSERT INTO realtime.messages(topic, extension, event, payload, private) VALUES ('benchmark-sentinel', 'broadcast', 'preserve', '{\"ok\":true}', true)" >/dev/null
-  local repeat_started repeat_ms
-  repeat_started="$(python3 -c 'import time; print(time.monotonic_ns())')"
-  docker run --rm --network "$NETWORK" --entrypoint /app/bin/prepare "${prep_envs[@]}" "$image" >"$RUNNER_TEMP/${variant}-${trial}-docker-rerun.log" 2>&1 || fail "$variant Docker rerun failed on trial $trial"
-  repeat_ms="$(( ($(python3 -c 'import time; print(time.monotonic_ns())') - repeat_started) / 1000000 ))"
-  local prep_sentinel
-  prep_sentinel="$(harness_psql "$prepare_db" -tAc "SELECT count(*) FROM realtime.messages WHERE topic='benchmark-sentinel' AND event='preserve'")"
-  [[ "$prep_sentinel" == 1 ]] || fail "$variant Docker preparation changed sentinel data on trial $trial"
+  if [[ "$variant" == changed ]]; then
+    [[ "$before_metadata" -gt 0 && "$before_tenant" == "$before_ledger" && "$before_ledger" -gt 0 && "$before_partitions" -gt 0 ]] || fail "changed Docker prepare did not complete catalog setup on trial $trial"
+  fi
 
   harness_psql postgres -c "CREATE DATABASE $db" >/dev/null
   harness_psql "$db" -c 'CREATE SCHEMA IF NOT EXISTS _realtime' >/dev/null
@@ -157,11 +154,14 @@ measure_docker() {
   docker stop --time 10 "$name" >/dev/null
   docker rm "$name" >/dev/null
   stop_ms="$(( ($(python3 -c 'import time; print(time.monotonic_ns())') - stop_started) / 1000000 ))"
-  local full_sentinel
+  local repeat_started repeat_ms full_sentinel
+  repeat_started="$(python3 -c 'import time; print(time.monotonic_ns())')"
+  docker run --rm --network "$NETWORK" --entrypoint /app/bin/prepare "${envs[@]}" "$image" >"$RUNNER_TEMP/${variant}-${trial}-docker-rerun.log" 2>&1 || fail "$variant Docker rerun failed on trial $trial"
+  repeat_ms="$(( ($(python3 -c 'import time; print(time.monotonic_ns())') - repeat_started) / 1000000 ))"
   full_sentinel="$(harness_psql "$db" -tAc "SELECT count(*) FROM realtime.messages WHERE topic='benchmark-sentinel' AND event='preserve'")"
-  [[ "$full_sentinel" == 1 ]] || fail "$variant Docker server changed sentinel data on trial $trial"
+  [[ "$full_sentinel" == 1 ]] || fail "$variant Docker preparation changed sentinel data on trial $trial"
   printf '{"runtime":"docker","variant":"%s","trial":%s,"prepare_ms":%s,"prepare_state":{"metadata_migrations":%s,"tenant_migrations_recorded":%s,"tenant_migration_ledger":%s,"partitions":%s},"container_ready_ms":%s,"ready_state":{"metadata_migrations":%s,"tenant_migrations_recorded":%s,"tenant_migration_ledger":%s,"partitions":%s},"shutdown_ms":%s,"repeat_prepare_ms":%s,"rerun_sentinel_count":%s}\n' \
-    "$variant" "$trial" "$prep_ms" "$before_metadata" "$before_tenant" "$before_ledger" "$before_partitions" "$full_ms" "$migration_count" "$tenant_progress" "$tenant_migration_count" "$partition_count" "$stop_ms" "$repeat_ms" "$prep_sentinel" >> "$results_file"
+    "$variant" "$trial" "$prep_ms" "$before_metadata" "$before_tenant" "$before_ledger" "$before_partitions" "$full_ms" "$migration_count" "$tenant_progress" "$tenant_migration_count" "$partition_count" "$stop_ms" "$repeat_ms" "$full_sentinel" >> "$results_file"
 }
 
 wait_for_native_ready() {
