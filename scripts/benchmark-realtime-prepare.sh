@@ -14,7 +14,6 @@ OUTPUT="${OUTPUT:-$ROOT_DIR/realtime-prepare-benchmark.json}"
 
 [[ "$SAMPLES" -ge 3 ]] || fail "SAMPLES must be at least 3"
 require_cmd python3
-require_cmd openssl
 require_cmd curl
 
 POSTGRES_IMAGE='ghcr.io/supabase/cli/postgres:17.6.1.173@sha256:9d6e542382946cad5eb1f11f1c8108a51297902ee42fe5098358816d3784ba5a'
@@ -32,9 +31,9 @@ harness_psql() {
     psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -U supabase_admin -d "$db" "$@"
 }
 pg_port="$(postgres_port)"
-api_secret='realtime-api-secret-with-at-least-32-characters'
-metrics_secret='realtime-metrics-secret-with-at-least-32'
-secret_key_base="$(openssl rand -hex 32)"
+api_secret='super-secret-jwt-token-with-at-least-32-characters-long'
+metrics_secret="$api_secret"
+secret_key_base='EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG'
 results_file="$(mktemp)"
 benchmark_complete=0
 cleanup_benchmark() {
@@ -54,10 +53,13 @@ measure_native() {
   harness_psql "$db" -c 'CREATE SCHEMA IF NOT EXISTS _realtime' >/dev/null
   local rt_env=()
   while IFS= read -r pair; do rt_env+=("$pair"); done < <(runtime_env_pairs realtime)
-  rt_env+=(DB_HOST=127.0.0.1 DB_PORT="$pg_port" DB_USER=supabase_admin DB_PASSWORD=postgres
-    DB_NAME="$db" DB_ENC_KEY=0123456789abcdef DB_AFTER_CONNECT_QUERY='SET search_path TO _realtime'
+  rt_env+=(DATABASE_URL="postgres://supabase_admin:postgres@127.0.0.1:$pg_port/$db" DB_URL="postgres://supabase_admin:postgres@127.0.0.1:$pg_port/$db"
+    DB_HOST=127.0.0.1 DB_PORT="$pg_port" DB_USER=supabase_admin DB_PASSWORD=postgres
+    DB_NAME="$db" DB_ENC_KEY=supabaserealtime DB_AFTER_CONNECT_QUERY='SET search_path TO _realtime'
     API_JWT_SECRET="$api_secret" METRICS_JWT_SECRET="$metrics_secret"
-    SECRET_KEY_BASE="$secret_key_base" APP_NAME=benchmark PORT=4000)
+    SECRET_KEY_BASE="$secret_key_base" APP_NAME=realtime PORT=4000 DNS_NODES="''"
+    MAX_HEADER_LENGTH=4096 ERL_AFLAGS=-proto_dist\ inet_tcp DB_IP_VERSION=ipv4
+    GEN_RPC_TCP_SERVER_PORT=5369 GEN_RPC_TCP_CLIENT_PORT=5369 GEN_RPC_SOCKET_IP=127.0.0.1)
   local prepare_command=("$rootfs/bin/prepare")
   [[ "$variant" == baseline ]] && prepare_command=("$rootfs/bin/realtime" eval 'Realtime.Release.migrate(); Realtime.Release.seeds(Realtime.Repo)')
   local started finished prep_ms
@@ -119,12 +121,14 @@ measure_docker() {
   local envs_base=()
   while IFS= read -r pair; do envs_base+=(-e "$pair"); done < <(runtime_env_pairs realtime)
   envs_base+=(-e DB_HOST="$POSTGRES_CONTAINER" -e DB_PORT=5432 -e DB_USER=supabase_admin -e DB_PASSWORD=postgres
-    -e DB_ENC_KEY=0123456789abcdef -e DB_AFTER_CONNECT_QUERY='SET search_path TO _realtime'
+    -e DB_ENC_KEY=supabaserealtime -e DB_AFTER_CONNECT_QUERY='SET search_path TO _realtime'
     -e API_JWT_SECRET="$api_secret" -e METRICS_JWT_SECRET="$metrics_secret"
-    -e SECRET_KEY_BASE="$secret_key_base" -e APP_NAME=benchmark -e SEED_SELF_HOST=true)
+    -e SECRET_KEY_BASE="$secret_key_base" -e APP_NAME=realtime -e SEED_SELF_HOST=true
+    -e DNS_NODES="''" -e MAX_HEADER_LENGTH=4096 -e ERL_AFLAGS=-proto_dist\ inet_tcp -e DB_IP_VERSION=ipv4
+    -e GEN_RPC_TCP_SERVER_PORT=5369 -e GEN_RPC_TCP_CLIENT_PORT=5369 -e GEN_RPC_SOCKET_IP=0.0.0.0)
   harness_psql postgres -c "CREATE DATABASE $prepare_db" >/dev/null
   harness_psql "$prepare_db" -c 'CREATE SCHEMA IF NOT EXISTS _realtime' >/dev/null
-  local prep_envs=("${envs_base[@]}" -e DB_NAME="$prepare_db")
+  local prep_envs=("${envs_base[@]}" -e DB_NAME="$prepare_db" -e DATABASE_URL="postgres://supabase_admin:postgres@$POSTGRES_CONTAINER:5432/$prepare_db" -e DB_URL="postgres://supabase_admin:postgres@$POSTGRES_CONTAINER:5432/$prepare_db")
   local prep_started prep_ms
   prep_started="$(python3 -c 'import time; print(time.monotonic_ns())')"
   docker run --rm --network "$NETWORK" --entrypoint /app/bin/prepare "${prep_envs[@]}" "$image" >"$RUNNER_TEMP/${variant}-${trial}-docker-prepare.log" 2>&1 || {
@@ -143,7 +147,7 @@ measure_docker() {
 
   harness_psql postgres -c "CREATE DATABASE $db" >/dev/null
   harness_psql "$db" -c 'CREATE SCHEMA IF NOT EXISTS _realtime' >/dev/null
-  local envs=("${envs_base[@]}" -e DB_NAME="$db")
+  local envs=("${envs_base[@]}" -e DB_NAME="$db" -e DATABASE_URL="postgres://supabase_admin:postgres@$POSTGRES_CONTAINER:5432/$db" -e DB_URL="postgres://supabase_admin:postgres@$POSTGRES_CONTAINER:5432/$db")
   local name="rt-bench-${variant}-${trial}" started port
   started="$(python3 -c 'import time; print(time.monotonic_ns())')"
   run_container "$name" --network "$NETWORK" -p 127.0.0.1::4000 "${envs[@]}" "$image"
