@@ -167,6 +167,10 @@ let
         awk '{ sub("@seed_gcm_backfill_flag true", "@seed_gcm_backfill_flag false"); print }' "$helper" > "$helper.tmp"
         mv "$helper.tmp" "$helper"
       fi
+      if grep -Fq 'Env.get_boolean("DB_SSL", false)' priv/repo/seeds.exs; then
+        awk '{ sub("@seed_db_ssl_from_env false", "@seed_db_ssl_from_env true"); print }' "$helper" > "$helper.tmp"
+        mv "$helper.tmp" "$helper"
+      fi
     '';
 
     # The release includes ERTS by default; keep the generated start scripts.

@@ -7,6 +7,7 @@ defmodule Realtime.OneShotPrepare do
   @default_jwt_secret "super-secret-jwt-token-with-at-least-32-characters-long"
   @default_tenant "realtime-dev"
   @seed_gcm_backfill_flag true
+  @seed_db_ssl_from_env false
 
   def run do
     assert_realtime_stopped!()
@@ -73,7 +74,7 @@ defmodule Realtime.OneShotPrepare do
                 "region" => "us-east-1",
                 "poll_interval_ms" => 100,
                 "poll_max_record_bytes" => 1_048_576,
-                "ssl_enforced" => false
+                "ssl_enforced" => seed_ssl_enforced()
               }
             }
           ]
@@ -82,6 +83,10 @@ defmodule Realtime.OneShotPrepare do
       end)
 
     tenant
+  end
+
+  defp seed_ssl_enforced do
+    if @seed_db_ssl_from_env, do: Realtime.Env.get_boolean("DB_SSL", false), else: false
   end
 
   defp decode_jwks do
