@@ -1,0 +1,82 @@
+name: Benchmark Realtime one-shot prepare
+
+on:
+  push:
+    branches:
+      - bench/realtime-oneshot-prepare-20260925
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      CANDIDATE_BUILD_RUN: "36132706796"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Wait for candidate v2.134.5 CI build
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh run watch "$CANDIDATE_BUILD_RUN" --repo "$GITHUB_REPOSITORY" --interval 15 || true
+          gh run view "$CANDIDATE_BUILD_RUN" --repo "$GITHUB_REPOSITORY" --json jobs | jq -e '.jobs[] | select(.name == "realtime linux/amd64" and .conclusion == "success")'
+
+      - name: Download published baseline and PR validation artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/baseline-assets" "$RUNNER_TEMP/changed-assets" "$RUNNER_TEMP/changed-image"
+          gh release download realtime-v2.134.5 --repo "$GITHUB_REPOSITORY" \
+            --pattern 'realtime-v2.134.5-linux-amd64.tar.zst' \
+            --dir "$RUNNER_TEMP/baseline-assets"
+          gh run download "$CANDIDATE_BUILD_RUN" --repo "$GITHUB_REPOSITORY" \
+            --name release-assets-realtime-v2.134.5-linux-amd64 \
+            --dir "$RUNNER_TEMP/changed-assets"
+          gh run download "$CANDIDATE_BUILD_RUN" --repo "$GITHUB_REPOSITORY" \
+            --name release-image-realtime-v2.134.5-amd64 \
+            --dir "$RUNNER_TEMP/changed-image"
+          mkdir -p "$RUNNER_TEMP/baseline-root" "$RUNNER_TEMP/changed-root"
+          tar --zstd -xf "$RUNNER_TEMP/baseline-assets/realtime-v2.134.5-linux-amd64.tar.zst" -C "$RUNNER_TEMP/baseline-root"
+          tar --zstd -xf "$RUNNER_TEMP/changed-assets/realtime-v2.134.5-linux-amd64.tar.zst" -C "$RUNNER_TEMP/changed-root"
+          docker pull 'ghcr.io/supabase/cli/realtime@sha256:7fb53cc6987085d739c7d161608505ed138d1895df884c3bdc2147cef444138a'
+          docker load -i "$RUNNER_TEMP/changed-image/realtime-v2.134.5-linux-amd64.image.tar.gz"
+          base_image='ghcr.io/supabase/cli/realtime@sha256:7fb53cc6987085d739c7d161608505ed138d1895df884c3bdc2147cef444138a'
+          changed_image="$(jq -r .local_image "$RUNNER_TEMP/changed-image/realtime-v2.134.5-linux-amd64.image.json")"
+          printf 'BASE_ROOTFS=%s\n' "$RUNNER_TEMP/baseline-root/rootfs" >> "$GITHUB_ENV"
+          printf 'CHANGED_ROOTFS=%s\n' "$RUNNER_TEMP/changed-root/rootfs" >> "$GITHUB_ENV"
+          printf 'BASE_IMAGE=%s\n' "$base_image" >> "$GITHUB_ENV"
+          printf 'CHANGED_IMAGE=%s\n' "$changed_image" >> "$GITHUB_ENV"
+          printf 'BASE_ARCHIVE_SHA256=%s\n' "$(sha256sum "$RUNNER_TEMP/baseline-assets/realtime-v2.134.5-linux-amd64.tar.zst" | cut -d' ' -f1)" >> "$GITHUB_ENV"
+          printf 'CHANGED_ARCHIVE_SHA256=%s\n' "$(sha256sum "$RUNNER_TEMP/changed-assets/realtime-v2.134.5-linux-amd64.tar.zst" | cut -d' ' -f1)" >> "$GITHUB_ENV"
+          printf 'BASE_IMAGE_ID=%s\n' "$(docker image inspect --format='{{.Id}}' "$base_image")" >> "$GITHUB_ENV"
+          printf 'CHANGED_IMAGE_ID=%s\n' "$(docker image inspect --format='{{.Id}}' "$changed_image")" >> "$GITHUB_ENV"
+          printf 'CANDIDATE_COMMIT=%s\n' "$(gh run view "$CANDIDATE_BUILD_RUN" --repo "$GITHUB_REPOSITORY" --json headSha --jq .headSha)" >> "$GITHUB_ENV"
+
+      - name: Measure five paired native and Docker samples
+        shell: bash
+        run: |
+          set -euo pipefail
+          SAMPLES=5 scripts/benchmark-realtime-prepare.sh "$BASE_ROOTFS" "$CHANGED_ROOTFS" "$BASE_IMAGE" "$CHANGED_IMAGE"
+
+      - name: Upload benchmark data and logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: realtime-prepare-benchmark-${{ github.run_id }}
+          if-no-files-found: warn
+          retention-days: 30
+          path: |
+            realtime-prepare-benchmark.json
+            realtime-prepare-benchmark.json.partial
+            ${{ runner.temp }}/*-prepare.log
+            ${{ runner.temp }}/*-rerun.log
+            ${{ runner.temp }}/*-server.log
+            ${{ runner.temp }}/*-docker-prepare.log
+            ${{ runner.temp }}/*-docker-rerun.log
