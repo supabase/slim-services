@@ -36,6 +36,10 @@ load_recipe "$service"
 
 UPSTREAM_ASSETS_FILE="${UPSTREAM_ASSETS_FILE:?recipe must define UPSTREAM_ASSETS_FILE}"
 UPSTREAM_ARCHIVE_MAPPING_JSON="${UPSTREAM_ARCHIVE_MAPPING_JSON:?recipe must define UPSTREAM_ARCHIVE_MAPPING_JSON}"
+# ${parameter:-word} ends at the first bare } on bash 3.2, so a {\} default is not {}.
+if [[ -z "${UPSTREAM_ARCHIVE_OPTIONAL_MAPPING_JSON:-}" ]]; then
+  UPSTREAM_ARCHIVE_OPTIONAL_MAPPING_JSON='{}'
+fi
 UPSTREAM_ARCHIVE_EXECUTABLES_JSON="${UPSTREAM_ARCHIVE_EXECUTABLES_JSON:?recipe must define UPSTREAM_ARCHIVE_EXECUTABLES_JSON}"
 ENTRYPOINT_JSON="${ENTRYPOINT_JSON:?recipe must define ENTRYPOINT_JSON}"
 CMD_JSON="${CMD_JSON:-[]}"
@@ -107,7 +111,8 @@ mkdir -p "$rootfs" "$artifact_dir"
 log "normalizing $asset_name into $rootfs"
 installed_members="$(python3 "$ROOT_DIR/scripts/extract-upstream-archive.py" \
   "$download" "$rootfs" "$UPSTREAM_ARCHIVE_MAPPING_JSON" \
-  "$UPSTREAM_ARCHIVE_EXECUTABLES_JSON")"
+  "$UPSTREAM_ARCHIVE_EXECUTABLES_JSON" \
+  "$UPSTREAM_ARCHIVE_OPTIONAL_MAPPING_JSON")"
 
 "$ROOT_DIR/scripts/generate-artifact-sbom.sh" \
   "$rootfs" "$sbom" "$service" "$VERSION" "$target"

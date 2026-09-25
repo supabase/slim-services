@@ -10,7 +10,7 @@ This repo asks a simple question, on three axes:
 
 <!-- generated:release-summary:begin -->
 For the latest published Linux ARM64 release set (10 services), upstream images
-total **2048.1 MiB** compressed; the slim set totals **535.6 MiB** (**73.8%**
+total **2036.6 MiB** compressed; the slim set totals **529.6 MiB** (**74.0%**
 smaller — exact numbers below). Every published service also has measured
 steady-state RSS and idle-CPU numbers. These isolated service smoke
 measurements do not establish complete Dockerless CLI-stack behavior or a
@@ -72,16 +72,16 @@ unavailable on Docker Hub.
 <!-- generated:results:begin -->
 | Service | Version | Upstream ARM64 | Published slim | Reduction | Idle RSS | Idle CPU | Sources |
 |---|---:|---:|---:|---:|---:|---:|---|
-| Postgres | `17.6.1.173` (all PostgreSQL extensions for the selected major, matching upstream preload configuration) | `348.9 MiB` | `115.6 MiB` | `66.9%` | `80.1 MiB` | `0.00%` | [release](https://github.com/supabase/slim-services/releases/tag/postgres-17.6.1.173) · [report](services/postgres/REPORT.md) |
-| PostgREST | `v16.3` | `6.2 MiB` | `6.8 MiB` | `-10.4%` | `8.4 MiB` | `0.10%` | [release](https://github.com/supabase/slim-services/releases/tag/postgrest-v16.3) · [report](services/postgrest/REPORT.md) |
-| Auth | `v2.197.0` | `27.4 MiB` | `12.5 MiB` | `54.3%` | `9.6 MiB` | `0.42%` | [release](https://github.com/supabase/slim-services/releases/tag/auth-v2.197.0) · [report](services/auth/REPORT.md) |
-| Realtime | `v2.137.11` | `117.0 MiB` | `24.2 MiB` | `79.3%` | `179.8 MiB` | `0.21%` | [release](https://github.com/supabase/slim-services/releases/tag/realtime-v2.137.11) · [report](services/realtime/REPORT.md) |
-| Storage | `v1.79.6` | `221.7 MiB` | `49.2 MiB` | `77.8%` | `213.2 MiB` | `3.75%` | [release](https://github.com/supabase/slim-services/releases/tag/storage-v1.79.6) · [report](services/storage/REPORT.md) |
-| Edge Runtime | `v1.76.2` (no-AI) | `361.0 MiB` | `53.2 MiB` | `85.3%` | `18.7 MiB` | `0.01%` | [release](https://github.com/supabase/slim-services/releases/tag/edge-runtime-v1.76.2) · [report](services/edge-runtime/REPORT.md) |
-| Studio | `2026.09.14-sha-4dd8a95` | `306.5 MiB` | `124.5 MiB` | `59.4%` | `212.5 MiB` | `3.61%` | [release](https://github.com/supabase/slim-services/releases/tag/studio-2026.09.14-sha-4dd8a95) · [report](services/studio/REPORT.md) |
-| Analytics | `v1.50.12` | `261.3 MiB` | `55.3 MiB` | `78.8%` | `500.9 MiB` | `0.16%` | [release](https://github.com/supabase/slim-services/releases/tag/analytics-v1.50.12) · [report](services/analytics/REPORT.md) |
-| PgMeta | `v0.99.0` | `108.7 MiB` | `58.8 MiB` | `45.9%` | `116.6 MiB` | `4.36%` | [release](https://github.com/supabase/slim-services/releases/tag/pgmeta-v0.99.0) · [report](services/pgmeta/REPORT.md) |
-| Pooler | `v2.9.13` | `289.4 MiB`* | `35.5 MiB` | `87.7%`* | `161.6 MiB` | `0.05%` | [release](https://github.com/supabase/slim-services/releases/tag/pooler-v2.9.13) · [report](services/pooler/REPORT.md) |
+| Postgres | `17.6.1.175` (all PostgreSQL extensions for the selected major, matching upstream preload configuration) | `348.9 MiB` | `115.6 MiB` | `66.9%` | `79.6 MiB` | `0.00%` | [release](https://github.com/supabase/slim-services/releases/tag/postgres-17.6.1.175) · [report](services/postgres/REPORT.md) |
+| PostgREST | `v16.4` | `6.2 MiB` | `6.8 MiB` | `-10.4%` | `8.4 MiB` | `0.09%` | [release](https://github.com/supabase/slim-services/releases/tag/postgrest-v16.4) · [report](services/postgrest/REPORT.md) |
+| Auth | `v2.197.0` | `27.4 MiB` | `12.5 MiB` | `54.3%` | `9.7 MiB` | `0.40%` | [release](https://github.com/supabase/slim-services/releases/tag/auth-v2.197.0) · [report](services/auth/REPORT.md) |
+| Realtime | `v2.138.1` | `117.0 MiB` | `24.2 MiB` | `79.3%` | `179.0 MiB` | `0.22%` | [release](https://github.com/supabase/slim-services/releases/tag/realtime-v2.138.1) · [report](services/realtime/REPORT.md) |
+| Storage | `v1.79.18` | `221.8 MiB` | `49.2 MiB` | `77.8%` | `214.5 MiB` | `3.88%` | [release](https://github.com/supabase/slim-services/releases/tag/storage-v1.79.18) · [report](services/storage/REPORT.md) |
+| Edge Runtime | `v1.77.0` (no-AI) | `351.5 MiB` | `46.1 MiB` | `86.9%` | `18.1 MiB` | `0.01%` | [release](https://github.com/supabase/slim-services/releases/tag/edge-runtime-v1.77.0) · [report](services/edge-runtime/REPORT.md) |
+| Studio | `2026.09.21-sha-512201d` | `306.5 MiB` | `125.0 MiB` | `59.2%` | `211.5 MiB` | `3.76%` | [release](https://github.com/supabase/slim-services/releases/tag/studio-2026.09.21-sha-512201d) · [report](services/studio/REPORT.md) |
+| Analytics | `v1.50.15` | `259.2 MiB` | `55.9 MiB` | `78.4%` | `493.0 MiB` | `0.30%` | [release](https://github.com/supabase/slim-services/releases/tag/analytics-v1.50.15) · [report](services/analytics/REPORT.md) |
+| PgMeta | `v0.99.0` | `108.7 MiB` | `58.8 MiB` | `45.9%` | `117.3 MiB` | `3.80%` | [release](https://github.com/supabase/slim-services/releases/tag/pgmeta-v0.99.0) · [report](services/pgmeta/REPORT.md) |
+| Pooler | `v2.9.13` | `289.4 MiB`* | `35.5 MiB` | `87.7%`* | `161.9 MiB` | `0.04%` | [release](https://github.com/supabase/slim-services/releases/tag/pooler-v2.9.13) · [report](services/pooler/REPORT.md) |
 
 `*` Upstream comparison uses `UPSTREAM_COMPARE_IMAGE` from the recipe (the exact tag is not published on Docker Hub), so the percentage is directional.
 <!-- generated:results:end -->
@@ -121,16 +121,16 @@ define the runtime floor.
 <!-- generated:host-native:begin -->
 | Service | Version | Archive | rootfs | Idle RSS | Idle CPU | Portable | Sources |
 |---|---:|---:|---:|---:|---:|---|---|
-| Postgres | `17.6.1.173` | `102.4 MiB` | `482.7 MiB` | `97.4 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/postgres-17.6.1.173) · [report](services/postgres/REPORT.md) |
-| PostgREST | `v16.3` | `12.6 MiB` | `77.9 MiB` | `56.0 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/postgrest-v16.3) · [report](services/postgrest/REPORT.md) |
-| Auth | `v2.197.0` | `9.6 MiB` | `33.9 MiB` | `30.2 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/auth-v2.197.0) · [report](services/auth/REPORT.md) |
-| Realtime | `v2.137.11` | `12.1 MiB` | `49.1 MiB` | `218.0 MiB` | `0.03%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/realtime-v2.137.11) · [report](services/realtime/REPORT.md) |
-| Storage | `v1.79.6` | `36.2 MiB` | `149.6 MiB` | `294.6 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/storage-v1.79.6) · [report](services/storage/REPORT.md) |
-| Edge Runtime | `v1.76.2` | `39.9 MiB` | `161.4 MiB` | `58.5 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/edge-runtime-v1.76.2) · [report](services/edge-runtime/REPORT.md) |
-| Studio | `2026.09.14-sha-4dd8a95` | `75.7 MiB` | `459.8 MiB` | `323.0 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/studio-2026.09.14-sha-4dd8a95) · [report](services/studio/REPORT.md) |
-| Analytics | `v1.50.12` | `33.3 MiB` | `140.6 MiB` | `521.3 MiB` | `0.13%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/analytics-v1.50.12) · [report](services/analytics/REPORT.md) |
-| PgMeta | `v0.99.0` | `40.4 MiB` | `186.0 MiB` | `165.5 MiB` | `0.27%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/pgmeta-v0.99.0) · [report](services/pgmeta/REPORT.md) |
-| Pooler | `v2.9.13` | `23.5 MiB` | `52.5 MiB` | `204.4 MiB` | `0.03%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/pooler-v2.9.13) · [report](services/pooler/REPORT.md) |
+| Postgres | `17.6.1.175` | `102.4 MiB` | `482.7 MiB` | `97.6 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/postgres-17.6.1.175) · [report](services/postgres/REPORT.md) |
+| PostgREST | `v16.4` | `12.6 MiB` | `77.9 MiB` | `56.0 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/postgrest-v16.4) · [report](services/postgrest/REPORT.md) |
+| Auth | `v2.197.0` | `9.6 MiB` | `33.9 MiB` | `29.9 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/auth-v2.197.0) · [report](services/auth/REPORT.md) |
+| Realtime | `v2.138.1` | `12.1 MiB` | `49.1 MiB` | `211.2 MiB` | `0.13%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/realtime-v2.138.1) · [report](services/realtime/REPORT.md) |
+| Storage | `v1.79.18` | `36.2 MiB` | `149.6 MiB` | `284.6 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/storage-v1.79.18) · [report](services/storage/REPORT.md) |
+| Edge Runtime | `v1.77.0` | `40.0 MiB` | `161.4 MiB` | `58.0 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/edge-runtime-v1.77.0) · [report](services/edge-runtime/REPORT.md) |
+| Studio | `2026.09.21-sha-512201d` | `74.6 MiB` | `435.7 MiB` | `323.6 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/studio-2026.09.21-sha-512201d) · [report](services/studio/REPORT.md) |
+| Analytics | `v1.50.15` | `33.7 MiB` | `141.9 MiB` | `503.2 MiB` | `0.40%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/analytics-v1.50.15) · [report](services/analytics/REPORT.md) |
+| PgMeta | `v0.99.0` | `40.4 MiB` | `186.0 MiB` | `165.4 MiB` | `0.13%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/pgmeta-v0.99.0) · [report](services/pgmeta/REPORT.md) |
+| Pooler | `v2.9.13` | `23.5 MiB` | `52.5 MiB` | `203.7 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/pooler-v2.9.13) · [report](services/pooler/REPORT.md) |
 <!-- generated:host-native:end -->
 
 See [SLIM_IMAGES_REPORT.md](SLIM_IMAGES_REPORT.md) for the global summary.
@@ -330,6 +330,13 @@ post-publication confirmation.
 
 - Portable archives, platform manifests, and a combined `SHA256SUMS` are
   attached to the GitHub release `<service>-<version>`.
+- The same archives are also published as OCI artifacts at
+  `ghcr.io/supabase/cli/<service>:<version>-native-<target>` and, through
+  the `supabase/cli` mirror handler, copied to ECR Public and to a
+  public-read S3 bucket
+  (`https://supabase-cli-artifacts.s3.us-east-1.amazonaws.com/<service>/<version>/`),
+  so the CLI can fetch them where GitHub release assets are blocked. See
+  `docs/design/ecr-mirror-dispatch.md`.
 - The exact smoked Linux images are published as a multi-platform image at
   `ghcr.io/supabase/cli/<service>:<version>`.
 
@@ -385,6 +392,33 @@ complete. See the [Mailpit report](services/mailpit/REPORT.md), [Vector
 report](services/vector/REPORT.md), and [imgproxy report](services/imgproxy/REPORT.md)
 for historical input digests, normalized layouts, smoke coverage, and
 publication checklists.
+
+### Backfilling mirrors
+
+`.github/workflows/ecr-mirror-check.yml` audits, daily, the latest published
+release of each service release line (postgres keeps one per major) against
+ECR Public (images and native tags) and the public S3 bucket (native
+triplets). Older releases are only audited with `all_releases: true`. Run it
+with `request: true` to re-dispatch the mirror for releases that are out of
+sync. The `services` input narrows the run to whole services or selects
+single releases written `SERVICE:VERSION`, space-separated:
+
+```bash
+# one release, even an older one
+gh workflow run ecr-mirror-check.yml -f request=true -f services=postgrest:v16.2
+
+# two postgres releases and the latest realtime release
+gh workflow run ecr-mirror-check.yml -f request=true \
+  -f services="postgres:15.14.1.175 postgres:17.6.1.175 realtime"
+```
+
+The same filters work locally with `bun scripts/ecr-mirror.ts sync [--request]
+[--all] [SERVICE[:VERSION] ...]`. A release whose destinations are all in sync
+is not dispatched again. Natives are mirrored from the GHCR
+`<version>-native-<target>` tags, so a release published before those tags
+existed has nothing to copy: rebuild it with `service-release.yml` and
+`force=true`, which republishes its natives and dispatches the mirror. See
+`docs/design/ecr-mirror-dispatch.md`.
 
 After a successful release run, `.github/workflows/release-results.yml`
 downloads the newest published manifest set for every service, regenerates the
