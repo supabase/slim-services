@@ -173,6 +173,7 @@ defmodule Realtime.OneShotPrepare do
       Enum.each(queries, fn query ->
         case Postgrex.query(conn, query, []) do
           {:ok, _result} -> :ok
+          {:error, %Postgrex.Error{postgres: %{code: :duplicate_table}}} -> :ok
           {:error, reason} -> raise "could not prepare tenant partition #{name}: #{inspect(reason)}"
         end
       end)
