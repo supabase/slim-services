@@ -61,6 +61,29 @@ for service, config in services.items():
         print(f"no published release found for {service}", file=sys.stderr)
         continue
 
+    def version_key(value):
+        return tuple(
+            (0, int(part)) if part.isdigit() else (1, part)
+            for part in re.findall(r"\d+|\D+", value)
+        )
+
+    release_lines = config.get("release_lines") or []
+    if release_lines:
+        for line in release_lines:
+            line_pattern = re.compile(line["tag_pattern"])
+            line_candidates = [
+                candidate for candidate in candidates if line_pattern.fullmatch(candidate[2])
+            ]
+            if not line_candidates:
+                print(
+                    f"no published release found for {service} line {line['tag_pattern']}",
+                    file=sys.stderr,
+                )
+                continue
+            _, tag, version = max(line_candidates, key=lambda candidate: version_key(candidate[2]))
+            print(service, tag, version, sep="\t")
+        continue
+
     _, tag, version = max(candidates)
     print(service, tag, version, sep="\t")
 PY
@@ -70,7 +93,7 @@ while IFS=$'\t' read -r service release_tag version; do
   printf 'downloading manifests for %s (%s)\n' "$service" "$release_tag"
   download_dir=""
   for attempt in 1 2 3 4; do
-    attempt_dir="$temp_dir/manifests/$service/$attempt"
+    attempt_dir="$temp_dir/manifests/$service/$version/$attempt"
     mkdir -p "$attempt_dir"
     if gh release download "$release_tag" \
       --repo "$TARGET_REPOSITORY" \

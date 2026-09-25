@@ -369,10 +369,22 @@ visible gets a ten-minute publication grace instead. Failures therefore remain
 retryable without creating gaps or unbounded hourly fan-out. All configured
 polled services are enabled. PostgreSQL release eligibility comes from
 published `supabase/postgres` Docker Hub tags, and each native source checkout
-is pinned to the one Git commit recorded by that image's provenance. Its policy
-accepts only plain `15.x.x.NNN` and `17.x.x.NNN` releases, with independent
-floors of `15.14.1.159` and `17.6.1.159`; OrioleDB, architecture-specific, and
-other suffixed release tags are ignored.
+is pinned to the one Git commit recorded by that image's provenance. Three
+lines are eligible, each with its own floor: stock `15.x.x.NNN` from
+`15.14.1.159`, stock `17.x.x.NNN` from `17.6.1.159`, and `17.x.x.NNN-orioledb`
+from `17.9.0.028-orioledb`. PG15 OrioleDB tags, architecture-specific tags, and
+other suffixes stay ignored. Each poll gives every line a turn before filling
+the remaining per-service dispatch slots, and the results tables keep one
+latest row per line. `17.9.0.028-orioledb` is already published; the poller
+skips it and dispatches the next unpublished tag on that line. Rebuild that
+tag with `force=true`.
+
+```bash
+gh workflow run service-release.yml \
+  -f service=postgres \
+  -f version=17.9.0.028-orioledb \
+  -f force=false
+```
 
 Mailpit and Vector are the non-polled upstream-archive services. Imgproxy is a
 source-built Nix/external-source service whose hourly poll follows the imgproxy
@@ -394,7 +406,7 @@ publication checklists.
 ### Backfilling mirrors
 
 `.github/workflows/ecr-mirror-check.yml` audits, daily, the latest published
-release of each service release line (postgres keeps one per major) against
+release of each service release line (postgres keeps stock 15, stock 17, and `17.x.x.NNN-orioledb`) against
 ECR Public (images and native tags) and the public S3 bucket (native
 triplets). Older releases are only audited with `all_releases: true`. Run it
 with `request: true` to re-dispatch the mirror for releases that are out of
@@ -405,9 +417,9 @@ single releases written `SERVICE:VERSION`, space-separated:
 # one release, even an older one
 gh workflow run ecr-mirror-check.yml -f request=true -f services=postgrest:v16.2
 
-# two postgres releases and the latest realtime release
+# one release from each postgres line, plus the latest realtime release
 gh workflow run ecr-mirror-check.yml -f request=true \
-  -f services="postgres:15.14.1.175 postgres:17.6.1.175 realtime"
+  -f services="postgres:15.14.1.175 postgres:17.6.1.175 postgres:17.9.0.028-orioledb realtime"
 ```
 
 The same filters work locally with `bun scripts/ecr-mirror.ts sync [--request]

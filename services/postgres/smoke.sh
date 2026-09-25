@@ -25,6 +25,25 @@ assert_pg_prove_output() {
   fi
 }
 
+# OrioleDB's Nix version is NN_M (for example 17_20), not a dotted PostgreSQL major.
+classify_postgres_receipt_version() {
+  python3 - "$1" <<'PY'
+import re
+import sys
+
+version = sys.argv[1]
+if re.fullmatch(r"[0-9][0-9]_.*", version):
+    print("orioledb")
+else:
+    print(version.split(".", 1)[0])
+PY
+}
+
+if [[ "${1:-}" == "--classify-receipt" ]]; then
+  classify_postgres_receipt_version "${2:-}"
+  exit 0
+fi
+
 image="${IMAGE:-}"
 artifact_rootfs="${ARTIFACT_ROOTFS:-}"
 
@@ -42,17 +61,17 @@ if [[ -n "$artifact_rootfs" ]]; then
 
   receipt="$artifact_rootfs/cli-receipt.json"
   [[ -f "$receipt" ]] || fail "portable postgres receipt missing: cli-receipt.json"
-  postgres_major="$(python3 - "$receipt" <<'PY'
+  psql_version="$(python3 - "$receipt" <<'PY'
 import json
 import sys
 
 with open(sys.argv[1], encoding="utf-8") as stream:
-    version = json.load(stream)["psql-version"]
-print(version.split(".", 1)[0])
+    print(json.load(stream)["psql-version"])
 PY
-  )"
+)"
+  postgres_major="$(classify_postgres_receipt_version "$psql_version")"
   case "$postgres_major" in
-    15|17) ;;
+    15|17|orioledb) ;;
     *) fail "unsupported PostgreSQL major in portable receipt: $postgres_major" ;;
   esac
 
@@ -170,6 +189,15 @@ PY
     [[ "$preload_line" != *timescaledb* ]] \
       || fail "PG17 postgresql.conf.template unexpectedly preloads TimescaleDB"
   fi
+  if [[ "$postgres_major" == "orioledb" ]]; then
+    [[ "$preload_line" == *orioledb* ]] \
+      || fail "OrioleDB postgresql.conf.template is missing orioledb preload"
+    grep -q "^default_table_access_method = 'orioledb'" "$template" \
+      || fail "OrioleDB postgresql.conf.template is missing default_table_access_method"
+    grep -q "CREATE EXTENSION orioledb;" \
+      "$artifact_rootfs/share/supabase-cli/migrations/init-scripts/00-pre-init.sql" \
+      || fail "OrioleDB bundle is missing init-scripts/00-pre-init.sql"
+  fi
 
   # The artifact ships the full extension set for its selected major and
   # boots the bundled docker.io preload set, so CREATE EXTENSION covers
@@ -180,15 +208,24 @@ PY
   extensions=(
     pgcrypto pgjwt pg_stat_statements vector pg_net pg_cron hypopg index_advisor
     pg_jsonschema pg_hashids http rum pgtap pgmq pg_partman pg_repack
-    pgaudit pg_tle plpgsql_check postgis pgrouting pgroonga wrappers
+    pgaudit pg_tle plpgsql_check pgroonga wrappers
   )
   if [[ "$postgres_major" == "15" ]]; then
-    extensions+=(timescaledb plv8)
+    extensions+=(timescaledb plv8 postgis pgrouting)
+  elif [[ "$postgres_major" == "17" ]]; then
+    extensions+=(postgis pgrouting)
+  else
+    extensions+=(orioledb)
   fi
   for ext in "${extensions[@]}"; do
     psql_host "CREATE EXTENSION IF NOT EXISTS $ext CASCADE" >/dev/null \
       || { cat "$pg_data_dir/postgres.log" >&2; fail "CREATE EXTENSION $ext failed"; }
   done
+
+  if [[ "$postgres_major" == "orioledb" ]]; then
+    tam="$(psql_host "SHOW default_table_access_method")"
+    [[ "$tam" == "orioledb" ]] || fail "default_table_access_method is $tam, expected orioledb"
+  fi
 
   log "pg_prove TAP suite (Files=1)"
   write_pgtap_smoke "$pg_data_dir/smoke.pg"
@@ -738,10 +775,28 @@ extensions=(
   pgroonga
   wrappers
 )
-postgres_major="$(psql_admin "SHOW server_version" | cut -d. -f1)"
+postgres_version="$(psql_admin "SHOW server_version")"
+preload="$(psql_admin "SHOW shared_preload_libraries")"
+if [[ "$preload" == *orioledb* || "$postgres_version" =~ ^[0-9][0-9]_ ]]; then
+  postgres_major="orioledb"
+else
+  postgres_major="$(printf '%s\n' "$postgres_version" | cut -d. -f1)"
+fi
 case "$postgres_major" in
   15) extensions+=(timescaledb plv8) ;;
   17) ;;
+  orioledb)
+    filtered=()
+    for ext in "${extensions[@]}"; do
+      case "$ext" in
+        postgis|postgis_*|address_standardizer|pgrouting) ;;
+        *) filtered+=("$ext") ;;
+      esac
+    done
+    extensions=("${filtered[@]}" orioledb)
+    tam="$(psql_admin "SHOW default_table_access_method")"
+    [[ "$tam" == "orioledb" ]] || fail "default_table_access_method is $tam, expected orioledb"
+    ;;
   *) fail "unsupported PostgreSQL major reported by server: $postgres_major" ;;
 esac
 for ext in "${extensions[@]}"; do

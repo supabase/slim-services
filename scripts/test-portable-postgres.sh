@@ -551,8 +551,28 @@ class PortablePostgresLauncherTest(unittest.TestCase):
         self.assertEqual(result.stdout.strip(), "gcc/COPYING.RUNTIME")
 
 
+class PostgresReceiptVersionTest(unittest.TestCase):
+    def classify(self, version):
+        result = subprocess.run(
+            ["bash", str(ROOT_DIR / "services/postgres/smoke.sh"), "--classify-receipt", version],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout.strip()
+
+    def test_orioledb_patchset_version_is_not_a_dotted_major(self):
+        self.assertEqual(self.classify("17_20"), "orioledb")
+        self.assertEqual(self.classify("17.6"), "17")
+        self.assertEqual(self.classify("15.14"), "15")
+
+
 if __name__ == "__main__":
-    suite = unittest.defaultTestLoader.loadTestsFromTestCase(PortablePostgresLauncherTest)
+    suite = unittest.TestSuite()
+    loader = unittest.defaultTestLoader
+    suite.addTests(loader.loadTestsFromTestCase(PortablePostgresLauncherTest))
+    suite.addTests(loader.loadTestsFromTestCase(PostgresReceiptVersionTest))
     result = unittest.TextTestRunner(verbosity=2).run(suite)
     raise SystemExit(0 if result.wasSuccessful() else 1)
 PY

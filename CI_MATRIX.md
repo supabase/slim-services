@@ -63,8 +63,11 @@ Pass `validation_only=true` to build, smoke, and upload CI artifacts without
 publishing a release or image.
 
 Use the repository's release policy and workflow as the source of truth for
-which service versions are eligible. This document does not assert that the
-latest upstream version has been built or released.
+which service versions are eligible. Postgres publishes three lines from
+`supabase/postgres` Hub tags: stock 15, stock 17, and `17.x.x.NNN-orioledb`
+from `17.9.0.028-orioledb`. An OrioleDB release resolves UID/GID from that
+tag's docker.io image. This document does not assert that the latest upstream
+version has been built or released.
 
 `.github/workflows/service-artifacts.yml` is the manual diagnostic workflow.
 Its `workflow_dispatch` inputs select services, targets, explicitly selected

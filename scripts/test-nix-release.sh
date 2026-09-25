@@ -117,5 +117,47 @@ else:
         self.assertIn("expected v1.0.0", result.stderr)
         self.assertFalse(self.trace.exists())
 
+    def test_postgres_hub_tag_selects_postgres_major(self):
+        service = self.repo / "services/postgres"
+        service.mkdir(parents=True)
+        (service / "recipe.env").write_text(
+            'SOURCE_DIR="sources/postgres"\n'
+            'SOURCE_REF="${SOURCE_REF:-17.6.1.159}"\n'
+            'ARTIFACT_BACKEND="nix"\n'
+            'PORTABLE="true"\n'
+            "ENTRYPOINT_JSON='[]'\n"
+            "CMD_JSON='[\"postgres\"]'\n",
+            encoding="utf-8",
+        )
+        source = self.repo / "sources/postgres"
+        source.mkdir()
+        git = ["git", "-C", str(source)]
+        subprocess.check_call([*git, "init", "-q"])
+        subprocess.check_call([*git, "config", "user.name", "Fixture"])
+        subprocess.check_call([*git, "config", "user.email", "fixture@example.test"])
+        for version, major in (
+            ("15.14.1.159", "15"),
+            ("17.6.1.159", "17"),
+            ("17.9.0.028-orioledb", "orioledb-17"),
+        ):
+            (source / "version.txt").write_text(version, encoding="utf-8")
+            subprocess.check_call([*git, "add", "version.txt"])
+            subprocess.check_call([*git, "commit", "-qm", version])
+            subprocess.check_call([*git, "tag", "-f", version])
+            result = subprocess.run(
+                ["bash", str(self.repo / "scripts/build-artifact.sh"), "postgres", version],
+                env=dict(self.env, SOURCE_REF=version),
+                text=True,
+                capture_output=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        calls = [json.loads(line) for line in self.trace.read_text().splitlines() if line.strip()]
+        majors = []
+        for call in calls:
+            installable = next(arg for arg in call["args"] if "#" in arg)
+            if ".runtime" in installable:
+                majors.append(call["release"]["postgresMajor"])
+        self.assertEqual(majors, ["15", "17", "orioledb-17"])
+
 unittest.main()
 PY

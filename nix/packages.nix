@@ -200,17 +200,25 @@ let
       };
       postgresMajor =
         let
-          major = releaseData.postgresMajor or (builtins.head (builtins.split "\\." releaseVersion));
+          # A 17.x.x.NNN-orioledb tag is not stock 17. The release document
+          # sets postgresMajor; this fallback covers a document that omitted it.
+          fromVersion =
+            if builtins.match "17\\.[0-9]+\\.[0-9]+\\.[0-9]{3}-orioledb" releaseVersion != null then
+              "orioledb-17"
+            else
+              builtins.head (builtins.split "\\." releaseVersion);
+          major = releaseData.postgresMajor or fromVersion;
         in
         if
           builtins.elem major [
             "15"
             "17"
+            "orioledb-17"
           ]
         then
           major
         else
-          throw "postgres release must select major 15 or 17 (got ${major})";
+          throw "postgres release must select major 15, 17, or orioledb-17 (got ${major})";
       hasPostgresNixpkgs =
         upstream ? inputs
         && upstream.inputs ? nixpkgs
@@ -238,7 +246,13 @@ let
           {
             upstream = requireReleaseSource;
             portablePostgres = ./portable-postgres;
-            psql_cli = if postgresMajor == "15" then postgresPackages.legacyPackages.psql_15_cli else null;
+            psql_cli =
+              if postgresMajor == "15" then
+                postgresPackages.legacyPackages.psql_15_cli
+              else if postgresMajor == "orioledb-17" then
+                postgresPackages.legacyPackages.psql_orioledb-17_cli
+              else
+                null;
             psql_17_cli = if postgresMajor == "17" then postgresPackages.legacyPackages.psql_17_cli else null;
             postgres_major = postgresMajor;
           };

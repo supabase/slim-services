@@ -3,20 +3,27 @@
 ## Summary
 
 `supabase/postgres` is a Nix-based image: the entire runtime comes from the
-repo-owned portable artifact for the selected PostgreSQL major (15 or 17),
-including the extension set shipped by that major's upstream Dockerfile.
+repo-owned portable artifact for the selected line (PostgreSQL 15, PostgreSQL
+17, or OrioleDB 17), including the extension set shipped by that line's
+upstream Dockerfile.
 
 ## Build Contract
 
 - Backend: `nix` — `Dockerfile.artifact` evaluates the pinned source tree with
   the repo-owned package overlay and exports the selected
-  `psql_15_cli_portable` or `psql_17_cli_portable` rootfs.
+  `psql_15_cli_portable`, `psql_17_cli_portable`, or
+  `psql_orioledb-17_cli_portable` rootfs.
 - The artifact is built from the exact source commit resolved from the
   requested Docker Hub tag; no upstream portable package is consumed.
 - PG15 keeps the full `ourExtensions` set (including TimescaleDB and plv8).
   PG17 uses the matching filtered set because those two extensions are not
-  compatible with that major. Extensions are installed; preload behavior
-  follows the matching upstream image configuration.
+  compatible with that major. OrioleDB 17 uses that filtered set plus
+  `orioledb`, drops PostGIS and pgRouting from the supautils allowlist, preloads
+  `orioledb`, and sets `default_table_access_method = orioledb`. Extensions are
+  installed; preload behavior follows the matching upstream image configuration.
+- Hub tags `17.x.x.NNN-orioledb` are a separate release line from stock 15 and
+  17. The derived image's UID/GID follow that tag's docker.io image. The
+  recipe's default identity pin stays on stock PostgreSQL 17 for local builds.
 - Portable packaging uses latest-only extension outputs and bundles the
   minimal glibc locale archive on Linux; copied libraries are patched to
   relative paths so the rootfs remains relocatable.
@@ -44,7 +51,8 @@ including the extension set shipped by that major's upstream Dockerfile.
   pg_partman, pg_repack, plpgsql_check, postgis, postgis_topology,
   address_standardizer, pgrouting, pgroonga, wrappers. PG15 additionally
   exercises TimescaleDB and plv8; those extensions are omitted from the PG17
-  package because they are incompatible with that major.
+  package because they are incompatible with that major. OrioleDB 17 adds
+  `orioledb` and does not ship TimescaleDB, plv8, PostGIS, or pgRouting.
 
 ## What is intentionally dropped
 
@@ -52,6 +60,21 @@ Only non-runtime content: Nix tooling and build derivations, store paths not
 reachable from the runtime roots, alternate switchable extension versions
 (defaults stay), kernel firmware/apk leftovers under `/lib`. No extension is
 removed from the selected major's upstream extension set.
+
+## Measurements (17.9.0.028-orioledb, linux/arm64, 2026-09)
+
+Results-table method: Docker Hub arm64 compressed layers versus the published
+image `gzip_mib`. Stock `17.6.1.175` on that method is `348.9 → 115.6 MiB`
+(`66.9%`).
+
+| Metric | Upstream | Slim | Reduction |
+|---|---:|---:|---:|
+| Compressed image | `349.5 MiB` | `116.1 MiB` | `66.8%` / `233.4 MiB` |
+| Portable archive | — | `82.5 MiB` | — |
+| Idle RSS | — | `124.7 MiB` | — |
+
+Idle RSS is higher than stock `17.6.1.175` (`79.6 MiB`). The older table below
+uses `docker save | gzip -9`, so its slim size is not comparable to `116.1 MiB`.
 
 ## Measurements (17.6.1.143, linux/arm64, full extension set, 2026-07)
 
