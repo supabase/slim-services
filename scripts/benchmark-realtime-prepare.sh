@@ -18,6 +18,15 @@ require_cmd openssl
 require_cmd curl
 
 start_postgres benchmark
+harness_psql postgres >/dev/null <<'SQL'
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'supabase_admin') THEN
+    CREATE ROLE supabase_admin NOLOGIN;
+  END IF;
+END
+$$;
+SQL
 pg_port="$(postgres_port)"
 api_secret='realtime-api-secret-with-at-least-32-characters'
 metrics_secret='realtime-metrics-secret-with-at-least-32'
