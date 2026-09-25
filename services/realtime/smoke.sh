@@ -20,6 +20,18 @@ if [[ -n "$image" || "${SLIM_SMOKE_HOST_POSTGRES:-0}" != "1" ]]; then
   require_cmd docker
 fi
 
+ensure_realtime_smoke_roles() {
+  harness_psql postgres >/dev/null <<'SQL'
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'supabase_admin') THEN
+    CREATE ROLE supabase_admin NOLOGIN;
+  END IF;
+END
+$$;
+SQL
+}
+
 if [[ -n "$artifact_rootfs" ]]; then
   # Host-process smoke: the artifact is a self-contained mix release run
   # directly on the host (no Docker for the service; the harness postgres
@@ -37,6 +49,7 @@ if [[ -n "$artifact_rootfs" ]]; then
   [[ -x "$artifact_rootfs/bin/prepare" ]] || fail "realtime preparation helper not found or not executable: $artifact_rootfs/bin/prepare"
 
   start_postgres realtime_smoke
+  ensure_realtime_smoke_roles
   pg_port="$(postgres_port)"
 
   api_secret='realtime-api-secret-with-at-least-32-characters'
@@ -139,6 +152,7 @@ docker run --rm --entrypoint /usr/bin/sh "$image" -c '
 '
 
 start_postgres realtime_smoke
+ensure_realtime_smoke_roles
 
 api_secret='realtime-api-secret-with-at-least-32-characters'
 metrics_secret='realtime-metrics-secret-with-at-least-32'
