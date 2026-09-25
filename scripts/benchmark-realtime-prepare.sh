@@ -17,19 +17,20 @@ require_cmd python3
 require_cmd openssl
 require_cmd curl
 
-start_postgres benchmark
-harness_psql postgres >/dev/null <<'SQL'
-DO $$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'supabase_admin') THEN
-    CREATE ROLE supabase_admin NOLOGIN;
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'dashboard_user') THEN
-    CREATE ROLE dashboard_user NOLOGIN;
-  END IF;
-END
-$$;
-SQL
+POSTGRES_IMAGE='ghcr.io/supabase/cli/postgres:17.6.1.173@sha256:9d6e542382946cad5eb1f11f1c8108a51297902ee42fe5098358816d3784ba5a'
+ensure_network
+run_container "$POSTGRES_CONTAINER" --network "$NETWORK" -p 127.0.0.1::5432 \
+  -e POSTGRES_PASSWORD=postgres "$POSTGRES_IMAGE"
+wait_for_postgres 240 "$POSTGRES_CONTAINER" supabase_admin
+sleep 5
+wait_for_postgres 60 "$POSTGRES_CONTAINER" supabase_admin
+postgres_port() { host_port "$POSTGRES_CONTAINER" 5432; }
+harness_psql() {
+  local db="$1"
+  shift
+  docker exec -i -e PGPASSWORD=postgres "$POSTGRES_CONTAINER" \
+    psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -U supabase_admin -d "$db" "$@"
+}
 pg_port="$(postgres_port)"
 api_secret='realtime-api-secret-with-at-least-32-characters'
 metrics_secret='realtime-metrics-secret-with-at-least-32'
@@ -53,7 +54,7 @@ measure_native() {
   harness_psql "$db" -c 'CREATE SCHEMA IF NOT EXISTS _realtime' >/dev/null
   local rt_env=()
   while IFS= read -r pair; do rt_env+=("$pair"); done < <(runtime_env_pairs realtime)
-  rt_env+=(DB_HOST=127.0.0.1 DB_PORT="$pg_port" DB_USER=postgres DB_PASSWORD=postgres
+  rt_env+=(DB_HOST=127.0.0.1 DB_PORT="$pg_port" DB_USER=supabase_admin DB_PASSWORD=postgres
     DB_NAME="$db" DB_ENC_KEY=0123456789abcdef DB_AFTER_CONNECT_QUERY='SET search_path TO _realtime'
     API_JWT_SECRET="$api_secret" METRICS_JWT_SECRET="$metrics_secret"
     SECRET_KEY_BASE="$secret_key_base" APP_NAME=benchmark PORT=4000)
@@ -117,7 +118,7 @@ measure_docker() {
   local prepare_db="rt_docker_prepare_${variant}_${trial}" db="rt_docker_full_${variant}_${trial}"
   local envs_base=()
   while IFS= read -r pair; do envs_base+=(-e "$pair"); done < <(runtime_env_pairs realtime)
-  envs_base+=(-e DB_HOST="$POSTGRES_CONTAINER" -e DB_PORT=5432 -e DB_USER=postgres -e DB_PASSWORD=postgres
+  envs_base+=(-e DB_HOST="$POSTGRES_CONTAINER" -e DB_PORT=5432 -e DB_USER=supabase_admin -e DB_PASSWORD=postgres
     -e DB_ENC_KEY=0123456789abcdef -e DB_AFTER_CONNECT_QUERY='SET search_path TO _realtime'
     -e API_JWT_SECRET="$api_secret" -e METRICS_JWT_SECRET="$metrics_secret"
     -e SECRET_KEY_BASE="$secret_key_base" -e APP_NAME=benchmark -e SEED_SELF_HOST=true)
