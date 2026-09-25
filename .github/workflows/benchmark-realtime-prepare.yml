@@ -42,15 +42,15 @@ jobs:
           gh run download "$CANDIDATE_BUILD_RUN" --repo "$GITHUB_REPOSITORY" \
             --name release-image-realtime-v2.134.5-amd64 \
             --dir "$RUNNER_TEMP/changed-image"
-          mkdir -p "$RUNNER_TEMP/baseline-root" "$RUNNER_TEMP/changed-root"
-          tar --zstd -xf "$RUNNER_TEMP/baseline-assets/realtime-v2.134.5-linux-amd64.tar.zst" -C "$RUNNER_TEMP/baseline-root"
-          tar --zstd -xf "$RUNNER_TEMP/changed-assets/realtime-v2.134.5-linux-amd64.tar.zst" -C "$RUNNER_TEMP/changed-root"
+          mkdir -p "$RUNNER_TEMP/baseline-rootfs" "$RUNNER_TEMP/changed-rootfs"
+          tar --zstd -xf "$RUNNER_TEMP/baseline-assets/realtime-v2.134.5-linux-amd64.tar.zst" -C "$RUNNER_TEMP/baseline-rootfs"
+          tar --zstd -xf "$RUNNER_TEMP/changed-assets/realtime-v2.134.5-linux-amd64.tar.zst" -C "$RUNNER_TEMP/changed-rootfs"
           docker pull 'ghcr.io/supabase/cli/realtime@sha256:7fb53cc6987085d739c7d161608505ed138d1895df884c3bdc2147cef444138a'
           docker load -i "$RUNNER_TEMP/changed-image/realtime-v2.134.5-linux-amd64.image.tar.gz"
           base_image='ghcr.io/supabase/cli/realtime@sha256:7fb53cc6987085d739c7d161608505ed138d1895df884c3bdc2147cef444138a'
           changed_image="$(jq -r .local_image "$RUNNER_TEMP/changed-image/realtime-v2.134.5-linux-amd64.image.json")"
-          printf 'BASE_ROOTFS=%s\n' "$RUNNER_TEMP/baseline-root/rootfs" >> "$GITHUB_ENV"
-          printf 'CHANGED_ROOTFS=%s\n' "$RUNNER_TEMP/changed-root/rootfs" >> "$GITHUB_ENV"
+          printf 'BASE_ROOTFS=%s\n' "$RUNNER_TEMP/baseline-rootfs" >> "$GITHUB_ENV"
+          printf 'CHANGED_ROOTFS=%s\n' "$RUNNER_TEMP/changed-rootfs" >> "$GITHUB_ENV"
           printf 'BASE_IMAGE=%s\n' "$base_image" >> "$GITHUB_ENV"
           printf 'CHANGED_IMAGE=%s\n' "$changed_image" >> "$GITHUB_ENV"
           printf 'BASE_ARCHIVE_SHA256=%s\n' "$(sha256sum "$RUNNER_TEMP/baseline-assets/realtime-v2.134.5-linux-amd64.tar.zst" | cut -d' ' -f1)" >> "$GITHUB_ENV"
