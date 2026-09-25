@@ -41,7 +41,7 @@ defmodule Realtime.OneShotPrepare do
     Code.ensure_loaded!(Realtime.Crypto)
 
     if function_exported?(Realtime.Crypto, :check_config, 0) do
-      :ok = Realtime.Crypto.check_config()
+      :ok = apply(Realtime.Crypto, :check_config, [])
     end
   end
 
@@ -116,12 +116,27 @@ defmodule Realtime.OneShotPrepare do
 
     unless extension, do: raise("seeded tenant has no postgres_cdc_rls extension")
 
+    ensure_tenant_schema!(tenant)
+
     case Realtime.Tenants.Migrations.migrate(tenant.external_id, extension.settings, tenant.migrations_ran) do
       {:ok, migrations_ran} ->
         tenant |> Tenant.changeset(%{migrations_ran: migrations_ran}) |> Repo.update!()
 
       {:error, reason} ->
         raise "tenant migrations failed: #{inspect(reason)}"
+    end
+  end
+
+  defp ensure_tenant_schema!(tenant) do
+    {:ok, conn} = Realtime.Database.connect(tenant, "realtime_migrations", :stop)
+
+    try do
+      case Postgrex.query(conn, "CREATE SCHEMA IF NOT EXISTS realtime", []) do
+        {:ok, _result} -> :ok
+        {:error, reason} -> raise "could not create tenant realtime schema: #{inspect(reason)}"
+      end
+    after
+      GenServer.stop(conn)
     end
   end
 
