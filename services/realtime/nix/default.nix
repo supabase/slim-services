@@ -153,6 +153,20 @@ let
         export RUSTLER_PRECOMPILED_GLOBAL_CACHE_PATH="$MIX_DEPS_PATH/.rustler-precompiled"
         ${lumisEnvironment}
       fi
+
+      migration_source=lib/realtime/tenants/migrations.ex
+      if grep -Fq 'defp migrate(tenant_external_id, settings, migrations_ran) do' "$migration_source"; then
+        patch -p1 < ${../overlay/migrations-public.patch}
+      elif ! grep -Fq 'def migrate(tenant_external_id, settings, migrations_ran) do' "$migration_source"; then
+        echo "unsupported Realtime tenant migration implementation" >&2
+        exit 1
+      fi
+      helper=lib/realtime/one_shot_prepare.ex
+      cp ${../overlay/one_shot_prepare.ex} "$helper"
+      if ! grep -Fq 'gcm_encryption_backfill' priv/repo/seeds.exs; then
+        awk '{ sub("@seed_gcm_backfill_flag true", "@seed_gcm_backfill_flag false"); print }' "$helper" > "$helper.tmp"
+        mv "$helper.tmp" "$helper"
+      fi
     '';
 
     # The release includes ERTS by default; keep the generated start scripts.

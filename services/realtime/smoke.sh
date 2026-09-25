@@ -59,12 +59,14 @@ PY
     DB_PASSWORD=postgres
     DB_NAME=realtime_smoke
     DB_ENC_KEY=0123456789abcdef
+    DB_AFTER_CONNECT_QUERY='SET search_path TO _realtime'
     API_JWT_SECRET="$api_secret"
     METRICS_JWT_SECRET="$metrics_secret"
     SECRET_KEY_BASE="$secret_key_base"
     APP_NAME=realtime-smoke
     PORT="$port"
   )
+  harness_psql realtime_smoke -c 'CREATE SCHEMA IF NOT EXISTS _realtime' >/dev/null
   smoke_beam_release_distribution "$realtime_bin" "${rt_env[@]}"
   smoke_beam_runtime_profile "$realtime_bin" "${rt_env[@]}"
 
@@ -72,6 +74,31 @@ PY
   if ! env "${rt_env[@]}" SEED_SELF_HOST=true "$artifact_rootfs/bin/prepare" >"$realtime_log" 2>&1; then
     cat "$realtime_log" >&2
     fail "realtime preparation failed"
+  fi
+
+  migration_count="$(harness_psql realtime_smoke -tAc 'SELECT count(*) FROM _realtime.schema_migrations')"
+  tenant_progress="$(harness_psql realtime_smoke -tAc "SELECT migrations_ran FROM _realtime.tenants WHERE external_id = 'realtime-dev'")"
+  tenant_migration_count="$(harness_psql realtime_smoke -tAc 'SELECT count(*) FROM realtime.schema_migrations')"
+  partition_count="$(harness_psql realtime_smoke -tAc "SELECT count(*) FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'realtime' AND c.relname LIKE 'messages_%'")"
+  [[ "$migration_count" -gt 0 ]] || fail "Realtime metadata migration ledger is empty"
+  [[ "$tenant_progress" = "$tenant_migration_count" && "$tenant_progress" -gt 0 ]] || fail "seeded tenant migration progress does not match its migration ledger"
+  [[ "$partition_count" -gt 0 ]] || fail "tenant message partitions were not created"
+
+  harness_psql realtime_smoke >/dev/null <<'SQL'
+INSERT INTO realtime.messages(topic, extension, event, payload, private)
+VALUES ('prepare-sentinel', 'broadcast', 'preserve-me', '{"sentinel":true}', true);
+SQL
+  log "rerunning realtime preparation to check repeat safety"
+  if ! env "${rt_env[@]}" SEED_SELF_HOST=true "$artifact_rootfs/bin/prepare" >>"$realtime_log" 2>&1; then
+    cat "$realtime_log" >&2
+    fail "realtime preparation rerun failed"
+  fi
+  sentinel_count="$(harness_psql realtime_smoke -tAc "SELECT count(*) FROM realtime.messages WHERE topic = 'prepare-sentinel' AND event = 'preserve-me'")"
+  [[ "$sentinel_count" = 1 ]] || fail "realtime preparation changed sentinel data on rerun"
+
+  log "checking realtime preparation fails for invalid seed input"
+  if env "${rt_env[@]}" API_JWT_JWKS='{' SEED_SELF_HOST=true "$artifact_rootfs/bin/prepare" >>"$realtime_log" 2>&1; then
+    fail "realtime preparation accepted invalid JWT JWKS input"
   fi
 
   log "smoke testing realtime host process on port $port"

@@ -1,0 +1,5 @@
+--- a/lib/realtime/tenants/migrations.ex
++++ b/lib/realtime/tenants/migrations.ex
+@@ -201,1 +201,1 @@
+-  defp migrate(tenant_external_id, settings, migrations_ran) do
++  def migrate(tenant_external_id, settings, migrations_ran) do

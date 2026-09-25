@@ -7,8 +7,8 @@ export ERL_CRASH_DUMP="${ERL_CRASH_DUMP:-/tmp/erl_crash.dump}"
 
 echo "Running Realtime migrations"
 if [ "${SEED_SELF_HOST:-}" = true ]; then
-  echo "Migrating and seeding selfhosted Realtime"
-  exec "$SCRIPT_DIR/realtime" eval 'Realtime.Release.migrate(); Realtime.Release.seeds(Realtime.Repo)'
+  echo "Migrating and seeding selfhosted Realtime in one BEAM"
+  exec "$SCRIPT_DIR/realtime" eval 'Realtime.OneShotPrepare.run()'
 fi
 
 exec "$SCRIPT_DIR/migrate"
