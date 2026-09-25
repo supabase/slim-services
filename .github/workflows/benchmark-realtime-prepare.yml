@@ -63,7 +63,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          SAMPLES=5 scripts/benchmark-realtime-prepare.sh "$BASE_ROOTFS" "$CHANGED_ROOTFS" "$BASE_IMAGE" "$CHANGED_IMAGE"
+          SAMPLES=5 bash scripts/benchmark-realtime-prepare.sh "$BASE_ROOTFS" "$CHANGED_ROOTFS" "$BASE_IMAGE" "$CHANGED_IMAGE"
 
       - name: Upload benchmark data and logs
         if: always()
