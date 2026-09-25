@@ -51,7 +51,8 @@ upstream Dockerfile.
   pg_partman, pg_repack, plpgsql_check, postgis, postgis_topology,
   address_standardizer, pgrouting, pgroonga, wrappers. PG15 additionally
   exercises TimescaleDB and plv8; those extensions are omitted from the PG17
-  package because they are incompatible with that major.
+  package because they are incompatible with that major. OrioleDB 17 adds
+  `orioledb` and does not ship TimescaleDB, plv8, PostGIS, or pgRouting.
 
 ## What is intentionally dropped
 
@@ -59,6 +60,21 @@ Only non-runtime content: Nix tooling and build derivations, store paths not
 reachable from the runtime roots, alternate switchable extension versions
 (defaults stay), kernel firmware/apk leftovers under `/lib`. No extension is
 removed from the selected major's upstream extension set.
+
+## Measurements (17.9.0.028-orioledb, linux/arm64, 2026-09)
+
+Results-table method: Docker Hub arm64 compressed layers versus the published
+image `gzip_mib`. Stock `17.6.1.175` on that method is `348.9 → 115.6 MiB`
+(`66.9%`).
+
+| Metric | Upstream | Slim | Reduction |
+|---|---:|---:|---:|
+| Compressed image | `349.5 MiB` | `116.1 MiB` | `66.8%` / `233.4 MiB` |
+| Portable archive | — | `82.5 MiB` | — |
+| Idle RSS | — | `124.7 MiB` | — |
+
+Idle RSS is higher than stock `17.6.1.175` (`79.6 MiB`). The older table below
+uses `docker save | gzip -9`, so its slim size is not comparable to `116.1 MiB`.
 
 ## Measurements (17.6.1.143, linux/arm64, full extension set, 2026-07)
 

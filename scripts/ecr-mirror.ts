@@ -50,7 +50,7 @@ request dispatches one release and waits for its image on ECR Public and its
 natives on S3 within one shared timeout, reporting each destination.
 
 sync audits the latest published release of each service release line
-(postgres keeps one per major), or every release with --all. SERVICE narrows
+(postgres keeps stock 15, stock 17, and 17.x.x.NNN-orioledb), or every release with --all. SERVICE narrows
 that to one service; SERVICE:VERSION selects exactly that release, even an
 older one. A release whose GHCR image is missing is skipped and counted,
 not fatal. With --request it dispatches every out-of-sync release first and
@@ -205,7 +205,7 @@ const newer = (left: PublishedRelease, right: PublishedRelease): boolean => {
 };
 
 /**
- * The newest release of each service release line (postgres keeps one per major). Releases
+ * The newest release of each service release line (postgres keeps stock 15, stock 17, and OrioleDB). Releases
  * outside every current tag pattern are history and never selected.
  */
 export const latestReleases = (

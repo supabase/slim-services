@@ -15,7 +15,9 @@ belongs to `IDENTITY_SOURCE_TAG`, not to `SOURCE_REF`. Introspection,
 image build, and smokes pull `tag@digest`. A missing digest or a failed
 pull is a hard error. When the image tag is not `IDENTITY_SOURCE_TAG`,
 that tag's index digest is resolved — the committed digest is not reused
-across versions. There is no ECR-first fallback.
+across versions. A postgres `VERSION` ending in `-orioledb` resolves that
+Hub tag's digest; the committed stock pin stays the local default. There is
+no ECR-first fallback.
 
 `SKIP_UPSTREAM_IDENTITY=1` is rejected for identity-contract image builds
 and image smokes. Never invent uid/gid/mode as a substitute for the pin.
