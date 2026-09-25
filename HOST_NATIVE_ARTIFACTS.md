@@ -102,8 +102,10 @@ server path) execs those tools without starting the server.
 
 The portable artifacts expose service-owned launchers alongside their main
 servers. `bin/prepare` is a one-shot runtime command: Realtime runs migrations
-and seeds when `SEED_SELF_HOST=true`, Analytics runs its migrations, Storage
-runs its migration bundle, and Pooler runs its migrations. `bin/storage`,
+and seeds in one BEAM invocation when `SEED_SELF_HOST=true`, without starting
+the Realtime application; its normal path runs the migration release command.
+Analytics runs its migrations, Storage runs its migration bundle, and Pooler
+runs its migrations. `bin/storage`,
 `bin/studio`, and `bin/pgmeta` are the relocatable Node service launchers;
 `bin/server`, `bin/logflare`, and `bin/supavisor` remain the BEAM server
 launchers. Derived images use the same artifact launchers, with image overlays
