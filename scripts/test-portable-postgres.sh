@@ -112,9 +112,8 @@ class PortablePostgresLauncherTest(unittest.TestCase):
         }
         if extra_env:
             env.update(extra_env)
-        command = [str(launcher)] if pathlib.Path("/usr/bin/sh").exists() else ["/bin/sh", str(launcher)]
         return subprocess.run(
-            [*command, *args],
+            [str(launcher), *args],
             cwd=ROOT_DIR,
             env=env,
             input=stdin,
@@ -245,9 +244,9 @@ class PortablePostgresLauncherTest(unittest.TestCase):
         self.assertEqual(result.returncode, 127)
         self.assertIn("real PostgreSQL executable is missing", result.stderr)
 
-    def test_generated_launcher_uses_image_sh_path_and_not_bash_helpers(self):
+    def test_generated_launcher_uses_posix_sh_path_and_not_bash_helpers(self):
         content = LAUNCHER.read_text(encoding="utf-8")
-        self.assertEqual(content.splitlines()[0], "#!/usr/bin/sh")
+        self.assertEqual(content.splitlines()[0], "#!/bin/sh")
         self.assertNotIn("BASH_SOURCE", content)
         self.assertNotIn("dirname", content)
         self.assertNotIn("uname", content)
@@ -506,9 +505,8 @@ class PortablePostgresLauncherTest(unittest.TestCase):
             self.assertFalse((rootfs / "bin" / f".{name}-wrapped").exists(), name)
             self.assertIn(f"REAL_POSTGRES=\"$PG_BIN_DIR/.{name}-portable-real\"", public.read_text(encoding="utf-8"))
             relative_public = public.relative_to(self.temp)
-            command = [str(relative_public)] if pathlib.Path("/usr/bin/sh").exists() else ["/bin/sh", str(relative_public)]
             result = subprocess.run(
-                [*command, "--version"],
+                [str(relative_public), "--version"],
                 text=True,
                 capture_output=True,
                 env=env,
