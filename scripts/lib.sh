@@ -317,9 +317,9 @@ artifact_rootfs_path() {
 }
 
 # REVISION distinguishes immutable release attempts of the same upstream
-# VERSION (a later task allocates it in the release workflow). Named build
-# outputs (archives, images, manifests) use release_version(); anything that
-# talks to upstream keeps using VERSION on its own.
+# VERSION (set by the release workflow's plan job). Named build outputs
+# (archives, images, manifests) use release_version(); anything that talks
+# to upstream keeps using VERSION on its own.
 REVISION="${REVISION:-0}"
 [[ "$REVISION" =~ ^(0|[1-9][0-9]*)$ ]] || fail "REVISION must be a non-negative integer without leading zeros: $REVISION"
 release_version() { printf '%s-r%s\n' "$VERSION" "$REVISION"; }

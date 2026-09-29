@@ -38,7 +38,7 @@ cat > "$fake_bin/gh" <<'SH'
 set -eu
 case "$*" in
   "api repos/${EXPECTED_SOURCE_REPOSITORY}/commits/${EXPECTED_SOURCE_COMMIT} --silent") ;;
-  "api --paginate repos/${GH_REPO}/releases?per_page=100 --jq .[].tag_name") ;;
+  "api --paginate repos/${GH_REPO}/releases?per_page=100 --jq .[] | select(.draft | not) | .tag_name") ;;
   *)
     printf 'unexpected gh invocation: %s\n' "$*" >&2
     exit 2
@@ -141,6 +141,7 @@ touch "$github_output"
     GITHUB_REPOSITORY_OWNER=supabase \
     GITHUB_WORKSPACE="$ROOT_DIR" \
     HOTFIX=false \
+    NOTIFY_TOKEN_PRESENT=true \
     RUNNER_TEMP="$temp_dir/runner" \
     SERVICE=postgres \
     VALIDATION_ONLY=false \
@@ -154,6 +155,39 @@ grep -Fx "source_ref=$source_commit" "$github_output" >/dev/null || {
 }
 grep -Fx 'upstream_image_repository=supabase/postgres' "$github_output" >/dev/null || {
   printf 'release plan did not export the Postgres Docker image repository\n' >&2
+  exit 1
+}
+
+missing_token_log="$temp_dir/missing-token.log"
+if (
+  cd "$ROOT_DIR"
+  env \
+    "${base_environment[@]}" \
+    EXPECTED_IMAGE_REPOSITORY=supabase/postgres \
+    EXPECTED_VERSION=17.6.1.163 \
+    DOCKER_HUB_RESPONSE_TAG=17.6.1.163 \
+    DOCKER_PROVENANCE="{\"linux/amd64\":{\"SLSA\":{\"invocation\":{\"configSource\":{\"digest\":{\"sha1\":\"$source_commit\"}}}}},\"linux/arm64\":{\"SLSA\":{\"invocation\":{\"configSource\":{\"digest\":{\"sha1\":\"$source_commit\"}}}}}}" \
+    GH_REPO=supabase/slim-services \
+    GH_TOKEN=test-token \
+    GITHUB_OUTPUT="$temp_dir/missing-token-output" \
+    GITHUB_REF=refs/heads/main \
+    GITHUB_REPOSITORY_OWNER=supabase \
+    GITHUB_WORKSPACE="$ROOT_DIR" \
+    HOTFIX=false \
+    NOTIFY_TOKEN_PRESENT=false \
+    RUNNER_TEMP="$temp_dir/runner-missing-token" \
+    SERVICE=postgres \
+    VALIDATION_ONLY=false \
+    VERSION=17.6.1.163 \
+    bash -c "$plan_run"
+) >"$missing_token_log" 2>&1; then
+  printf 'plan step published without the CLI dispatch token configured\n' >&2
+  cat "$missing_token_log" >&2
+  exit 1
+fi
+grep -F 'CLI_MIRROR_DISPATCH_TOKEN is not configured' "$missing_token_log" >/dev/null || {
+  printf 'plan step failed for the wrong reason with a missing dispatch token\n' >&2
+  cat "$missing_token_log" >&2
   exit 1
 }
 

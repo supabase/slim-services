@@ -209,23 +209,30 @@ export const publishedReleases = (config: ReleaseConfig, releasePages: unknown):
   return rows;
 };
 
-// Numeric upstream components (never lexical, never semver) followed by the
-// numeric revision, so v1.79.9-r0 < v1.79.10-r0 and r2 < r10. Mirrors the
-// digit-run key used by scripts/download-latest-release-manifests.sh and
-// scripts/poll-service-releases.sh; it also orders Studio's date-sha and
-// Postgres's 4-part upstream versions correctly, since both are entirely
-// numeric-run driven.
-const versionKey = (parsed: ParsedRelease): ReadonlyArray<number> => [
-  ...(parsed.upstream.match(/[0-9]+/g) ?? []).map(Number),
-  parsed.revision,
-];
+// The upstream order key is the numeric components of the upstream version
+// (never lexical, never semver: v1.79.9 < v1.79.10, r2 < r10), with any
+// trailing -sha-<hex> stripped first. Studio's upstream is
+// <date>-sha-<hex>, and the hex digits are not part of the date order:
+// mixing them into the key would compare 2026.09.14-sha-4dd8a95 against
+// 2026.09.14-sha-abcdef0 by hash digits instead of by publish time. Other
+// services have no such suffix, so their keys are unchanged. Mirrors the
+// key used by scripts/download-latest-release-manifests.sh.
+const upstreamOrderKey = (upstream: string): ReadonlyArray<number> =>
+  (upstream.replace(/-sha-[0-9a-f]+$/, "").match(/[0-9]+/g) ?? []).map(Number);
 
 const newer = (
   left: { readonly release: PublishedRelease; readonly parsed: ParsedRelease },
   right: { readonly release: PublishedRelease; readonly parsed: ParsedRelease },
 ): boolean => {
-  const a = versionKey(left.parsed);
-  const b = versionKey(right.parsed);
+  // Same upstream string: the revision is a real, comparable counter.
+  if (left.parsed.upstream === right.parsed.upstream) {
+    if (left.parsed.revision !== right.parsed.revision) return left.parsed.revision > right.parsed.revision;
+    return left.release.publishedAt > right.release.publishedAt;
+  }
+  // Different upstream strings: order by the upstream order key, and fall
+  // back to publish time when it ties (Studio same-date, different sha).
+  const a = upstreamOrderKey(left.parsed.upstream);
+  const b = upstreamOrderKey(right.parsed.upstream);
   for (let index = 0; index < Math.max(a.length, b.length); index += 1) {
     const difference = (a[index] ?? -1) - (b[index] ?? -1);
     if (difference !== 0) return difference > 0;

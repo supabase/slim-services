@@ -21,6 +21,25 @@ ROOT = pathlib.Path(sys.argv.pop(1))
 POLLER = ROOT / "scripts" / "poll-service-releases.sh"
 
 
+def published_records(tags):
+    records = []
+    for tag in tags:
+        if isinstance(tag, tuple):
+            name, draft = tag
+        else:
+            name, draft = tag, False
+        records.append({"tag_name": name, "draft": draft})
+    return "".join(json.dumps(record) + "\n" for record in records)
+
+
+def draft_tag(name):
+    return (name, True)
+
+
+def published_jsonl_from_lines(text):
+    return published_records([line for line in text.splitlines() if line])
+
+
 class ReleasePollerTest(unittest.TestCase):
     def setUp(self):
         self.temporary_directory = tempfile.TemporaryDirectory(prefix="release-poller-test.")
@@ -37,7 +56,24 @@ class ReleasePollerTest(unittest.TestCase):
         self.runs = self.directory / "runs.json"
         self.runs.write_text("[]\n", encoding="utf-8")
         self.published = self.directory / "published"
-        self.published.write_text("", encoding="utf-8")
+        self.published.write_text(published_jsonl_from_lines(""), encoding="utf-8")
+        # Stands in for the real `gh api --jq '.[] | select(.draft | not) |
+        # .tag_name'` filter: reads one release JSON record per line and
+        # prints the tag_name of the non-draft ones, so fixtures can model a
+        # draft release that must not count as published.
+        self.published_filter = self.directory / "published-filter.py"
+        self.published_filter.write_text(
+            "import json\n"
+            "import sys\n"
+            "for line in sys.stdin:\n"
+            "    line = line.strip()\n"
+            "    if not line:\n"
+            "        continue\n"
+            "    record = json.loads(line)\n"
+            "    if not record.get('draft'):\n"
+            "        print(record['tag_name'])\n",
+            encoding="utf-8",
+        )
         self.config = self.directory / "service-release-sources.json"
         self.config.write_text(
             json.dumps(
@@ -62,7 +98,7 @@ class ReleasePollerTest(unittest.TestCase):
             "  api)\n"
             "    case \"$*\" in\n"
             "      *contents*) printf '%s\\n' \"$*\" >> \"$FAKE_API_TRACE\"; [ \"${FAKE_COMPOSE_FAILURE:-0}\" = 1 ] && exit 1; printf '%s\\n' \"$FAKE_COMPOSE_CONTENT\" ;;\n"
-            "      *supabase/slim-services/releases*) cat \"$FAKE_PUBLISHED_RELEASES\" ;;\n"
+            "      *supabase/slim-services/releases*) cat \"$FAKE_PUBLISHED_RELEASES\" | python3 \"$FAKE_PUBLISHED_FILTER\" ;;\n"
             "      *) cat \"$FAKE_UPSTREAM_RELEASES\" ;;\n"
             "    esac\n"
             "    ;;\n"
@@ -107,6 +143,7 @@ class ReleasePollerTest(unittest.TestCase):
             "SERVICE_RELEASE_CONFIG": str(self.config),
             "FAKE_GH_TRACE": str(self.trace),
             "FAKE_PUBLISHED_RELEASES": str(self.published),
+            "FAKE_PUBLISHED_FILTER": str(self.published_filter),
             "FAKE_RUNS_JSON": str(self.runs),
             "FAKE_UPSTREAM_RELEASES": str(self.upstream_releases),
             "FAKE_COMPOSE_CONTENT": self.compose_content,
@@ -172,7 +209,7 @@ class ReleasePollerTest(unittest.TestCase):
 
     def test_published_pinned_version_is_not_dispatched(self):
         self.configure_compose_pin()
-        self.published.write_text("imgproxy-v3.26.0-r0\n", encoding="utf-8")
+        self.published.write_text(published_jsonl_from_lines("imgproxy-v3.26.0-r0\n"), encoding="utf-8")
         result = self.run_poller(service="imgproxy")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse(self.trace.exists())
@@ -253,7 +290,7 @@ class ReleasePollerTest(unittest.TestCase):
         self.assertNotIn("force", trace_lines[0])
 
     def test_legacy_release_without_revision_still_dispatches(self):
-        self.published.write_text("realtime-v2.128.0\n", encoding="utf-8")
+        self.published.write_text(published_jsonl_from_lines("realtime-v2.128.0\n"), encoding="utf-8")
 
         result = self.run_poller()
 
@@ -267,7 +304,7 @@ class ReleasePollerTest(unittest.TestCase):
         )
 
     def test_revision_release_is_treated_as_published(self):
-        self.published.write_text("realtime-v2.128.0-r0\n", encoding="utf-8")
+        self.published.write_text(published_jsonl_from_lines("realtime-v2.128.0-r0\n"), encoding="utf-8")
 
         result = self.run_poller()
 
@@ -277,6 +314,20 @@ class ReleasePollerTest(unittest.TestCase):
             [
                 "workflow run service-release.yml --repo supabase/slim-services "
                 "--ref main -f service=realtime -f version=v2.128.1"
+            ],
+        )
+
+    def test_draft_revision_release_is_not_treated_as_published(self):
+        self.published.write_text(published_records([draft_tag("realtime-v2.128.0-r0")]), encoding="utf-8")
+
+        result = self.run_poller()
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            self.trace.read_text(encoding="utf-8").splitlines(),
+            [
+                "workflow run service-release.yml --repo supabase/slim-services "
+                "--ref main -f service=realtime -f version=v2.128.0"
             ],
         )
 
@@ -290,7 +341,7 @@ class ReleasePollerTest(unittest.TestCase):
         self.config.write_text(json.dumps(config), encoding="utf-8")
         # A revision release exists only for v2.128.10; a naive substring or
         # prefix check would mistake it for a release of v2.128.1.
-        self.published.write_text("realtime-v2.128.10-r0\n", encoding="utf-8")
+        self.published.write_text(published_jsonl_from_lines("realtime-v2.128.10-r0\n"), encoding="utf-8")
 
         result = self.run_poller(max_dispatches_per_service=None, max_active_releases=None)
 
@@ -422,7 +473,7 @@ class ReleasePollerTest(unittest.TestCase):
             "v2.129.0\nv2.128.0\nv2.128.3\nv2.128.2\nv2.128.1\n",
             encoding="utf-8",
         )
-        self.published.write_text("realtime-v2.128.0-r0\n", encoding="utf-8")
+        self.published.write_text(published_jsonl_from_lines("realtime-v2.128.0-r0\n"), encoding="utf-8")
 
         result = self.run_poller()
 
@@ -597,8 +648,7 @@ class ReleasePollerTest(unittest.TestCase):
             "17.10.1.001\n17.6.1.15799999\n17.6.1.159\n",
             encoding="utf-8",
         )
-        self.published.write_text(
-            "postgres-15.14.1.177-r0\npostgres-17.6.1.177-r0\n", encoding="utf-8"
+        self.published.write_text(published_jsonl_from_lines("postgres-15.14.1.177-r0\npostgres-17.6.1.177-r0\n"), encoding="utf-8"
         )
 
         class DockerHubHandler(http.server.BaseHTTPRequestHandler):
@@ -695,8 +745,7 @@ class ReleasePollerTest(unittest.TestCase):
             def log_message(self, *_args):
                 pass
 
-        self.published.write_text(
-            "postgres-15.14.1.177-r0\npostgres-17.6.1.177-r0\n", encoding="utf-8"
+        self.published.write_text(published_jsonl_from_lines("postgres-15.14.1.177-r0\npostgres-17.6.1.177-r0\n"), encoding="utf-8"
         )
         server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), DockerHubHandler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -737,7 +786,7 @@ class ReleasePollerTest(unittest.TestCase):
             "release_floor": "15.14.1.160",
         }
         self.config.write_text(json.dumps({"services": {"postgres": config}}), encoding="utf-8")
-        self.published.write_text("postgres-15.14.1.159-r0\n", encoding="utf-8")
+        self.published.write_text(published_jsonl_from_lines("postgres-15.14.1.159-r0\n"), encoding="utf-8")
 
         class DockerHubHandler(http.server.BaseHTTPRequestHandler):
             def do_GET(self):

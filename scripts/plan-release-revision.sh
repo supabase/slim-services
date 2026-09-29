@@ -50,7 +50,14 @@ if not repo:
 
 try:
     result = subprocess.run(
-        ["gh", "api", "--paginate", f"repos/{repo}/releases?per_page=100", "--jq", ".[].tag_name"],
+        [
+            "gh",
+            "api",
+            "--paginate",
+            f"repos/{repo}/releases?per_page=100",
+            "--jq",
+            ".[] | select(.draft | not) | .tag_name",
+        ],
         capture_output=True,
         text=True,
         check=True,

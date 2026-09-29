@@ -22,7 +22,23 @@ DEFAULT_FAKE_GH = (
     "case \" $* \" in\n"
     "  *' --paginate '*) cat \"$FAKE_TAGS\" ;;\n"
     "  *) head -n 100 \"$FAKE_TAGS\" ;;\n"
-    "esac\n"
+    "esac | python3 \"$FAKE_FILTER\"\n"
+)
+
+# Stands in for the real `gh api --jq '.[] | select(.draft | not) | .tag_name'`
+# filter: reads one release JSON record per line from stdin and prints the
+# tag_name of the non-draft ones. The fixture rows are release records
+# (tag_name + draft), never bare tag strings, so a draft can be modeled.
+FAKE_FILTER = (
+    "import json\n"
+    "import sys\n"
+    "for line in sys.stdin:\n"
+    "    line = line.strip()\n"
+    "    if not line:\n"
+    "        continue\n"
+    "    record = json.loads(line)\n"
+    "    if not record.get('draft'):\n"
+    "        print(record['tag_name'])\n"
 )
 
 FAILING_FAKE_GH = (
@@ -45,6 +61,18 @@ def assert_true(condition, message):
         raise AssertionError(message)
 
 
+def draft_tag(name):
+    return (name, True)
+
+
+def _as_record(tag):
+    if isinstance(tag, tuple):
+        name, draft = tag
+    else:
+        name, draft = tag, False
+    return {"tag_name": name, "draft": draft}
+
+
 def tags_with_filler(real_tags):
     real_tags = list(real_tags)
     filler_count = 250 - len(real_tags)
@@ -59,18 +87,23 @@ def plan(service, upstream_version, validation_only, hotfix, git_ref, tags, *, g
         bin_dir = directory / "bin"
         bin_dir.mkdir()
         fixture = directory / "tags"
-        fixture.write_text("\n".join(tags) + ("\n" if tags else ""), encoding="utf-8")
+        fixture.write_text(
+            "".join(json.dumps(_as_record(tag)) + "\n" for tag in tags), encoding="utf-8"
+        )
         argv_file = directory / "gh-argv"
         argv_file.write_text("", encoding="utf-8")
         fake_gh = bin_dir / "gh"
         fake_gh.write_text(gh_script or DEFAULT_FAKE_GH, encoding="utf-8")
         fake_gh.chmod(0o755)
+        fake_filter = directory / "filter.py"
+        fake_filter.write_text(FAKE_FILTER, encoding="utf-8")
         env = {
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
             "GH_REPO": GH_REPO,
             "GH_TOKEN": "test-token",
             "FAKE_TAGS": str(fixture),
             "FAKE_GH_ARGV": str(argv_file),
+            "FAKE_FILTER": str(fake_filter),
         }
         result = run(
             [str(PLANNER), service, upstream_version, validation_only, hotfix, git_ref],
@@ -113,6 +146,35 @@ def test_taken_plus_hotfix_allocates_next_revision():
     assert_true(parsed["revision"] == 2, f"expected revision 2: {parsed}")
 
 
+def test_draft_release_does_not_count_as_taken():
+    result = plan(
+        "auth",
+        "v2.197.0",
+        "false",
+        "false",
+        "refs/heads/main",
+        tags_with_filler([draft_tag("auth-v2.197.0-r0")]),
+    )
+    assert_true(result.returncode == 0, result.stderr)
+    parsed = json.loads(result.stdout)
+    assert_true(parsed["publish"] is True, f"expected publish: {parsed}")
+    assert_true(parsed["revision"] == 0, f"expected revision 0, draft is not taken: {parsed}")
+
+
+def test_hotfix_ignores_a_draft_revision_on_top_of_a_published_one():
+    result = plan(
+        "auth",
+        "v2.197.0",
+        "false",
+        "true",
+        "refs/heads/main",
+        tags_with_filler(["auth-v2.197.0-r0", draft_tag("auth-v2.197.0-r1")]),
+    )
+    assert_true(result.returncode == 0, result.stderr)
+    parsed = json.loads(result.stdout)
+    assert_true(parsed["revision"] == 1, f"expected revision 1, draft r1 is not taken: {parsed}")
+
+
 def test_hotfix_with_nothing_taken_fails():
     result = plan("auth", "v2.197.0", "false", "true", "refs/heads/main", tags_with_filler([]))
     assert_true(result.returncode == 1, f"expected exit 1: {result.returncode}")
@@ -136,7 +198,8 @@ def test_revision_past_pagination_boundary_is_counted():
     )
     assert_true(result.returncode == 0, result.stderr)
     assert_true(
-        result.argv == f"api --paginate repos/{GH_REPO}/releases?per_page=100 --jq .[].tag_name",
+        result.argv
+        == f"api --paginate repos/{GH_REPO}/releases?per_page=100 --jq .[] | select(.draft | not) | .tag_name",
         f"unexpected gh invocation: {result.argv!r}",
     )
     parsed = json.loads(result.stdout)

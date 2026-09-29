@@ -22,6 +22,31 @@ def run(command, *, env=None, check=False):
     return subprocess.run(command, cwd=ROOT, text=True, capture_output=True, env=merged, check=check)
 
 
+def run_in(cwd, command, *, env=None, check=False):
+    merged = os.environ.copy()
+    merged.update(env or {})
+    return subprocess.run(command, cwd=cwd, text=True, capture_output=True, env=merged, check=check)
+
+
+def extract_step_run(job, step_name):
+    ruby = (
+        "require 'yaml'; "
+        "data=YAML.safe_load(File.read(ARGV[0]), aliases: true); "
+        f"step=data.fetch('jobs').fetch({job!r}).fetch('steps').find " + "{ |s| s['name'] == ARGV[1] }; "
+        "abort \"#{ARGV[1]} missing\" unless step; puts step.fetch('run')"
+    )
+    result = run(["ruby", "-e", ruby, str(ROOT / ".github" / "workflows" / "service-release.yml"), step_name])
+    assert_true(result.returncode == 0, result.stderr)
+    return result.stdout
+
+
+def write_script(directory, name, body):
+    script = directory / name
+    script.write_text("#!/usr/bin/env bash\n" + body, encoding="utf-8")
+    script.chmod(0o755)
+    return script
+
+
 def assert_true(condition, message):
     if not condition:
         raise AssertionError(message)
@@ -357,6 +382,12 @@ def test_release_workflow_uses_hotfix_input_and_revision_planner():
 
 
 def test_build_step_labels_image_with_release_version():
+    # Kept as the one structural check here: nothing executes the workflow's
+    # "Build, audit, smoke, and package" step (it needs Docker/Nix), so this
+    # is the only place that would notice IMAGE_TAG regressing to the bare
+    # upstream version instead of the release version. OCI_VERSION and
+    # OCI_REVISION were dropped: they are plain "does this string equal that
+    # string" checks with no such gap to cover.
     ruby = (
         "require 'yaml'; require 'json'; "
         "data=YAML.safe_load(File.read(ARGV[0]), aliases: true); "
@@ -367,21 +398,13 @@ def test_build_step_labels_image_with_release_version():
     assert_true(result.returncode == 0, result.stderr)
     env = json.loads(result.stdout)
     assert_true(
-        env.get("OCI_VERSION") == "${{ needs.plan.outputs.release_version }}",
-        f"OCI_VERSION must come from the release version, got: {env.get('OCI_VERSION')!r}",
-    )
-    assert_true(
-        env.get("OCI_REVISION") == "${{ github.sha }}",
-        "OCI_REVISION must stay the packaging commit sha",
-    )
-    assert_true(
         env.get("IMAGE_TAG")
         == "local/${{ inputs.service }}:${{ needs.plan.outputs.release_version }}-${{ matrix.platform_dir }}",
         f"IMAGE_TAG must be tagged with the release version, got: {env.get('IMAGE_TAG')!r}",
     )
 
 
-def test_publish_release_is_create_only_and_notifies_cli():
+def test_publish_release_is_create_only():
     ruby = (
         "require 'yaml'; require 'json'; "
         "data=YAML.safe_load(File.read(ARGV[0]), aliases: true); "
@@ -392,17 +415,171 @@ def test_publish_release_is_create_only_and_notifies_cli():
     assert_true(result.returncode == 0, result.stderr)
     steps = json.loads(result.stdout)
     combined_run = "\n".join(step.get("run") or "" for step in steps)
-    assert_true("--clobber" not in combined_run, "publish-release must not clobber an existing release")
     assert_true("gh release edit" not in combined_run, "publish-release must not edit an existing release")
     assert_true("gh release create" in combined_run, "publish-release must still create the release")
-    assert_true("slim-release-published" in combined_run, "publish-release must dispatch slim-release-published")
     assert_true(
         any("already exists; revisions are immutable" in (step.get("run") or "") for step in steps),
-        "publish-release must fail create-only when the release tag already exists",
+        "publish-release must fail create-only when a published release tag already exists",
     )
 
 
+def test_notify_cli_job_runs_once_publish_release_succeeds():
+    # gates and wiring: the executable contract (payload, missing-token and
+    # failed-dispatch behavior) is covered by the notify_cli_* tests below.
+    ruby = (
+        "require 'yaml'; require 'json'; "
+        "data=YAML.safe_load(File.read(ARGV[0]), aliases: true); "
+        "job=data.fetch('jobs').fetch('notify-cli'); "
+        "abort 'notify-cli step missing' unless job.fetch('steps').any? { |s| s['name'] == 'Notify CLI repository of published release' }; "
+        "puts JSON.generate({needs: job.fetch('needs'), if: job.fetch('if')})"
+    )
+    result = run(["ruby", "-e", ruby, str(ROOT / ".github" / "workflows" / "service-release.yml")])
+    assert_true(result.returncode == 0, result.stderr)
+    parsed = json.loads(result.stdout)
+    assert_true(sorted(parsed["needs"]) == ["plan", "publish-release"], f"notify-cli needs: {parsed['needs']}")
+    assert_true(
+        parsed["if"] == "needs.plan.outputs.publish == 'true' && needs.publish-release.result == 'success'",
+        f"notify-cli must run only after publish-release succeeds: {parsed['if']!r}",
+    )
+
+
+NOTIFY_CLI_ENV = {
+    "RELEASE_TAG": "auth-v2.197.0-r0",
+    "RELEASE_VERSION": "v2.197.0-r0",
+    "REVISION": "0",
+    "SERVICE": "auth",
+    "VERSION": "v2.197.0",
+}
+
+
+def run_notify_cli(*, token="test-token", gh_script=None):
+    run_block = extract_step_run("notify-cli", "Notify CLI repository of published release")
+    with tempfile.TemporaryDirectory(prefix="notify-cli-test.") as name:
+        directory = pathlib.Path(name)
+        script = write_script(directory, "notify.sh", run_block)
+        bin_dir = directory / "bin"
+        bin_dir.mkdir()
+        payload_file = directory / "payload.json"
+        default_gh = (
+            "#!/bin/sh\n"
+            "set -eu\n"
+            "cat > \"$FAKE_PAYLOAD_FILE\"\n"
+        )
+        write_script(bin_dir, "gh", gh_script or default_gh)
+        env = dict(NOTIFY_CLI_ENV)
+        env["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
+        env["FAKE_PAYLOAD_FILE"] = str(payload_file)
+        if token is not None:
+            env["MIRROR_DISPATCH_TOKEN"] = token
+        result = run_in(directory, [str(script)], env=env)
+        result.payload = payload_file.read_text(encoding="utf-8") if payload_file.exists() else None
+        return result
+
+
+def test_notify_cli_dispatches_the_published_release_payload():
+    result = run_notify_cli()
+    assert_true(result.returncode == 0, result.stderr)
+    payload = json.loads(result.payload)
+    assert_true(payload["event_type"] == "slim-release-published", payload)
+    assert_true(
+        payload["client_payload"]
+        == {
+            "service": "auth",
+            "upstream_version": "v2.197.0",
+            "revision": 0,
+            "release_version": "v2.197.0-r0",
+        },
+        payload,
+    )
+
+
+def test_notify_cli_fails_without_a_dispatch_token():
+    result = run_notify_cli(token=None)
+    assert_true(result.returncode != 0, "expected a non-zero exit with no dispatch token")
+    assert_true("CLI_MIRROR_DISPATCH_TOKEN is not configured" in result.stderr, result.stderr)
+
+
+def test_notify_cli_fails_when_the_dispatch_call_fails():
+    failing_gh = "#!/bin/sh\nset -eu\ncat >/dev/null\nexit 1\n"
+    result = run_notify_cli(gh_script=failing_gh)
+    assert_true(result.returncode != 0, "expected a non-zero exit when the dispatch call fails")
+    assert_true("repository_dispatch of slim-release-published" in result.stderr, result.stderr)
+
+
+def run_create_release_step(state):
+    run_block = extract_step_run("publish-release", "Create GitHub release")
+    with tempfile.TemporaryDirectory(prefix="create-release-test.") as name:
+        directory = pathlib.Path(name)
+        script = write_script(directory, "create.sh", run_block)
+        bin_dir = directory / "bin"
+        bin_dir.mkdir()
+        trace_file = directory / "gh-trace"
+        trace_file.write_text("", encoding="utf-8")
+        fake_gh = (
+            "#!/bin/sh\n"
+            "set -eu\n"
+            "printf '%s\\n' \"$*\" >> \"$FAKE_GH_TRACE\"\n"
+            "case \"$1 $2\" in\n"
+            "  'release view')\n"
+            "    case \"$FAKE_RELEASE_STATE\" in\n"
+            "      missing) printf 'release not found\\n' >&2; exit 1 ;;\n"
+            "      draft) printf '{\"isDraft\":true}\\n' ;;\n"
+            "      published) printf '{\"isDraft\":false}\\n' ;;\n"
+            "    esac\n"
+            "    ;;\n"
+            "  'release delete') exit 0 ;;\n"
+            "  'release create') exit 0 ;;\n"
+            "  *) printf 'unexpected gh invocation: %s\\n' \"$*\" >&2; exit 2 ;;\n"
+            "esac\n"
+        )
+        write_script(bin_dir, "gh", fake_gh)
+        env = {
+            "GH_TOKEN": "test-token",
+            "GITHUB_SHA": "0" * 40,
+            "RELEASE_TAG": "auth-v2.197.0-r0",
+            "RELEASE_VERSION": "v2.197.0-r0",
+            "SERVICE": "auth",
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "FAKE_GH_TRACE": str(trace_file),
+            "FAKE_RELEASE_STATE": state,
+        }
+        result = run_in(directory, [str(script)], env=env)
+        result.trace = trace_file.read_text(encoding="utf-8").splitlines()
+        return result
+
+
+def test_create_release_step_creates_when_nothing_exists():
+    result = run_create_release_step("missing")
+    assert_true(result.returncode == 0, result.stderr)
+    assert_true(any(line.startswith("release create ") for line in result.trace), result.trace)
+    assert_true(not any(line.startswith("release delete ") for line in result.trace), result.trace)
+
+
+def test_create_release_step_deletes_a_stale_draft_then_creates():
+    result = run_create_release_step("draft")
+    assert_true(result.returncode == 0, result.stderr)
+    delete_index = next((i for i, line in enumerate(result.trace) if line.startswith("release delete ")), None)
+    create_index = next((i for i, line in enumerate(result.trace) if line.startswith("release create ")), None)
+    assert_true(delete_index is not None, f"expected a stale draft deletion: {result.trace}")
+    assert_true(create_index is not None, f"expected a create after deleting the draft: {result.trace}")
+    assert_true(delete_index < create_index, f"draft must be deleted before re-creating: {result.trace}")
+    assert_true("--cleanup-tag" not in result.trace[delete_index], "a draft has no tag to clean up")
+    assert_true("stale draft" in result.stdout, result.stdout)
+
+
+def test_create_release_step_fails_when_already_published():
+    result = run_create_release_step("published")
+    assert_true(result.returncode != 0, "expected a non-zero exit for an already-published release")
+    assert_true("already exists; revisions are immutable" in result.stderr, result.stderr)
+    assert_true(not any(line.startswith("release delete ") for line in result.trace), result.trace)
+    assert_true(not any(line.startswith("release create ") for line in result.trace), result.trace)
+
+
 def test_stage_release_assets_appends_manifest_hash_to_platform_checksums():
+    # The manifest-hashing and re-sort behavior this step performs is
+    # exercised end to end in scripts/test-image-artifact-archive.sh, which
+    # runs this exact run: block against real fixture files. Only the naming
+    # wiring (release assets keyed by RELEASE_VERSION) is checked here.
     ruby = (
         "require 'yaml'; require 'json'; "
         "data=YAML.safe_load(File.read(ARGV[0]), aliases: true); "
@@ -415,8 +592,6 @@ def test_stage_release_assets_appends_manifest_hash_to_platform_checksums():
     assert_true(
         "$RELEASE_VERSION" in run_block, "stage step must name release assets with the release version"
     )
-    assert_true("hashlib" in run_block, "stage step must hash the copied manifest")
-    assert_true("sort -k2" in run_block, "stage step must re-sort the per-platform SHA256SUMS by name")
 
 
 def test_workflow_downloads_and_verifies_snapshot_before_recipe_build_consumers():

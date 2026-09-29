@@ -17,9 +17,9 @@ DOWNLOAD = ROOT / "scripts" / "download-latest-release-manifests.sh"
 TABLES = "scripts/update-results-tables.sh"
 
 # A mixed release list: a legacy tag with no -rN, two -r0 releases, and a
-# hotfix -r1 on top of the newest upstream version. Mirrors the D1 grammar
-# from the design doc: only the highest upstream version's highest revision
-# is a candidate, and the legacy tag is frozen history.
+# hotfix -r1 on top of the newest upstream version. The rule: pick the
+# highest upstream version, then its highest revision; legacy tags without
+# -rN are ignored.
 RELEASES = [
     {"tag_name": "storage-v1.79.23", "draft": False, "prerelease": False},
     {"tag_name": "storage-v1.79.22-r0", "draft": False, "prerelease": False},
@@ -146,6 +146,82 @@ def test_download_selects_the_highest_upstream_version_and_revision():
         assert_true(not (artifacts_dir / "storage" / "v1.79.23").exists(), "legacy tag must never be downloaded")
         assert_true(not (artifacts_dir / "storage" / "v1.79.22-r0").exists(), "older revision must not be selected")
         assert_true(not (artifacts_dir / "storage" / "v1.79.23-r0").exists(), "older revision must not be selected")
+
+
+def test_download_orders_studio_releases_by_publish_time_not_sha_digits():
+    # Both releases are 2026.09.14; the hex sha digits must not enter the
+    # order, so the later-published one (abcdef0) is selected, not the one
+    # with the numerically larger sha digits (4dd8a95).
+    releases = [
+        {
+            "tag_name": "studio-2026.09.14-sha-4dd8a95-r0",
+            "draft": False,
+            "prerelease": False,
+            "published_at": "2026-09-14T00:00:00Z",
+        },
+        {
+            "tag_name": "studio-2026.09.14-sha-abcdef0-r0",
+            "draft": False,
+            "prerelease": False,
+            "published_at": "2026-09-15T00:00:00Z",
+        },
+    ]
+    chosen_tag = "studio-2026.09.14-sha-abcdef0-r0"
+    chosen_version = "2026.09.14-sha-abcdef0-r0"
+    chosen_upstream = "2026.09.14-sha-abcdef0"
+
+    with tempfile.TemporaryDirectory(prefix="release-results-download-studio.") as name:
+        workdir = pathlib.Path(name)
+        bin_dir = workdir / "bin"
+        bin_dir.mkdir()
+        fake_gh = bin_dir / "gh"
+        fake_gh.write_text(FAKE_GH, encoding="utf-8")
+        fake_gh.chmod(0o755)
+
+        releases_json = workdir / "releases.json"
+        releases_json.write_text(json.dumps([releases]), encoding="utf-8")
+
+        config = workdir / "service-release-sources.json"
+        config.write_text(
+            json.dumps(
+                {"services": {"studio": {"tag_pattern": r"^[0-9]{4}\.[0-9]{2}\.[0-9]{2}-sha-[0-9a-f]{7}$"}}}
+            ),
+            encoding="utf-8",
+        )
+
+        manifests_dir = workdir / "manifests" / chosen_tag
+        manifests_dir.mkdir(parents=True)
+        for platform_dir, platform in (("linux-arm64", "linux/arm64"), ("darwin-arm64", "darwin/arm64")):
+            (manifests_dir / f"{chosen_tag}-{platform_dir}.manifest.json").write_text(
+                json.dumps(
+                    {
+                        "service": "studio",
+                        "version": chosen_version,
+                        "upstream_version": chosen_upstream,
+                        "revision": 0,
+                        "platform": platform,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+        artifacts_dir = workdir / "artifacts"
+        env = {
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "GH_TOKEN": "test-token",
+            "SERVICE_RELEASE_CONFIG": str(config),
+            "RELEASE_RESULTS_REPOSITORY": "supabase/slim-services",
+            "RESULTS_ARTIFACTS_DIR": str(artifacts_dir),
+            "FAKE_RELEASES_JSON": str(releases_json),
+            "FAKE_MANIFESTS_DIR": str(manifests_dir.parent),
+        }
+        result = run([str(DOWNLOAD)], cwd=workdir, env=env)
+        assert_true(result.returncode == 0, result.stdout + result.stderr)
+        assert_true(f"downloading manifests for studio ({chosen_tag})" in result.stdout, result.stdout)
+        assert_true("4dd8a95" not in result.stdout, result.stdout)
+
+        placed = artifacts_dir / "studio" / chosen_version / "linux-arm64" / "manifest.json"
+        assert_true(placed.is_file(), f"missing {placed}")
 
 
 def test_results_table_shows_upstream_version_and_links_to_the_release_revision():

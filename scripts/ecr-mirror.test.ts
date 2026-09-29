@@ -722,4 +722,65 @@ exit 1
     // v1.79.9 < v1.79.10 numerically (not "1" < "1" lexically), and r2 < r10 numerically.
     expect(auditedInSync(result.stdout.toString())).toEqual(["postgrest v16.2-r10", "storage v1.79.10-r0"]);
   });
+
+  test("orders same-date Studio releases by publish time, not by the sha's digits", () => {
+    const stub = mkdtempSync(join(tmpdir(), "ecr-studio-sha-"));
+    writeStub(
+      stub,
+      "gh",
+      `#!/usr/bin/env bash
+cat <<'EOF'
+[[{"tag_name":"studio-2026.09.14-sha-4dd8a95-r0","draft":false,"prerelease":false,"published_at":"2026-09-14T00:00:00Z"},{"tag_name":"studio-2026.09.14-sha-abcdef0-r0","draft":false,"prerelease":false,"published_at":"2026-09-15T00:00:00Z"}]]
+EOF
+`,
+    );
+    writeStub(
+      stub,
+      "regctl",
+      `#!/bin/sh
+if [ "$1" = manifest ] && [ "$2" = head ]; then
+  case "$3" in *native*) exit 1 ;; esac
+  printf "%s\\n" "${DIGEST}"; exit 0
+fi
+if [ "$1" = image ] && [ "$2" = digest ]; then printf "%s\\n" "${DIGEST}"; exit 0; fi
+exit 1
+`,
+    );
+    const result = run(["sync"], { PATH: `${stub}:/usr/bin:/bin` });
+    expect(result.exitCode, result.stderr.toString()).toBe(0);
+    // Both releases are 2026.09.14; the hex digits of the sha must not enter
+    // the order, so the later-published one (abcdef0) wins, not 4dd8a95.
+    expect(auditedInSync(result.stdout.toString())).toEqual(["studio 2026.09.14-sha-abcdef0-r0"]);
+    expect(result.stdout.toString()).not.toContain("4dd8a95");
+  });
+
+  test("prefers the higher revision of the same upstream even when it published first", () => {
+    const stub = mkdtempSync(join(tmpdir(), "ecr-same-upstream-revision-"));
+    writeStub(
+      stub,
+      "gh",
+      `#!/usr/bin/env bash
+cat <<'EOF'
+[[{"tag_name":"storage-v1.79.23-r1","draft":false,"prerelease":false,"published_at":"2026-09-01T00:00:00Z"},{"tag_name":"storage-v1.79.23-r0","draft":false,"prerelease":false,"published_at":"2026-09-20T00:00:00Z"}]]
+EOF
+`,
+    );
+    writeStub(
+      stub,
+      "regctl",
+      `#!/bin/sh
+if [ "$1" = manifest ] && [ "$2" = head ]; then
+  case "$3" in *native*) exit 1 ;; esac
+  printf "%s\\n" "${DIGEST}"; exit 0
+fi
+if [ "$1" = image ] && [ "$2" = digest ]; then printf "%s\\n" "${DIGEST}"; exit 0; fi
+exit 1
+`,
+    );
+    const result = run(["sync"], { PATH: `${stub}:/usr/bin:/bin` });
+    expect(result.exitCode, result.stderr.toString()).toBe(0);
+    // r0 published later than r1, but the revision counter still decides
+    // within the same upstream: r1 wins regardless of publish order.
+    expect(auditedInSync(result.stdout.toString())).toEqual(["storage v1.79.23-r1"]);
+  });
 });

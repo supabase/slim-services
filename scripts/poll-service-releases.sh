@@ -217,7 +217,7 @@ PY
 
 published_release_tags="$(
   gh api --paginate "repos/$TARGET_REPOSITORY/releases?per_page=100" \
-    --jq '.[].tag_name'
+    --jq '.[] | select(.draft | not) | .tag_name'
 )"
 runs_json="$(
   gh run list \
