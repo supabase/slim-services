@@ -85,6 +85,21 @@ const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\
 export const nativeTagPattern = (version: string): RegExp =>
   new RegExp(`^${escapeRegExp(version)}-native-(${NATIVE_TARGETS.join("|")})$`);
 
+// R = <upstream>-r<revision>. Never fed to a semver library: semver treats
+// -r1 as a pre-release (sorting below the upstream tag) and compares r10 <
+// r2 lexically. Legacy tags without -rN do not match and are ignored by
+// every caller of parseReleaseVersion.
+const RELEASE_VERSION_PATTERN = /^(?<upstream>.+)-r(?<revision>0|[1-9][0-9]*)$/;
+
+export type ParsedRelease = { readonly upstream: string; readonly revision: number };
+
+export const parseReleaseVersion = (version: string): ParsedRelease | undefined => {
+  const match = RELEASE_VERSION_PATTERN.exec(version);
+  const groups = match?.groups;
+  if (groups === undefined) return undefined;
+  return { upstream: groups["upstream"] ?? "", revision: Number(groups["revision"]) };
+};
+
 type ServiceConfig = {
   readonly tag_pattern: string;
   readonly release_lines?: ReadonlyArray<{ readonly tag_pattern: string }>;
@@ -101,7 +116,10 @@ export const loadReleaseConfig = (path: string): ReleaseConfig => {
 export const validateRelease = (config: ReleaseConfig, service: string, version: string): void => {
   const entry = config.services[service];
   if (entry === undefined) throw new ScriptError(`unknown release service: ${service}`);
-  if (!new RegExp(entry.tag_pattern).test(version))
+  const parsed = parseReleaseVersion(version);
+  if (parsed === undefined)
+    throw new ScriptError(`version is not a release revision (missing -rN) for ${service}: ${version}`);
+  if (!new RegExp(entry.tag_pattern).test(parsed.upstream))
     throw new ScriptError(`version is not an allowed release tag for ${service}: ${version}`);
 };
 
@@ -191,39 +209,69 @@ export const publishedReleases = (config: ReleaseConfig, releasePages: unknown):
   return rows;
 };
 
-const versionKey = (version: string): ReadonlyArray<number> =>
-  (version.split("-")[0]?.match(/[0-9]+/g) ?? []).map(Number);
+// Numeric upstream components (never lexical, never semver) followed by the
+// numeric revision, so v1.79.9-r0 < v1.79.10-r0 and r2 < r10. Mirrors the
+// digit-run key used by scripts/download-latest-release-manifests.sh and
+// scripts/poll-service-releases.sh; it also orders Studio's date-sha and
+// Postgres's 4-part upstream versions correctly, since both are entirely
+// numeric-run driven.
+const versionKey = (parsed: ParsedRelease): ReadonlyArray<number> => [
+  ...(parsed.upstream.match(/[0-9]+/g) ?? []).map(Number),
+  parsed.revision,
+];
 
-const newer = (left: PublishedRelease, right: PublishedRelease): boolean => {
-  const a = versionKey(left.version);
-  const b = versionKey(right.version);
+const newer = (
+  left: { readonly release: PublishedRelease; readonly parsed: ParsedRelease },
+  right: { readonly release: PublishedRelease; readonly parsed: ParsedRelease },
+): boolean => {
+  const a = versionKey(left.parsed);
+  const b = versionKey(right.parsed);
   for (let index = 0; index < Math.max(a.length, b.length); index += 1) {
     const difference = (a[index] ?? -1) - (b[index] ?? -1);
     if (difference !== 0) return difference > 0;
   }
-  return left.publishedAt > right.publishedAt;
+  return left.release.publishedAt > right.release.publishedAt;
+};
+
+const releaseLine = (config: ReleaseConfig, release: PublishedRelease): { readonly parsed: ParsedRelease; readonly line: number } | undefined => {
+  const entry = config.services[release.service];
+  if (entry === undefined) return undefined;
+  const parsed = parseReleaseVersion(release.version);
+  if (parsed === undefined) return undefined;
+  const patterns = (entry.release_lines ?? [entry]).map(({ tag_pattern }) => new RegExp(tag_pattern));
+  const line = patterns.findIndex((pattern) => pattern.test(parsed.upstream));
+  if (line < 0) return undefined;
+  return { parsed, line };
 };
 
 /**
- * The newest release of each service release line (postgres keeps one per major). Releases
- * outside every current tag pattern are history and never selected.
+ * Published releases that are real revisions: R parses as <upstream>-r<N> and upstream matches
+ * one of the service's release line tag patterns. Legacy tags without -rN are frozen history and
+ * are never returned, so no caller can audit, rewrite or delete them.
+ */
+export const revisionReleases = (
+  config: ReleaseConfig,
+  releases: ReadonlyArray<PublishedRelease>,
+): ReadonlyArray<PublishedRelease> => releases.filter((release) => releaseLine(config, release) !== undefined);
+
+/**
+ * The newest release of each service release line (postgres keeps one per major), ordered by
+ * the upstream version key and then numerically by revision.
  */
 export const latestReleases = (
   config: ReleaseConfig,
   releases: ReadonlyArray<PublishedRelease>,
 ): ReadonlyArray<PublishedRelease> => {
-  const latest = new Map<string, PublishedRelease>();
+  const latest = new Map<string, { readonly release: PublishedRelease; readonly parsed: ParsedRelease }>();
   for (const release of releases) {
-    const entry = config.services[release.service];
-    if (entry === undefined) continue;
-    const patterns = (entry.release_lines ?? [entry]).map(({ tag_pattern }) => new RegExp(tag_pattern));
-    const line = patterns.findIndex((pattern) => pattern.test(release.version));
-    if (line < 0) continue;
-    const key = `${release.service}\0${line}`;
+    const matched = releaseLine(config, release);
+    if (matched === undefined) continue;
+    const key = `${release.service}\0${matched.line}`;
+    const candidate = { release, parsed: matched.parsed };
     const current = latest.get(key);
-    if (current === undefined || newer(release, current)) latest.set(key, release);
+    if (current === undefined || newer(candidate, current)) latest.set(key, candidate);
   }
-  return [...latest.values()];
+  return [...latest.values()].map(({ release }) => release);
 };
 
 const defaultSpawn: RunCommand = (argv, options) => {
@@ -507,8 +555,9 @@ const syncReleases = async (
     return { service, version };
   });
   const published = publishedReleases(ctx.config, listReleasePages(ctx));
-  const current = new Set(all ? published : latestReleases(ctx.config, published));
-  const releases = published.filter((release) =>
+  const eligible = revisionReleases(ctx.config, published);
+  const current = new Set(all ? eligible : latestReleases(ctx.config, eligible));
+  const releases = eligible.filter((release) =>
     filters.length === 0
       ? current.has(release)
       : filters.some(({ service, version }) =>

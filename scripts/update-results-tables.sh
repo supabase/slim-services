@@ -74,7 +74,7 @@ rows_tsv=""
 for i in "${!ordered_services[@]}"; do
   service="${ordered_services[$i]}"
   display="${display_names[$i]}"
-  manifest_version="$(python3 - "$ARTIFACTS_DIR" "$service" <<'PY'
+  manifest_upstream_version="$(python3 - "$ARTIFACTS_DIR" "$service" <<'PY'
 import glob
 import json
 import os
@@ -84,11 +84,11 @@ artifacts_dir, service = sys.argv[1:]
 manifests = glob.glob(os.path.join(artifacts_dir, service, "*", "linux-arm64", "manifest.json"))
 if manifests:
     with open(max(manifests, key=os.path.getmtime), encoding="utf-8") as fh:
-        print(json.load(fh).get("version", ""))
+        print(json.load(fh).get("upstream_version", ""))
 PY
 )"
   recipe_vars="$(
-    SOURCE_REF="$manifest_version"
+    SOURCE_REF="$manifest_upstream_version"
     # shellcheck disable=SC1090
     source "$(recipe_file "$service")" >/dev/null 2>&1
     printf '%s\t%s\t%s\n' "${UPSTREAM_IMAGE:-}" "${UPSTREAM_COMPARE_IMAGE:-}" "${RESULTS_NOTE:-}"
@@ -146,7 +146,8 @@ for line in os.environ["ROWS_TSV"].splitlines():
     with open(manifest_path, encoding="utf-8") as fh:
         manifest = json.load(fh)
 
-    version = manifest.get("version", "?")
+    release_version = manifest.get("version", "?")
+    upstream_version = manifest.get("upstream_version", release_version)
     size = manifest.get("size") or {}
     archive_mib = size.get("archive_mib")
     rootfs_mib = size.get("rootfs_mib")
@@ -162,13 +163,13 @@ for line in os.environ["ROWS_TSV"].splitlines():
     portable_cell = "yes" if portable else "**no**"
     sources = f"[report](services/{service}/REPORT.md)"
     if published:
-        release_tag = f"{service}-{version}"
+        release_tag = f"{service}-{release_version}"
         sources = (
             f"[release](https://github.com/{results_repository}/releases/tag/{release_tag})"
             f" · {sources}"
         )
     rows.append(
-        f"| {display} | `{version}` | {archive_cell} | {rootfs_cell} "
+        f"| {display} | `{upstream_version}` | {archive_cell} | {rootfs_cell} "
         f"| {rss_cell} | {cpu_cell} | {portable_cell} "
         f"| {sources} |"
     )
@@ -290,7 +291,8 @@ for line in os.environ["ROWS_TSV"].splitlines():
     with open(manifest_path, encoding="utf-8") as fh:
         manifest = json.load(fh)
 
-    version = manifest.get("version", "?")
+    release_version = manifest.get("version", "?")
+    upstream_version = manifest.get("upstream_version", release_version)
     image = manifest.get("image") or {}
     slim_mib = image.get("gzip_mib")
     runtime = manifest.get("runtime") or {}
@@ -312,12 +314,12 @@ for line in os.environ["ROWS_TSV"].splitlines():
 
     reduction = (1 - slim_mib / up) * 100
 
-    version_cell = f"`{version}`" + (f" ({note})" if note else "")
+    version_cell = f"`{upstream_version}`" + (f" ({note})" if note else "")
     rss_cell = f"`{rss:.1f} MiB`" if rss is not None else "—"
     cpu_cell = f"`{cpu:.2f}%`" if cpu is not None else "—"
     sources = f"[report](services/{service}/REPORT.md)"
     if published:
-        release_tag = f"{service}-{version}"
+        release_tag = f"{service}-{release_version}"
         sources = (
             f"[release](https://github.com/{results_repository}/releases/tag/{release_tag})"
             f" · {sources}"

@@ -42,6 +42,11 @@ with open(config_path, encoding="utf-8") as fh:
 with open(releases_path, encoding="utf-8") as fh:
     release_pages = json.load(fh)
 
+# R = <upstream>-r<revision>. Never fed to a semver library: order by the
+# upstream version's numeric components, then by revision numerically.
+# Legacy tags without -rN are frozen history and are ignored here.
+RELEASE_PATTERN = re.compile(r"^(?P<upstream>.+)-r(?P<revision>0|[1-9][0-9]*)$")
+
 releases = [release for page in release_pages for release in page]
 for service, config in services.items():
     pattern = re.compile(config["tag_pattern"])
@@ -52,9 +57,14 @@ for service, config in services.items():
         if release.get("draft") or release.get("prerelease") or not tag.startswith(prefix):
             continue
         version = tag[len(prefix):]
-        if not pattern.fullmatch(version):
+        match = RELEASE_PATTERN.fullmatch(version)
+        if not match:
             continue
-        numeric_version = tuple(int(part) for part in re.findall(r"\d+", version))
+        upstream = match.group("upstream")
+        if not pattern.fullmatch(upstream):
+            continue
+        revision = int(match.group("revision"))
+        numeric_version = tuple(int(part) for part in re.findall(r"\d+", upstream)) + (revision,)
         candidates.append((numeric_version, tag, version))
 
     if not candidates:
