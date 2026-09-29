@@ -163,7 +163,7 @@ jobs:
           VALIDATION_ONLY="${VALIDATION_ONLY:-false}"
           HOTFIX="${HOTFIX:-false}"
 
-          if [[ "$HOTFIX" == "true" && -z "${HOTFIX_REASON// }" ]]; then
+          if [[ "$HOTFIX" == "true" && ! "$HOTFIX_REASON" =~ [^[:space:]] ]]; then
             printf 'hotfix_reason is required when hotfix is true\n' >&2
             exit 1
           fi

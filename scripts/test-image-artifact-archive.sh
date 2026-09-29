@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 python3 - "$ROOT_DIR" <<'PY'
+import hashlib
 import json
 import os
 import pathlib
@@ -140,7 +141,12 @@ class ImageArtifactArchiveTest(unittest.TestCase):
         archive_prefix = artifact / "postgrest-1.2.3-r0-linux-amd64"
         result = self.run_cmd([str(self.repo / "scripts/archive-artifact.sh"), str(artifact / "rootfs"), str(archive_prefix)])
         self.assertEqual(result.returncode, 0, result.stderr)
-        (artifact / "SHA256SUMS").write_text("fixture\n", encoding="utf-8")
+        before_entry = ("0" * 64, "aaa-before-entry")
+        after_entry = ("f" * 64, "zzz-after-entry")
+        (artifact / "SHA256SUMS").write_text(
+            f"{before_entry[0]}  {before_entry[1]}\n{after_entry[0]}  {after_entry[1]}\n",
+            encoding="utf-8",
+        )
 
         ruby = (
             'require "yaml"; w=YAML.safe_load(File.read(ARGV[0]), aliases: true); '
@@ -182,22 +188,29 @@ class ImageArtifactArchiveTest(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
 
-        checksums = (
-            self.repo / "release-assets/postgrest-1.2.3-r0-linux-amd64.SHA256SUMS"
-        ).read_text(encoding="utf-8")
-        manifest_line = next(
-            (
-                line
-                for line in checksums.splitlines()
-                if line.endswith("postgrest-1.2.3-r0-linux-amd64.manifest.json")
-            ),
-            None,
+        manifest_name = "postgrest-1.2.3-r0-linux-amd64.manifest.json"
+        release_dir = self.repo / "release-assets"
+        checksums = (release_dir / "postgrest-1.2.3-r0-linux-amd64.SHA256SUMS").read_text(
+            encoding="utf-8"
         )
-        self.assertIsNotNone(manifest_line, checksums)
+        lines = checksums.splitlines()
+        manifest_lines = [line for line in lines if line.endswith(manifest_name)]
+        self.assertEqual(len(manifest_lines), 1, checksums)
+        manifest_line = manifest_lines[0]
         digest, sep, name = manifest_line.partition("  ")
         self.assertEqual(sep, "  ", manifest_line)
         self.assertRegex(digest, r"^[0-9a-f]{64}$", manifest_line)
-        self.assertEqual(name, "postgrest-1.2.3-r0-linux-amd64.manifest.json")
+        self.assertEqual(name, manifest_name)
+
+        expected_digest = hashlib.sha256(
+            (release_dir / manifest_name).read_bytes()
+        ).hexdigest()
+        self.assertEqual(digest, expected_digest, checksums)
+
+        names = [line.partition("  ")[2] for line in lines]
+        self.assertEqual(names, sorted(names), checksums)
+        self.assertIn(f"{before_entry[0]}  {before_entry[1]}", lines, checksums)
+        self.assertIn(f"{after_entry[0]}  {after_entry[1]}", lines, checksums)
 
     def test_revision_names_manifest_and_sbom(self):
         result = self.run_cmd(

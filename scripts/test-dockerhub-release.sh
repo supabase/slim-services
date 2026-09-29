@@ -38,7 +38,9 @@ cat > "$fake_bin/gh" <<'SH'
 set -eu
 case "$*" in
   "api repos/${EXPECTED_SOURCE_REPOSITORY}/commits/${EXPECTED_SOURCE_COMMIT} --silent") ;;
-  "api --paginate repos/${GH_REPO}/releases?per_page=100 --jq .[] | select(.draft | not) | .tag_name") ;;
+  "api --paginate repos/${GH_REPO}/releases?per_page=100 --jq .[] | select(.draft | not) | .tag_name")
+    [ -z "${FAKE_RELEASE_TAGS:-}" ] || printf '%s\n' "$FAKE_RELEASE_TAGS"
+    ;;
   *)
     printf 'unexpected gh invocation: %s\n' "$*" >&2
     exit 2
@@ -154,6 +156,65 @@ grep -Fx "source_ref=$source_commit" "$github_output" >/dev/null || {
 }
 grep -Fx 'upstream_image_repository=supabase/postgres' "$github_output" >/dev/null || {
   printf 'release plan did not export the Postgres Docker image repository\n' >&2
+  exit 1
+}
+
+blank_hotfix_reason_log="$temp_dir/blank-hotfix-reason.log"
+if env \
+  "${base_environment[@]}" \
+  EXPECTED_IMAGE_REPOSITORY=supabase/postgres \
+  EXPECTED_VERSION=17.6.1.163 \
+  DOCKER_HUB_RESPONSE_TAG=17.6.1.163 \
+  DOCKER_PROVENANCE="{\"linux/amd64\":{\"SLSA\":{\"invocation\":{\"configSource\":{\"digest\":{\"sha1\":\"$source_commit\"}}}}},\"linux/arm64\":{\"SLSA\":{\"invocation\":{\"configSource\":{\"digest\":{\"sha1\":\"$source_commit\"}}}}}}" \
+  GH_REPO=supabase/slim-services \
+  GH_TOKEN=test-token \
+  GITHUB_OUTPUT="$temp_dir/blank-hotfix-reason-output" \
+  GITHUB_REF=refs/heads/main \
+  GITHUB_REPOSITORY_OWNER=supabase \
+  GITHUB_WORKSPACE="$ROOT_DIR" \
+  HOTFIX=true \
+  HOTFIX_REASON="$(printf '\t\n\t')" \
+  RUNNER_TEMP="$temp_dir/runner-blank-hotfix-reason" \
+  SERVICE=postgres \
+  VALIDATION_ONLY=false \
+  VERSION=17.6.1.163 \
+  bash -c "$plan_run" >"$blank_hotfix_reason_log" 2>&1; then
+  printf 'plan accepted a hotfix reason made only of tabs and newlines\n' >&2
+  cat "$blank_hotfix_reason_log" >&2
+  exit 1
+fi
+grep -F 'hotfix_reason is required when hotfix is true' "$blank_hotfix_reason_log" >/dev/null || {
+  printf 'blank hotfix reason failed for the wrong reason\n' >&2
+  cat "$blank_hotfix_reason_log" >&2
+  exit 1
+}
+
+valid_hotfix_reason_output="$temp_dir/valid-hotfix-reason-output"
+(
+  cd "$ROOT_DIR"
+  env \
+    "${base_environment[@]}" \
+    EXPECTED_IMAGE_REPOSITORY=supabase/postgres \
+    EXPECTED_VERSION=17.6.1.163 \
+    DOCKER_HUB_RESPONSE_TAG=17.6.1.163 \
+    DOCKER_PROVENANCE="{\"linux/amd64\":{\"SLSA\":{\"invocation\":{\"configSource\":{\"digest\":{\"sha1\":\"$source_commit\"}}}}},\"linux/arm64\":{\"SLSA\":{\"invocation\":{\"configSource\":{\"digest\":{\"sha1\":\"$source_commit\"}}}}}}" \
+    GH_REPO=supabase/slim-services \
+    GH_TOKEN=test-token \
+    GITHUB_OUTPUT="$valid_hotfix_reason_output" \
+    GITHUB_REF=refs/heads/main \
+    GITHUB_REPOSITORY_OWNER=supabase \
+    GITHUB_WORKSPACE="$ROOT_DIR" \
+    FAKE_RELEASE_TAGS='postgres-17.6.1.163-r0' \
+    HOTFIX=true \
+    HOTFIX_REASON='fix a broken image tag' \
+    RUNNER_TEMP="$temp_dir/runner-valid-hotfix-reason" \
+    SERVICE=postgres \
+    VALIDATION_ONLY=false \
+    VERSION=17.6.1.163 \
+    bash -c "$plan_run"
+)
+grep -Fx "source_ref=$source_commit" "$valid_hotfix_reason_output" >/dev/null || {
+  printf 'plan rejected a non-blank hotfix reason\n' >&2
   exit 1
 }
 
