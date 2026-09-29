@@ -9,8 +9,14 @@ at image-build time.
 
 Each identity-contract service sets `SOURCE_IMAGE_DIGEST` and
 `IDENTITY_SOURCE_TAG` in `recipe.env`. `UPSTREAM_IMAGE` uses
-`${VERSION:-$SOURCE_REF}` so pin selection follows the released tag
-(release CI sets `VERSION` and overwrites `SOURCE_REF`). The digest
+`${VERSION:-$SOURCE_REF}` so pin selection follows the released tag: release
+CI always sets `VERSION`, so `UPSTREAM_IMAGE` follows it regardless of
+`SOURCE_REF`. For GitHub-tag-sourced services (storage, edge-runtime),
+release CI sets `SOURCE_REF` to the same tag as `VERSION`. This is not true
+for Docker Hub services (postgres): `SOURCE_REF` there is the distinct git
+commit pinned by the image's provenance, and release CI does not overwrite
+it with `VERSION` — it stays separate even though `UPSTREAM_IMAGE` pulls by
+`VERSION`. The digest
 belongs to `IDENTITY_SOURCE_TAG`, not to `SOURCE_REF`. Introspection,
 image build, and smokes pull `tag@digest`. A missing digest or a failed
 pull is a hard error. When the image tag is not `IDENTITY_SOURCE_TAG`,

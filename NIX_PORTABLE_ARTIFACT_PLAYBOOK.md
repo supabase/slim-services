@@ -126,9 +126,10 @@ universal relocation framework.
 ## Verification
 
 Run host fixture scripts locally. Use `service-release.yml` with
-`validation_only=true` and `force=true` on the branch for real artifact/image
-builds and service smokes. The workflow tests all three supported targets and
-uploads inspection artifacts without replacing published releases.
+`validation_only=true` on the PR ref for real artifact/image builds and
+service smokes; publishing (plain or `hotfix=true`) only runs from
+`refs/heads/main`. The workflow tests all three supported targets and
+uploads inspection artifacts without publishing a release.
 
 Preserve every unpublished version above its release floor. A recipe change
 must exercise the affected backlog; linkage or platform changes also require

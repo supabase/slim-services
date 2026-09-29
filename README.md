@@ -328,33 +328,65 @@ resolution plus pull/service smoke before the GitHub release is published and
 the release is considered qualified. Public package visibility still requires
 post-publication confirmation.
 
-- Portable archives, platform manifests, and a combined `SHA256SUMS` are
-  attached to the GitHub release `<service>-<version>`.
+- Each release is named `<service>-<U>-r<N>`: `U` is the exact upstream
+  version and `N` is a packaging revision starting at `0`, allocated as
+  `max(taken)+1` from the full paginated GitHub release list. Revisions
+  are immutable — once `<service>-U-rN` exists as a GitHub release, nothing
+  ever republishes under that name again. Legacy releases without `-rN`
+  predate this scheme and are frozen: nothing parses, audits, or rewrites
+  them.
+- Portable archives, platform manifests, and a combined `SHA256SUMS` (which
+  now also lists the manifest hashes) are attached to the GitHub release
+  `<service>-<U>-r<N>`, which is the commit point for that revision —
+  publishing is create-only and fails if the tag already exists.
 - The same archives are also published as OCI artifacts at
-  `ghcr.io/supabase/cli/<service>:<version>-native-<target>` and, through
+  `ghcr.io/supabase/cli/<service>:<U>-r<N>-native-<target>` and, through
   the `supabase/cli` mirror handler, copied to ECR Public and to a
   public-read S3 bucket
-  (`https://supabase-cli-artifacts.s3.us-east-1.amazonaws.com/<service>/<version>/`),
-  so the CLI can fetch them where GitHub release assets are blocked. See
+  (`https://supabase-cli-artifacts.s3.us-east-1.amazonaws.com/<service>/<U>-r<N>/`),
+  so the CLI can fetch them where GitHub release assets are blocked. These
+  are byte copies reconciled against the committed GHCR digests; see
   `docs/design/ecr-mirror-dispatch.md`.
 - The exact smoked Linux images are published as a multi-platform image at
-  `ghcr.io/supabase/cli/<service>:<version>`.
+  `ghcr.io/supabase/cli/<service>:<U>-r<N>`.
+- After the GitHub release is created, the workflow dispatches
+  `slim-release-published` to the CLI repository with
+  `{service, upstream_version, revision, release_version}`, so a CLI
+  workflow can pick up the new pin.
 
 Run a release manually with:
 
 ```bash
 gh workflow run service-release.yml \
   -f service=auth \
-  -f version=v2.194.0 \
-  -f force=false
+  -f version=v2.194.0
 ```
+
+Publish a hotfix of an already-published version — a new revision, never a
+rewrite of the old one — with `hotfix=true` and a required `hotfix_reason`
+(recorded in the release notes):
+
+```bash
+gh workflow run service-release.yml \
+  -f service=auth \
+  -f version=v2.194.0 \
+  -f hotfix=true \
+  -f hotfix_reason="fix broken darwin archive"
+```
+
+Publishing (plain or hotfix) only runs from `refs/heads/main`; dispatching it
+on any other ref fails and PR branches must use `validation_only=true`
+instead, which builds and smokes without publishing.
 
 `.github/workflows/poll-service-releases.yml` polls stable upstream releases
 and Docker Hub tags hourly and dispatches independent service-release runs for
-missing eligible version tags, oldest first. Each backlog-polled service uses
-its configured adoption boundary; GitHub release services declare a
-`release_floor` at the first version published by this repository, while
-imgproxy follows Storage's pinned development/test image. The poller
+missing eligible version tags, oldest first. A version counts as published
+only once its `-rN` GitHub release exists; legacy releases do not count.
+Each backlog-polled service uses its configured adoption boundary; GitHub
+release services declare a `release_floor` at their third-newest stable
+upstream tag (a release-policy decision, never above a version the CLI
+catalog pins), while imgproxy follows Storage's pinned development/test
+image. The poller
 reconciles every matching stable upstream release from that adoption boundary
 onward. It dispatches at most three versions per service per poll while keeping
 no more than twelve release workflows active across the repository. Active
@@ -371,7 +403,7 @@ polled services are enabled. PostgreSQL release eligibility comes from
 published `supabase/postgres` Docker Hub tags, and each native source checkout
 is pinned to the one Git commit recorded by that image's provenance. Its policy
 accepts only plain `15.x.x.NNN` and `17.x.x.NNN` releases, with independent
-floors of `15.14.1.159` and `17.6.1.159`; OrioleDB, architecture-specific, and
+floors of `15.14.1.177` and `17.6.1.177`; OrioleDB, architecture-specific, and
 other suffixed release tags are ignored.
 
 Mailpit and Vector are the non-polled upstream-archive services. Imgproxy is a
@@ -398,24 +430,28 @@ release of each service release line (postgres keeps one per major) against
 ECR Public (images and native tags) and the public S3 bucket (native
 triplets). Older releases are only audited with `all_releases: true`. Run it
 with `request: true` to re-dispatch the mirror for releases that are out of
-sync. The `services` input narrows the run to whole services or selects
-single releases written `SERVICE:VERSION`, space-separated:
+sync. Mirrors are copies of the immutable GHCR bytes; a backfill reconciles
+them against the committed GHCR digests and is safe to re-run. The `services`
+input narrows the run to whole services or selects single releases written
+`SERVICE:U-rN`, space-separated:
 
 ```bash
 # one release, even an older one
-gh workflow run ecr-mirror-check.yml -f request=true -f services=postgrest:v16.2
+gh workflow run ecr-mirror-check.yml -f request=true -f services=postgrest:v16.2-r0
 
 # two postgres releases and the latest realtime release
 gh workflow run ecr-mirror-check.yml -f request=true \
-  -f services="postgres:15.14.1.175 postgres:17.6.1.175 realtime"
+  -f services="postgres:15.14.1.177-r0 postgres:17.6.1.177-r0 realtime"
 ```
 
 The same filters work locally with `bun scripts/ecr-mirror.ts sync [--request]
 [--all] [SERVICE[:VERSION] ...]`. A release whose destinations are all in sync
-is not dispatched again. Natives are mirrored from the GHCR
-`<version>-native-<target>` tags, so a release published before those tags
-existed has nothing to copy: rebuild it with `service-release.yml` and
-`force=true`, which republishes its natives and dispatches the mirror. See
+is not dispatched again. Legacy releases without `-rN` are ignored by the
+audit and backfill. Natives are mirrored from the GHCR
+`<U>-r<N>-native-<target>` tags, so a release published before those tags
+existed has nothing to copy: since revisions are immutable, dispatch a hotfix
+(`hotfix=true` on `service-release.yml`) to publish a new revision with
+natives, rather than rebuilding the old one. See
 `docs/design/ecr-mirror-dispatch.md`.
 
 After a successful release run, `.github/workflows/release-results.yml`
