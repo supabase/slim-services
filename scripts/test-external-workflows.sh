@@ -356,6 +356,26 @@ def test_release_workflow_uses_hotfix_input_and_revision_planner():
     )
 
 
+def test_build_step_labels_image_with_release_version():
+    ruby = (
+        "require 'yaml'; require 'json'; "
+        "data=YAML.safe_load(File.read(ARGV[0]), aliases: true); "
+        "s=data.fetch('jobs').fetch('build').fetch('steps').find { |x| x['name'] == 'Build, audit, smoke, and package' }; "
+        "abort 'build step missing' unless s; puts JSON.generate(s.fetch('env'))"
+    )
+    result = run(["ruby", "-e", ruby, str(ROOT / ".github" / "workflows" / "service-release.yml")])
+    assert_true(result.returncode == 0, result.stderr)
+    env = json.loads(result.stdout)
+    assert_true(
+        env.get("OCI_VERSION") == "${{ needs.plan.outputs.release_version }}",
+        f"OCI_VERSION must come from the release version, got: {env.get('OCI_VERSION')!r}",
+    )
+    assert_true(
+        env.get("OCI_REVISION") == "${{ github.sha }}",
+        "OCI_REVISION must stay the packaging commit sha",
+    )
+
+
 def test_publish_release_is_create_only_and_notifies_cli():
     ruby = (
         "require 'yaml'; require 'json'; "

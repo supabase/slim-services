@@ -470,7 +470,7 @@ jobs:
           IMAGE_TAG: local/${{ inputs.service }}:${{ inputs.version }}-${{ matrix.platform_dir }}
           OCI_REVISION: ${{ github.sha }}
           OCI_SOURCE: https://github.com/${{ github.repository }}
-          OCI_VERSION: ${{ inputs.version }}
+          OCI_VERSION: ${{ needs.plan.outputs.release_version }}
           REVISION: ${{ needs.plan.outputs.revision }}
           SLIM_SMOKE_HOST_POSTGRES: ${{ matrix.target_os == 'darwin' && '1' || '0' }}
           SOURCE_REF: ${{ needs.plan.outputs.source_ref }}
