@@ -18,13 +18,21 @@
   hide recipe incompatibility. If an upstream version is genuinely
   unreleasable, record an explicit release-policy decision and a demonstrated
   reason instead of silently skipping it.
+- A floor must never sit above a version the CLI catalog pins: doing so would
+  let recipes stop building the version the CLI ships, and that version could
+  no longer be hotfixed.
+- After merging a fix for a defect in already-published artifacts, dispatch
+  `hotfix=true` (with a `hotfix_reason`) on `service-release.yml` for each
+  affected published upstream version. This publishes a new revision; it
+  never rewrites the one that shipped the defect.
 
 ## Verify image changes in CI
 
 Do not local-build artifacts or smoke slim images when `service-release`
 can run the same path. Push the branch (and `workflow_dispatch`
-`service-release.yml` with `force=true` on the PR ref when a published
-tag must be rebuilt), then watch those GitHub Actions runs.
+`service-release.yml` with `validation_only=true` on the PR ref to build
+and smoke without publishing), then watch those GitHub Actions runs.
+Publishing, including hotfixes, only runs from `main`.
 `scripts/test-identity.sh` and other host-only unit scripts may still
 run locally. Build or smoke on the laptop only when CI cannot exercise
 the change (no workflow, iterating on a script before push).

@@ -32,6 +32,7 @@ gh api --paginate --slurp \
 
 python3 - "$CONFIG_FILE" "$temp_dir/releases.json" \
   > "$temp_dir/latest-releases.tsv" <<'PY'
+import functools
 import json
 import re
 import sys
@@ -41,6 +42,34 @@ with open(config_path, encoding="utf-8") as fh:
     services = json.load(fh)["services"]
 with open(releases_path, encoding="utf-8") as fh:
     release_pages = json.load(fh)
+
+# R = <upstream>-r<revision>. Never fed to a semver library. Legacy tags
+# without -rN are frozen history and are ignored here.
+RELEASE_PATTERN = re.compile(r"^(?P<upstream>.+)-r(?P<revision>0|[1-9][0-9]*)$")
+# The upstream order key is the upstream version's numeric components with
+# any trailing -sha-<hex> stripped first: Studio's hex sha digits are not
+# part of its date order. Two releases of the same upstream are ordered by
+# revision; otherwise, when the upstream order keys tie (Studio same-date,
+# different sha), by publish time.
+SHA_SUFFIX_PATTERN = re.compile(r"-sha-[0-9a-f]+$")
+
+
+def upstream_order_key(upstream):
+    return tuple(int(part) for part in re.findall(r"\d+", SHA_SUFFIX_PATTERN.sub("", upstream)))
+
+
+def newer(left, right):
+    if left["upstream"] == right["upstream"]:
+        if left["revision"] != right["revision"]:
+            return left["revision"] - right["revision"]
+        return (left["published_at"] > right["published_at"]) - (left["published_at"] < right["published_at"])
+    a, b = left["order_key"], right["order_key"]
+    for index in range(max(len(a), len(b))):
+        difference = (a[index] if index < len(a) else -1) - (b[index] if index < len(b) else -1)
+        if difference != 0:
+            return difference
+    return (left["published_at"] > right["published_at"]) - (left["published_at"] < right["published_at"])
+
 
 releases = [release for page in release_pages for release in page]
 for service, config in services.items():
@@ -52,17 +81,31 @@ for service, config in services.items():
         if release.get("draft") or release.get("prerelease") or not tag.startswith(prefix):
             continue
         version = tag[len(prefix):]
-        if not pattern.fullmatch(version):
+        match = RELEASE_PATTERN.fullmatch(version)
+        if not match:
             continue
-        numeric_version = tuple(int(part) for part in re.findall(r"\d+", version))
-        candidates.append((numeric_version, tag, version))
+        upstream = match.group("upstream")
+        if not pattern.fullmatch(upstream):
+            continue
+        revision = int(match.group("revision"))
+        candidates.append(
+            {
+                "order_key": upstream_order_key(upstream),
+                "upstream": upstream,
+                "revision": revision,
+                "published_at": release.get("published_at") or "",
+                "tag": tag,
+                "version": version,
+            }
+        )
 
     if not candidates:
         print(f"no published release found for {service}", file=sys.stderr)
         continue
 
-    _, tag, version = max(candidates)
-    print(service, tag, version, sep="\t")
+    candidates.sort(key=functools.cmp_to_key(newer))
+    latest = candidates[-1]
+    print(service, latest["tag"], latest["version"], sep="\t")
 PY
 
 while IFS=$'\t' read -r service release_tag version; do

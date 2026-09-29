@@ -1,11 +1,22 @@
 # ECR Public mirroring via supabase/cli dispatch
 
-Slim images are published to `ghcr.io/supabase/cli/<service>:<version>` by
+Every release is published under an immutable revision `<U>-r<N>`: `U` is the
+upstream version and `N` is a packaging revision, allocated from the full
+paginated GitHub release list before any push. The GitHub release
+`<service>-<U>-r<N>` is the commit point — `gh release create` is create-only,
+so once that release exists, nothing ever republishes bytes under that name
+again. A hotfix publishes a new, higher `N`; it never touches a previously
+published revision.
+
+Slim images are published to `ghcr.io/supabase/cli/<service>:<U>-r<N>` by
 `.github/workflows/service-release.yml`. Native archives are published to
 GitHub Releases and as OCI artifacts on the same GHCR repository under
-`<version>-native-<target>`. This document describes how both are mirrored to
-AWS ECR Public, reusing the mirror machinery and AWS credentials in
-`supabase/cli`, so this repository needs no AWS access of its own.
+`<U>-r<N>-native-<target>`. This document describes how both are mirrored to
+AWS ECR Public and to S3, reusing the mirror machinery and AWS credentials in
+`supabase/cli`, so this repository needs no AWS access of its own. ECR Public
+and S3 are copies, not sources of truth: they are reconciled against the
+committed GHCR digests, and a mismatch is repaired by backfilling, never by
+republishing the release.
 
 CLI consumption, env-hint candidate order, and shipped digest-pin lag are
 recorded in supabase/cli
@@ -28,7 +39,7 @@ recorded in supabase/cli
    and then copies each native tag. `mirror-ecr` waits, within one shared
    timeout, for the image digest on ECR Public and each native `SHA256SUMS`
    on S3, and reports each destination separately. Either one missing fails
-   `mirror-ecr` (once `CLI_MIRROR_DISPATCH_TOKEN` exists), which marks the
+   `mirror-ecr`, which marks the
    run red but does not stop `publish-release`; the ECR lines in the release
    notes only depend on the image check. Native ECR copy is best-effort and
    only enforced under `ECR_MIRROR_REQUIRE_NATIVES=1`.
@@ -46,11 +57,15 @@ recorded in supabase/cli
 6. Do not skip the dispatch when the image destination already matches;
    natives may have changed. Never prune untagged GHCR or ECR manifests:
    already-shipped CLIs still pin old image digests until a catalog PR ships.
-7. `publish-release` `--clobber`s GitHub Release assets on `force=true`.
-   GHCR image tags move on push. ECR Public tags are always mutable;
-   `aws ecr-public create-repository` accepts no `--image-tag-mutability` flag.
-   S3 objects are overwritten in place (versioned, so a bad overwrite can
-   be recovered on the cli side).
+7. `publish-release` creates the GitHub release once and only once for a
+   given `<service>-<U>-r<N>`; there is no clobber path. Before that
+   commit point, GHCR writes to the not-yet-committed `-rN` tag may
+   overwrite leftovers from a failed attempt at the same `N`; ECR Public
+   tags are always mutable (`aws ecr-public create-repository` accepts no
+   `--image-tag-mutability` flag) and S3 objects are overwritten in place
+   (versioned, so a bad overwrite can be recovered on the cli side), so
+   both can briefly hold bytes from an earlier failed attempt until the
+   release commits.
 8. Daily `ecr-mirror-check.yml` compares images on ECR Public, native tags
    on ECR Public, and native triplets on S3, each independently, for the
    latest release of each service release line (every release with
@@ -64,19 +79,22 @@ recorded in supabase/cli
    unreachable destination (for example ECR Public before its repositories
    and permissions exist) costs one timeout and still lets the S3 copy of
    every release land. Use the `services` input (`postgrest` or
-   `postgrest:v16.2`, space-separated) to backfill in slices so one run does
-   not flood the cli runners. A release published before native OCI tags
-   existed has no natives to mirror; rebuild it with `service-release.yml`
-   and `force=true`.
+   `postgrest:v16.2-r0`, space-separated) to backfill in slices so one run
+   does not flood the cli runners. Legacy releases without `-rN` are frozen
+   and excluded from both the audit and the backfill. A release published
+   before native OCI tags existed has no natives to mirror; since revisions
+   are immutable, publish a hotfix (`hotfix=true` on `service-release.yml`)
+   to get a new revision with natives, rather than rebuilding the old one.
 
-Release-time mirroring (`service-release.yml` `mirror-ecr`) is skipped,
-with a workflow notice, until the `CLI_MIRROR_DISPATCH_TOKEN` secret
-exists. Once the secret is set, a failed or unverified image mirror or S3
-native copy fails the `mirror-ecr` job and the run, but the GitHub Release
-is still published (with a warning, and without the ECR lines in its notes
-when the image did not verify). Mirroring never gates the GitHub Release:
-mirror-side problems are repaired by backfilling with
-`ecr-mirror-check.yml` (`request: true`), not by rebuilding the release.
+Release-time mirroring (`service-release.yml` `mirror-ecr`) always runs
+when publishing: the `plan` job fails the run before any build or push
+work starts if `CLI_MIRROR_DISPATCH_TOKEN` is not configured. A failed or
+unverified image mirror or S3 native copy fails the `mirror-ecr` job and
+the run, but the GitHub Release is still published (with a warning, and
+without the ECR lines in its notes when the image did not verify).
+Mirroring never gates the GitHub Release: mirror-side problems are
+repaired by backfilling with `ecr-mirror-check.yml` (`request: true`), not
+by rebuilding the release.
 
 ## Dispatch contract
 
@@ -85,13 +103,13 @@ mirror-side problems are repaired by backfilling with
   "event_type": "mirror-slim-image",
   "client_payload": {
     "service": "postgrest",
-    "version": "v16.2",
-    "source": "ghcr.io/supabase/cli/postgrest:v16.2",
+    "version": "v16.2-r0",
+    "source": "ghcr.io/supabase/cli/postgrest:v16.2-r0",
     "digest": "sha256:…",
-    "destination": "public.ecr.aws/supabase/cli/postgrest:v16.2",
+    "destination": "public.ecr.aws/supabase/cli/postgrest:v16.2-r0",
     "natives": [
       {
-        "tag": "v16.2-native-linux-arm64",
+        "tag": "v16.2-r0-native-linux-arm64",
         "digest": "sha256:…"
       }
     ]
@@ -121,6 +139,33 @@ matching, which `bun scripts/ecr-mirror.ts` verifies with anonymous pulls,
 and S3 success as the anonymous `SHA256SUMS` object matching the GHCR
 checksum layer. ECR native drift is reported by the daily audit and becomes
 a failure only once `ECR_MIRROR_REQUIRE_NATIVES=1` is set.
+
+## `slim-release-published` dispatch
+
+`mirror-ecr` runs before `publish-release`, so its `mirror-slim-image`
+dispatch above fires before the revision is committed and cannot be used to
+tell the CLI a release exists. Instead, the last step of `publish-release`
+sends a second, independent `repository_dispatch` to the same CLI repository
+(reusing `MIRROR_DISPATCH_REPO` and `CLI_MIRROR_DISPATCH_TOKEN`) once the
+GitHub release has been created:
+
+```json
+{
+  "event_type": "slim-release-published",
+  "client_payload": {
+    "service": "postgrest",
+    "upstream_version": "v16.2",
+    "revision": 0,
+    "release_version": "v16.2-r0"
+  }
+}
+```
+
+Unlike the mirror dispatch, a failed dispatch fails the run: the release
+already exists by this point, so a failure means the CLI must be told by
+hand, not that anything needs to be republished. (The token itself is
+guaranteed present by the `plan` job's check, not by `notify-cli`.) A CLI
+workflow consumes this to sync its artifact catalog to the new revision.
 
 ## Follow-up
 

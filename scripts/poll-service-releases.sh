@@ -217,7 +217,7 @@ PY
 
 published_release_tags="$(
   gh api --paginate "repos/$TARGET_REPOSITORY/releases?per_page=100" \
-    --jq '.[].tag_name'
+    --jq '.[] | select(.draft | not) | .tag_name'
 )"
 runs_json="$(
   gh run list \
@@ -414,9 +414,18 @@ PY
   fi
 
   while IFS= read -r version; do
-    release_tag="$service-$version"
-    if grep -Fxq "$release_tag" <<< "$published_release_tags"; then
-      printf '%s is already published as %s\n' "$service" "$release_tag"
+    if PUBLISHED_RELEASE_TAGS="$published_release_tags" python3 - "$service" "$version" <<'PY'
+import os
+import re
+import sys
+
+svc, upstream_version = sys.argv[1:]
+pattern = re.compile(rf"^{re.escape(svc)}-{re.escape(upstream_version)}-r(0|[1-9][0-9]*)$")
+tags = os.environ["PUBLISHED_RELEASE_TAGS"].splitlines()
+raise SystemExit(0 if any(pattern.match(tag) for tag in tags) else 1)
+PY
+    then
+      printf '%s is already published as a revision of %s\n' "$service" "$version"
       continue
     fi
 
@@ -496,8 +505,7 @@ PY
         --repo "$TARGET_REPOSITORY" \
         --ref "$TARGET_REF" \
         -f "service=$service" \
-        -f "version=$version" \
-        -f force=false
+        -f "version=$version"
     fi
 
     service_dispatch_count=$((service_dispatch_count + 1))

@@ -57,16 +57,16 @@ const s3Mirror = (releases: ReadonlyArray<readonly [string, string]>): string =>
 
 describe("ecr-mirror payload", () => {
   test("renders a dispatch request without natives", () => {
-    const result = run(["payload", "postgrest", "v16.2", DIGEST]);
+    const result = run(["payload", "postgrest", "v16.2-r0", DIGEST]);
     expect(result.exitCode, result.stderr.toString()).toBe(0);
     const payload = JSON.parse(result.stdout.toString());
     expect(payload["event_type"]).toBe("mirror-slim-image");
     expect(payload["client_payload"]).toEqual({
-      destination: "public.ecr.aws/supabase/cli/postgrest:v16.2",
+      destination: "public.ecr.aws/supabase/cli/postgrest:v16.2-r0",
       digest: DIGEST,
       service: "postgrest",
-      source: "ghcr.io/supabase/cli/postgrest:v16.2",
-      version: "v16.2",
+      source: "ghcr.io/supabase/cli/postgrest:v16.2-r0",
+      version: "v16.2-r0",
     });
     expect(payload["client_payload"]["natives"]).toBeUndefined();
   });
@@ -74,7 +74,7 @@ describe("ecr-mirror payload", () => {
   test("reads a published image digest", () => {
     const tmp = mkdtempSync(join(tmpdir(), "ecr-digest-"));
     const metadata = join(tmp, "published-image.json");
-    writeFileSync(metadata, JSON.stringify({ image: "ghcr.io/supabase/cli/postgrest:v16.2", digest: DIGEST }));
+    writeFileSync(metadata, JSON.stringify({ image: "ghcr.io/supabase/cli/postgrest:v16.2-r0", digest: DIGEST }));
     const result = run(["published-digest", metadata]);
     expect(result.exitCode, result.stderr.toString()).toBe(0);
     expect(result.stdout.toString().trim()).toBe(DIGEST);
@@ -87,7 +87,7 @@ describe("ecr-mirror payload", () => {
   });
 
   test("honors prefix overrides", () => {
-    const result = run(["payload", "auth", "v2.196.0", DIGEST], {
+    const result = run(["payload", "auth", "v2.196.0-r0", DIGEST], {
       MIRROR_EVENT_TYPE: "mirror-test",
       SOURCE_IMAGE_PREFIX: "ghcr.io/example/src",
       ECR_MIRROR_PREFIX: "public.ecr.aws/example/dst",
@@ -95,8 +95,8 @@ describe("ecr-mirror payload", () => {
     expect(result.exitCode, result.stderr.toString()).toBe(0);
     const payload = JSON.parse(result.stdout.toString());
     expect(payload["event_type"]).toBe("mirror-test");
-    expect(payload["client_payload"]["source"]).toBe("ghcr.io/example/src/auth:v2.196.0");
-    expect(payload["client_payload"]["destination"]).toBe("public.ecr.aws/example/dst/auth:v2.196.0");
+    expect(payload["client_payload"]["source"]).toBe("ghcr.io/example/src/auth:v2.196.0-r0");
+    expect(payload["client_payload"]["destination"]).toBe("public.ecr.aws/example/dst/auth:v2.196.0-r0");
   });
 
   test("rejects an unknown service", () => {
@@ -106,13 +106,25 @@ describe("ecr-mirror payload", () => {
   });
 
   test("rejects a disallowed version", () => {
-    const result = run(["payload", "postgrest", "latest", DIGEST]);
+    const result = run(["payload", "postgrest", "latest-r0", DIGEST]);
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr.toString()).toContain("not an allowed release tag");
   });
 
+  test("rejects a legacy tag without -rN", () => {
+    const result = run(["payload", "postgrest", "v16.2", DIGEST]);
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr.toString()).toContain("missing -rN");
+  });
+
+  test("never feeds R to a semver comparison: r10 is not a pre-release of r1", () => {
+    const result = run(["payload", "postgrest", "v16.2-r10", DIGEST]);
+    expect(result.exitCode, result.stderr.toString()).toBe(0);
+    expect(JSON.parse(result.stdout.toString())["client_payload"]["version"]).toBe("v16.2-r10");
+  });
+
   test("rejects a malformed digest", () => {
-    const result = run(["payload", "postgrest", "v16.2", "sha256:nope"]);
+    const result = run(["payload", "postgrest", "v16.2-r0", "sha256:nope"]);
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr.toString()).toContain("not a sha256 image digest");
   });
@@ -123,14 +135,14 @@ describe("ecr-mirror payload", () => {
     const nativeDigest = `sha256:${"c".repeat(64)}`;
     writeFileSync(
       natives,
-      JSON.stringify([{ tag: "v16.2-native-linux-arm64", digest: nativeDigest }]),
+      JSON.stringify([{ tag: "v16.2-r0-native-linux-arm64", digest: nativeDigest }]),
     );
-    const result = run(["payload", "postgrest", "v16.2", DIGEST], {
+    const result = run(["payload", "postgrest", "v16.2-r0", DIGEST], {
       NATIVE_ARTIFACTS_FILE: natives,
     });
     expect(result.exitCode, result.stderr.toString()).toBe(0);
     expect(JSON.parse(result.stdout.toString())["client_payload"]["natives"]).toEqual([
-      { tag: "v16.2-native-linux-arm64", digest: nativeDigest },
+      { tag: "v16.2-r0-native-linux-arm64", digest: nativeDigest },
     ]);
   });
 
@@ -139,9 +151,9 @@ describe("ecr-mirror payload", () => {
     const natives = join(tmp, "natives.json");
     writeFileSync(
       natives,
-      JSON.stringify([{ tag: "v16.2-linux-arm64", digest: `sha256:${"c".repeat(64)}` }]),
+      JSON.stringify([{ tag: "v16.2-r0-linux-arm64", digest: `sha256:${"c".repeat(64)}` }]),
     );
-    const result = run(["payload", "postgrest", "v16.2", DIGEST], {
+    const result = run(["payload", "postgrest", "v16.2-r0", DIGEST], {
       NATIVE_ARTIFACTS_FILE: natives,
     });
     expect(result.exitCode).not.toBe(0);
@@ -154,7 +166,7 @@ describe("ecr-mirror request and verify", () => {
     const stub = mkdtempSync(join(tmpdir(), "ecr-req-"));
     writeStub(stub, "gh", "#!/usr/bin/env bash\nexit 1\n");
     writeStub(stub, "regctl", "#!/usr/bin/env bash\nexit 1\n");
-    const result = run(["request", "postgrest", "v16.2", DIGEST], {
+    const result = run(["request", "postgrest", "v16.2-r0", DIGEST], {
       PATH: `${stub}:/usr/bin:/bin`,
     });
     expect(result.exitCode).not.toBe(0);
@@ -173,7 +185,7 @@ exit 1
 `,
     );
     writeStub(stub, "gh", `#!/bin/sh\ntouch '${dispatched}'\nexit 0\n`);
-    const result = run(["request", "postgrest", "v16.2", DIGEST], {
+    const result = run(["request", "postgrest", "v16.2-r0", DIGEST], {
       PATH: `${stub}:/usr/bin:/bin`,
       MIRROR_DISPATCH_TOKEN: "token",
       ECR_MIRROR_POLL_INTERVAL: "0",
@@ -189,7 +201,7 @@ exit 1
     const natives = join(stub, "natives.json");
     const output = join(stub, "github-output");
     const nativeDigest = `sha256:${"c".repeat(64)}`;
-    writeFileSync(natives, JSON.stringify([{ tag: "v16.2-native-linux-arm64", digest: nativeDigest }]));
+    writeFileSync(natives, JSON.stringify([{ tag: "v16.2-r0-native-linux-arm64", digest: nativeDigest }]));
     writeStub(
       stub,
       "regctl",
@@ -212,19 +224,19 @@ exit 1
       ECR_MIRROR_TIMEOUT: "1",
     };
 
-    const s3Stale = run(["request", "postgrest", "v16.2", DIGEST], { ...env, FAKE_IMAGE: DIGEST });
+    const s3Stale = run(["request", "postgrest", "v16.2-r0", DIGEST], { ...env, FAKE_IMAGE: DIGEST });
     expect(s3Stale.exitCode).not.toBe(0);
     expect(s3Stale.stderr.toString()).toContain("1 native artifact(s) missing");
     expect(readFileSync(output, "utf8")).toBe("mirrored=true\n");
 
     writeFileSync(output, "");
-    const ecrDown = run(["request", "postgrest", "v16.2", DIGEST], {
+    const ecrDown = run(["request", "postgrest", "v16.2-r0", DIGEST], {
       ...env,
       FAKE_IMAGE: "",
-      S3_MIRROR_BASE_URL: s3Mirror([["postgrest", "v16.2"]]),
+      S3_MIRROR_BASE_URL: s3Mirror([["postgrest", "v16.2-r0"]]),
     });
     expect(ecrDown.exitCode).not.toBe(0);
-    expect(ecrDown.stdout.toString()).toContain("in sync S3 native: postgrest v16.2 linux-arm64");
+    expect(ecrDown.stdout.toString()).toContain("in sync S3 native: postgrest v16.2-r0 linux-arm64");
     expect(ecrDown.stderr.toString()).toContain("1 release image(s) are missing");
     expect(readFileSync(output, "utf8")).toBe("");
   });
@@ -251,7 +263,7 @@ exit 1
     const callerDocker = join(stub, "caller-docker");
     mkdirSync(callerRegctl);
     mkdirSync(callerDocker);
-    const result = run(["verify", "postgrest", "v16.2", DIGEST], {
+    const result = run(["verify", "postgrest", "v16.2-r0", DIGEST], {
       PATH: `${stub}:/usr/bin:/bin`,
       FAKE_TRACE: trace,
       REGCTL_CONFIG: callerRegctl,
@@ -264,7 +276,7 @@ exit 1
       .split("\n")
       .map((line) => line.split("\t"))
       .filter((line) =>
-        line[0]?.includes("image digest public.ecr.aws/supabase/cli/postgrest:v16.2"),
+        line[0]?.includes("image digest public.ecr.aws/supabase/cli/postgrest:v16.2-r0"),
       );
     expect(destLines.length).toBeGreaterThanOrEqual(2);
     const last = destLines[destLines.length - 1] ?? [];
@@ -286,7 +298,7 @@ describe("ecr-mirror sync", () => {
       "gh",
       `#!/usr/bin/env bash
 cat <<'EOF'
-[[{"tag_name":"postgres-15.14.1.159","draft":false,"prerelease":false}]]
+[[{"tag_name":"postgres-15.14.1.159-r0","draft":false,"prerelease":false}]]
 EOF
 `,
     );
@@ -301,7 +313,7 @@ exit 1
     );
     const result = run(["sync"], { PATH: `${stub}:/usr/bin:/bin` });
     expect(result.exitCode).not.toBe(0);
-    expect(result.stdout.toString()).toContain("out of sync: postgres 15.14.1.159");
+    expect(result.stdout.toString()).toContain("out of sync: postgres 15.14.1.159-r0");
     expect(result.stderr.toString()).not.toContain("no published releases found");
   });
 
@@ -313,7 +325,7 @@ exit 1
       "gh",
       `#!/usr/bin/env bash
 cat <<'EOF'
-[[{"tag_name":"postgres-15.14.1.159","draft":false,"prerelease":false}]]
+[[{"tag_name":"postgres-15.14.1.159-r0","draft":false,"prerelease":false}]]
 EOF
 `,
     );
@@ -333,13 +345,13 @@ fi
 exit 1
 `,
     );
-    const s3 = s3Mirror([["postgres", "15.14.1.159"]]);
+    const s3 = s3Mirror([["postgres", "15.14.1.159-r0"]]);
     const result = run(["sync"], { PATH: `${stub}:/usr/bin:/bin`, S3_MIRROR_BASE_URL: s3 });
     expect(result.exitCode, result.stderr.toString()).toBe(0);
     expect(result.stdout.toString()).toContain(
-      "out of sync native: postgres 15.14.1.159-native-linux-arm64",
+      "out of sync native: postgres 15.14.1.159-r0-native-linux-arm64",
     );
-    expect(result.stdout.toString()).toContain("in sync S3 native: postgres 15.14.1.159 linux-arm64");
+    expect(result.stdout.toString()).toContain("in sync S3 native: postgres 15.14.1.159-r0 linux-arm64");
     expect(result.stdout.toString()).toContain("3 native tag(s) missing from public.ecr.aws/supabase/cli");
 
     const required = run(["sync"], {
@@ -358,7 +370,7 @@ exit 1
       "gh",
       `#!/usr/bin/env bash
 cat <<'EOF'
-[[{"tag_name":"postgres-15.8.1.085","draft":false,"prerelease":false},{"tag_name":"postgres-15.14.1.159","draft":false,"prerelease":false}]]
+[[{"tag_name":"postgres-15.8.1.085-r0","draft":false,"prerelease":false},{"tag_name":"postgres-15.14.1.159-r0","draft":false,"prerelease":false}]]
 EOF
 `,
     );
@@ -366,7 +378,7 @@ EOF
       stub,
       "regctl",
       `#!/bin/sh
-case "$3" in *15.8.1.085*) exit 1 ;; esac
+case "$3" in *15.8.1.085-r0*) exit 1 ;; esac
 if [ "$1" = manifest ] && [ "$2" = head ]; then
   case "$3" in *native*) exit 1 ;; esac
   printf "%s\\n" "${DIGEST}"; exit 0
@@ -377,8 +389,8 @@ exit 1
     );
     const result = run(["sync", "--all"], { PATH: `${stub}:/usr/bin:/bin` });
     expect(result.exitCode, result.stderr.toString() + result.stdout.toString()).toBe(0);
-    expect(result.stdout.toString()).toContain("skipped: postgres 15.8.1.085 has no source image");
-    expect(result.stdout.toString()).toContain("in sync: postgres 15.14.1.159");
+    expect(result.stdout.toString()).toContain("skipped: postgres 15.8.1.085-r0 has no source image");
+    expect(result.stdout.toString()).toContain("in sync: postgres 15.14.1.159-r0");
     expect(result.stdout.toString()).toContain("skipped 1 release(s) without a source image");
   });
 
@@ -391,7 +403,7 @@ exit 1
       `#!/bin/sh
 case "$*" in *dispatches*) cat >/dev/null; exit 0 ;; esac
 cat <<'EOF'
-[[{"tag_name":"postgres-15.14.1.159","draft":false,"prerelease":false}]]
+[[{"tag_name":"postgres-15.14.1.159-r0","draft":false,"prerelease":false}]]
 EOF
 `,
     );
@@ -413,7 +425,7 @@ exit 1
     );
     const result = run(["sync", "--request"], {
       PATH: `${stub}:/usr/bin:/bin`,
-      S3_MIRROR_BASE_URL: s3Mirror([["postgres", "15.14.1.159"]]),
+      S3_MIRROR_BASE_URL: s3Mirror([["postgres", "15.14.1.159-r0"]]),
       MIRROR_DISPATCH_TOKEN: "token",
       ECR_MIRROR_POLL_INTERVAL: "0",
       ECR_MIRROR_TIMEOUT: "1",
@@ -432,7 +444,7 @@ exit 1
       `#!/bin/sh
 case "$*" in *dispatches*) cat >/dev/null; exit 0 ;; esac
 cat <<'EOF'
-[[{"tag_name":"postgres-15.14.1.159","draft":false,"prerelease":false}]]
+[[{"tag_name":"postgres-15.14.1.159-r0","draft":false,"prerelease":false}]]
 EOF
 `,
     );
@@ -454,14 +466,14 @@ exit 1
     );
     const result = run(["sync", "--request"], {
       PATH: `${stub}:/usr/bin:/bin`,
-      S3_MIRROR_BASE_URL: s3Mirror([["postgres", "15.14.1.159"]]),
+      S3_MIRROR_BASE_URL: s3Mirror([["postgres", "15.14.1.159-r0"]]),
       MIRROR_DISPATCH_TOKEN: "token",
       ECR_MIRROR_POLL_INTERVAL: "0",
       ECR_MIRROR_TIMEOUT: "1",
       ECR_MIRROR_REQUIRE_NATIVES: "1",
     });
     expect(result.exitCode).not.toBe(0);
-    expect(result.stdout.toString()).toContain("waiting for postgres 15.14.1.159-native-linux-arm64 native");
+    expect(result.stdout.toString()).toContain("waiting for postgres 15.14.1.159-r0-native-linux-arm64 native");
     expect(result.stderr.toString()).toContain("native tag(s) missing");
   });
 
@@ -474,7 +486,7 @@ exit 1
       `#!/bin/sh
 case "$*" in *dispatches*) cat >/dev/null; exit 0 ;; esac
 cat <<'EOF'
-[[{"tag_name":"postgres-15.14.1.159","draft":false,"prerelease":false}]]
+[[{"tag_name":"postgres-15.14.1.159-r0","draft":false,"prerelease":false}]]
 EOF
 `,
     );
@@ -501,7 +513,7 @@ exit 1
     );
     const result = run(["sync", "--request"], {
       PATH: `${stub}:/usr/bin:/bin`,
-      S3_MIRROR_BASE_URL: s3Mirror([["postgres", "15.14.1.159"]]),
+      S3_MIRROR_BASE_URL: s3Mirror([["postgres", "15.14.1.159-r0"]]),
       FAKE_COUNT: join(stub, "native-dest.count"),
       MIRROR_DISPATCH_TOKEN: "token",
       ECR_MIRROR_POLL_INTERVAL: "0",
@@ -509,9 +521,9 @@ exit 1
       ECR_MIRROR_REQUIRE_NATIVES: "1",
     });
     expect(result.exitCode, result.stderr.toString() + result.stdout.toString()).toBe(0);
-    expect(result.stdout.toString()).toContain("waiting for postgres 15.14.1.159-native-linux-arm64 native");
+    expect(result.stdout.toString()).toContain("waiting for postgres 15.14.1.159-r0-native-linux-arm64 native");
     expect(result.stdout.toString()).toContain(
-      "in sync native: postgres 15.14.1.159-native-linux-arm64",
+      "in sync native: postgres 15.14.1.159-r0-native-linux-arm64",
     );
   });
 
@@ -522,7 +534,7 @@ exit 1
       "gh",
       `#!/usr/bin/env bash
 cat <<'EOF'
-[[{"tag_name":"postgres-15.14.1.159","draft":false,"prerelease":false}]]
+[[{"tag_name":"postgres-15.14.1.159-r0","draft":false,"prerelease":false}]]
 EOF
 `,
     );
@@ -538,8 +550,8 @@ exit 1
     );
     const result = run(["sync"], { PATH: `${stub}:/usr/bin:/bin` });
     expect(result.exitCode).not.toBe(0);
-    expect(result.stdout.toString()).toContain("in sync native: postgres 15.14.1.159-native-linux-arm64");
-    expect(result.stdout.toString()).toContain("out of sync S3 native: postgres 15.14.1.159 linux-arm64");
+    expect(result.stdout.toString()).toContain("in sync native: postgres 15.14.1.159-r0-native-linux-arm64");
+    expect(result.stdout.toString()).toContain("out of sync S3 native: postgres 15.14.1.159-r0 linux-arm64");
     expect(result.stderr.toString()).toContain("3 native artifact(s) missing from file:///nonexistent-slim-s3");
     expect(result.stderr.toString()).not.toContain("release image(s)");
   });
@@ -553,7 +565,7 @@ exit 1
       `#!/bin/sh
 case "$*" in *dispatches*) cat >> '${dispatches}'; exit 0 ;; esac
 cat <<'EOF'
-[[{"tag_name":"postgres-15.14.1.159","draft":false,"prerelease":false},{"tag_name":"postgrest-v16.2","draft":false,"prerelease":false}]]
+[[{"tag_name":"postgres-15.14.1.159-r0","draft":false,"prerelease":false},{"tag_name":"postgrest-v16.2-r0","draft":false,"prerelease":false}]]
 EOF
 `,
     );
@@ -569,8 +581,8 @@ exit 1
     const result = run(["sync", "--request"], {
       PATH: `${stub}:/usr/bin:/bin`,
       S3_MIRROR_BASE_URL: s3Mirror([
-        ["postgres", "15.14.1.159"],
-        ["postgrest", "v16.2"],
+        ["postgres", "15.14.1.159-r0"],
+        ["postgrest", "v16.2-r0"],
       ]),
       MIRROR_DISPATCH_TOKEN: "token",
       ECR_MIRROR_POLL_INTERVAL: "0",
@@ -578,9 +590,9 @@ exit 1
     });
     expect(result.exitCode).not.toBe(0);
     const sent = readFileSync(dispatches, "utf8");
-    expect(sent).toContain('"source": "ghcr.io/supabase/cli/postgres:15.14.1.159"');
-    expect(sent).toContain('"source": "ghcr.io/supabase/cli/postgrest:v16.2"');
-    expect(result.stdout.toString()).toContain("in sync S3 native: postgrest v16.2 linux-amd64");
+    expect(sent).toContain('"source": "ghcr.io/supabase/cli/postgres:15.14.1.159-r0"');
+    expect(sent).toContain('"source": "ghcr.io/supabase/cli/postgrest:v16.2-r0"');
+    expect(result.stdout.toString()).toContain("in sync S3 native: postgrest v16.2-r0 linux-amd64");
     expect(result.stderr.toString()).toContain(
       "2 release image(s) are missing from public.ecr.aws/supabase/cli",
     );
@@ -594,7 +606,7 @@ exit 1
       "gh",
       `#!/usr/bin/env bash
 cat <<'EOF'
-[[{"tag_name":"postgrest-v16.1","draft":false,"prerelease":false,"published_at":"2026-09-20T00:00:00Z"},{"tag_name":"postgrest-v16.2","draft":false,"prerelease":false,"published_at":"2026-09-01T00:00:00Z"},{"tag_name":"postgres-15.14.1.159","draft":false,"prerelease":false},{"tag_name":"postgres-15.14.1.160","draft":false,"prerelease":false},{"tag_name":"postgres-17.6.1.173","draft":false,"prerelease":false},{"tag_name":"postgres-16.0.0.001","draft":false,"prerelease":false}]]
+[[{"tag_name":"postgrest-v16.1-r0","draft":false,"prerelease":false,"published_at":"2026-09-20T00:00:00Z"},{"tag_name":"postgrest-v16.2-r0","draft":false,"prerelease":false,"published_at":"2026-09-01T00:00:00Z"},{"tag_name":"postgres-15.14.1.159-r0","draft":false,"prerelease":false},{"tag_name":"postgres-15.14.1.160-r0","draft":false,"prerelease":false},{"tag_name":"postgres-17.6.1.173-r0","draft":false,"prerelease":false},{"tag_name":"postgres-16.0.0.001-r0","draft":false,"prerelease":false}]]
 EOF
 `,
     );
@@ -617,26 +629,165 @@ exit 1
       .split("\n")
       .filter((line) => line.startsWith("[slim] in sync: "))
       .map((line) => line.slice("[slim] in sync: ".length).split(" (")[0]);
-    expect(audited.sort()).toEqual(["postgres 15.14.1.160", "postgres 17.6.1.173", "postgrest v16.2"]);
+    expect(audited.sort()).toEqual(["postgres 15.14.1.160-r0", "postgres 17.6.1.173-r0", "postgrest v16.2-r0"]);
 
     const result = run(["sync", "postgrest"], { PATH: `${stub}:/usr/bin:/bin` });
     expect(result.exitCode, result.stderr.toString()).toBe(0);
-    expect(result.stdout.toString()).toContain("in sync: postgrest v16.2");
-    expect(result.stdout.toString()).not.toContain("v16.1");
-    expect(result.stdout.toString()).not.toContain("postgres 15.14.1.160");
+    expect(result.stdout.toString()).toContain("in sync: postgrest v16.2-r0");
+    expect(result.stdout.toString()).not.toContain("v16.1-r0");
+    expect(result.stdout.toString()).not.toContain("postgres 15.14.1.160-r0");
 
     const all = run(["sync", "--all", "postgrest"], { PATH: `${stub}:/usr/bin:/bin` });
     expect(all.exitCode, all.stderr.toString()).toBe(0);
-    expect(all.stdout.toString()).toContain("in sync: postgrest v16.1");
-    expect(all.stdout.toString()).toContain("in sync: postgrest v16.2");
+    expect(all.stdout.toString()).toContain("in sync: postgrest v16.1-r0");
+    expect(all.stdout.toString()).toContain("in sync: postgrest v16.2-r0");
 
-    const release = run(["sync", "postgrest:v16.1"], { PATH: `${stub}:/usr/bin:/bin` });
+    const release = run(["sync", "postgrest:v16.1-r0"], { PATH: `${stub}:/usr/bin:/bin` });
     expect(release.exitCode, release.stderr.toString()).toBe(0);
-    expect(release.stdout.toString()).toContain("in sync: postgrest v16.1");
-    expect(release.stdout.toString()).not.toContain("v16.2");
+    expect(release.stdout.toString()).toContain("in sync: postgrest v16.1-r0");
+    expect(release.stdout.toString()).not.toContain("v16.2-r0");
 
     const unknown = run(["sync", "kong"], { PATH: `${stub}:/usr/bin:/bin` });
     expect(unknown.exitCode).not.toBe(0);
     expect(unknown.stderr.toString()).toContain("unknown release service: kong");
+
+    const legacy = run(["sync", "postgrest:v16.1"], { PATH: `${stub}:/usr/bin:/bin` });
+    expect(legacy.exitCode).not.toBe(0);
+    expect(legacy.stderr.toString()).toContain("not a revision release");
+    expect(legacy.stderr.toString()).toContain("postgrest-<U>-r<N>");
+    expect(legacy.stderr.toString()).toContain("legacy releases are frozen");
+    expect(legacy.stderr.toString()).not.toContain("no published releases found");
+  });
+
+  const auditedInSync = (stdout: string): string[] =>
+    stdout
+      .split("\n")
+      .filter((line) => line.startsWith("[slim] in sync: "))
+      .map((line) => line.slice("[slim] in sync: ".length).split(" (")[0])
+      .sort();
+
+  test("ignores legacy tags without -rN and picks the latest revision", () => {
+    const stub = mkdtempSync(join(tmpdir(), "ecr-legacy-"));
+    writeStub(
+      stub,
+      "gh",
+      `#!/usr/bin/env bash
+cat <<'EOF'
+[[{"tag_name":"storage-v1.79.23","draft":false,"prerelease":false},{"tag_name":"storage-v1.79.22-r0","draft":false,"prerelease":false},{"tag_name":"storage-v1.79.23-r0","draft":false,"prerelease":false},{"tag_name":"storage-v1.79.23-r1","draft":false,"prerelease":false},{"tag_name":"studio-2026.09.04-sha-5a67366-r0","draft":false,"prerelease":false}]]
+EOF
+`,
+    );
+    writeStub(
+      stub,
+      "regctl",
+      `#!/bin/sh
+if [ "$1" = manifest ] && [ "$2" = head ]; then
+  case "$3" in *native*) exit 1 ;; esac
+  printf "%s\\n" "${DIGEST}"; exit 0
+fi
+if [ "$1" = image ] && [ "$2" = digest ]; then printf "%s\\n" "${DIGEST}"; exit 0; fi
+exit 1
+`,
+    );
+    const result = run(["sync"], { PATH: `${stub}:/usr/bin:/bin` });
+    expect(result.exitCode, result.stderr.toString()).toBe(0);
+    expect(auditedInSync(result.stdout.toString())).toEqual(["storage v1.79.23-r1", "studio 2026.09.04-sha-5a67366-r0"]);
+    expect(result.stdout.toString()).not.toContain("v1.79.22");
+    expect(result.stdout.toString()).not.toContain("storage v1.79.23 ");
+
+    const all = run(["sync", "--all"], { PATH: `${stub}:/usr/bin:/bin` });
+    expect(all.exitCode, all.stderr.toString()).toBe(0);
+    expect(all.stdout.toString()).not.toContain("v1.79.23\n");
+    expect(all.stdout.toString()).not.toContain("v1.79.23 ");
+  });
+
+  test("orders the upstream version and the revision numerically, never lexically", () => {
+    const stub = mkdtempSync(join(tmpdir(), "ecr-numeric-order-"));
+    writeStub(
+      stub,
+      "gh",
+      `#!/usr/bin/env bash
+cat <<'EOF'
+[[{"tag_name":"storage-v1.79.9-r0","draft":false,"prerelease":false},{"tag_name":"storage-v1.79.10-r0","draft":false,"prerelease":false},{"tag_name":"postgrest-v16.2-r2","draft":false,"prerelease":false},{"tag_name":"postgrest-v16.2-r10","draft":false,"prerelease":false}]]
+EOF
+`,
+    );
+    writeStub(
+      stub,
+      "regctl",
+      `#!/bin/sh
+if [ "$1" = manifest ] && [ "$2" = head ]; then
+  case "$3" in *native*) exit 1 ;; esac
+  printf "%s\\n" "${DIGEST}"; exit 0
+fi
+if [ "$1" = image ] && [ "$2" = digest ]; then printf "%s\\n" "${DIGEST}"; exit 0; fi
+exit 1
+`,
+    );
+    const result = run(["sync"], { PATH: `${stub}:/usr/bin:/bin` });
+    expect(result.exitCode, result.stderr.toString()).toBe(0);
+    // v1.79.9 < v1.79.10 numerically (not "1" < "1" lexically), and r2 < r10 numerically.
+    expect(auditedInSync(result.stdout.toString())).toEqual(["postgrest v16.2-r10", "storage v1.79.10-r0"]);
+  });
+
+  test("orders same-date Studio releases by publish time, not by the sha's digits", () => {
+    const stub = mkdtempSync(join(tmpdir(), "ecr-studio-sha-"));
+    writeStub(
+      stub,
+      "gh",
+      `#!/usr/bin/env bash
+cat <<'EOF'
+[[{"tag_name":"studio-2026.09.14-sha-4dd8a95-r0","draft":false,"prerelease":false,"published_at":"2026-09-14T00:00:00Z"},{"tag_name":"studio-2026.09.14-sha-abcdef0-r0","draft":false,"prerelease":false,"published_at":"2026-09-15T00:00:00Z"}]]
+EOF
+`,
+    );
+    writeStub(
+      stub,
+      "regctl",
+      `#!/bin/sh
+if [ "$1" = manifest ] && [ "$2" = head ]; then
+  case "$3" in *native*) exit 1 ;; esac
+  printf "%s\\n" "${DIGEST}"; exit 0
+fi
+if [ "$1" = image ] && [ "$2" = digest ]; then printf "%s\\n" "${DIGEST}"; exit 0; fi
+exit 1
+`,
+    );
+    const result = run(["sync"], { PATH: `${stub}:/usr/bin:/bin` });
+    expect(result.exitCode, result.stderr.toString()).toBe(0);
+    // Both releases are 2026.09.14; the hex digits of the sha must not enter
+    // the order, so the later-published one (abcdef0) wins, not 4dd8a95.
+    expect(auditedInSync(result.stdout.toString())).toEqual(["studio 2026.09.14-sha-abcdef0-r0"]);
+    expect(result.stdout.toString()).not.toContain("4dd8a95");
+  });
+
+  test("prefers the higher revision of the same upstream even when it published first", () => {
+    const stub = mkdtempSync(join(tmpdir(), "ecr-same-upstream-revision-"));
+    writeStub(
+      stub,
+      "gh",
+      `#!/usr/bin/env bash
+cat <<'EOF'
+[[{"tag_name":"storage-v1.79.23-r1","draft":false,"prerelease":false,"published_at":"2026-09-01T00:00:00Z"},{"tag_name":"storage-v1.79.23-r0","draft":false,"prerelease":false,"published_at":"2026-09-20T00:00:00Z"}]]
+EOF
+`,
+    );
+    writeStub(
+      stub,
+      "regctl",
+      `#!/bin/sh
+if [ "$1" = manifest ] && [ "$2" = head ]; then
+  case "$3" in *native*) exit 1 ;; esac
+  printf "%s\\n" "${DIGEST}"; exit 0
+fi
+if [ "$1" = image ] && [ "$2" = digest ]; then printf "%s\\n" "${DIGEST}"; exit 0; fi
+exit 1
+`,
+    );
+    const result = run(["sync"], { PATH: `${stub}:/usr/bin:/bin` });
+    expect(result.exitCode, result.stderr.toString()).toBe(0);
+    // r0 published later than r1, but the revision counter still decides
+    // within the same upstream: r1 wins regardless of publish order.
+    expect(auditedInSync(result.stdout.toString())).toEqual(["storage v1.79.23-r1"]);
   });
 });

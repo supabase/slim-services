@@ -170,7 +170,7 @@ class VerifyOciMirrorTest(unittest.TestCase):
                 stream.write('MIRROR_SMOKE_SCRIPT="services/mailpit/custom-smoke.sh"\n')
         return repo
 
-    def run_recipe_mirror(self, service, repo):
+    def run_recipe_mirror(self, service, repo, release_version=None):
         fake_bin = self.directory / f"fake-{service}-bin"
         fake_bin.mkdir()
         trace = self.directory / f"{service}-mirror-trace"
@@ -198,8 +198,11 @@ class VerifyOciMirrorTest(unittest.TestCase):
         fake_docker.chmod(0o755)
         destination = f"example.invalid/{service}"
         output = self.directory / f"{service}-provenance.json"
+        command = [str(repo / "scripts" / "mirror-upstream-image.sh"), service, "v1.2.3", destination, str(output)]
+        if release_version is not None:
+            command.append(release_version)
         result = subprocess.run(
-            [str(repo / "scripts" / "mirror-upstream-image.sh"), service, "v1.2.3", destination, str(output)],
+            command,
             cwd=repo,
             text=True,
             capture_output=True,
@@ -374,6 +377,35 @@ class VerifyOciMirrorTest(unittest.TestCase):
             self.assertTrue(any("pull example.invalid/" + service + ":v1.2.3" in line[1] and line[2] == "yes" for line in pulls))
             regctl = [line.split("\t") for line in lines if line.startswith("regctl\t")]
             self.assertTrue(any("image digest" in line[1] and line[2] == "yes" for line in regctl))
+
+    def test_mirror_tags_destination_with_release_version(self):
+        repo = self.mirror_repo()
+        release_version = "v1.2.3-r1"
+        result, trace, output = self.run_recipe_mirror("mailpit", repo, release_version=release_version)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(output.is_file())
+        lines = trace.read_text(encoding="utf-8").splitlines()
+        copy_lines = [line for line in lines if line.startswith("regctl\t") and "image copy" in line]
+        self.assertTrue(copy_lines)
+        self.assertTrue(
+            any(f"example.invalid/mailpit:{release_version}" in line for line in copy_lines),
+            copy_lines,
+        )
+        self.assertTrue(
+            any("docker.io/axllent/mailpit:v1.2.3@sha256:" in line for line in copy_lines),
+            copy_lines,
+        )
+        self.assertFalse(
+            any("docker.io/axllent/mailpit:v1.2.3-r1" in line for line in copy_lines), copy_lines
+        )
+        smoke = [line.split("\t") for line in lines if line.startswith("default-smoke\t")]
+        self.assertEqual(smoke[0][1:3], ["mailpit", f"example.invalid/mailpit:{release_version}"])
+        pulls = [line.split("\t") for line in lines if line.startswith("docker\t")]
+        self.assertTrue(any(f"pull example.invalid/mailpit:{release_version}" in line[1] for line in pulls))
+        provenance = json.loads(output.read_text(encoding="utf-8"))
+        self.assertEqual(provenance["destination"], f"example.invalid/mailpit:{release_version}")
+        self.assertTrue(provenance["source_ref"].startswith("docker.io/axllent/mailpit:v1.2.3@sha256:"))
+        self.assertNotIn(release_version, provenance["source_ref"])
 
     def test_recipe_declared_custom_smoke_receives_image_and_anonymous_config(self):
         repo = self.mirror_repo(custom=True)
