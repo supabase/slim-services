@@ -394,28 +394,12 @@ if release_lines:
         line_floor = line["release_floor"]
         if line_floor not in candidates:
             raise SystemExit(1)
-    # Oldest-first within each line, then interleaved. Tags that are already
-    # published or not ready to run are removed before this order is capped.
-    buckets = [[] for _ in line_patterns]
-    for candidate in sorted(eligible, key=version_key):
-        matched_index = next(
-            index
-            for index, (line_pattern, _line_floor) in enumerate(line_patterns)
-            if line_pattern.fullmatch(candidate)
-        )
-        buckets[matched_index].append(candidate)
-    ordered = []
-    while any(buckets):
-        for bucket in buckets:
-            if bucket:
-                ordered.append(bucket.pop(0))
 else:
     if release_floor not in candidates:
         raise SystemExit(1)
     floor_key = version_key(release_floor)
     eligible = {candidate for candidate in candidates if version_key(candidate) >= floor_key}
-    ordered = sorted(eligible, key=version_key)
-print(*ordered, sep="\n")
+print(*sorted(eligible, key=version_key), sep="\n")
 PY
     )"; then
       printf 'could not reconcile Docker Hub tags for %s from floor %s (%s); continuing\n' \

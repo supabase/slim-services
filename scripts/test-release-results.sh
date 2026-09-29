@@ -273,6 +273,122 @@ def test_results_table_shows_upstream_version_and_links_to_the_release_revision(
         )
 
 
+def postgres_release_config():
+    config = json.loads((ROOT / ".github" / "service-release-sources.json").read_text(encoding="utf-8"))
+    return {"services": {"postgres": config["services"]["postgres"]}}
+
+
+def test_download_selects_the_newest_revision_of_each_postgres_line():
+    releases = [
+        {"tag_name": f"postgres-{version}", "draft": False, "prerelease": False}
+        for version in (
+            "15.14.1.177-r0",
+            "15.14.1.178-r0",
+            "17.6.1.177-r0",
+            "17.6.1.177-r1",
+            "17.9.0.028-orioledb-r0",
+            "17.9.0.029-orioledb-r0",
+            "17.11.0.002-orioledb",
+        )
+    ]
+    chosen = {
+        "15.14.1.178-r0": "15.14.1.178",
+        "17.6.1.177-r1": "17.6.1.177",
+        "17.9.0.029-orioledb-r0": "17.9.0.029-orioledb",
+    }
+    with tempfile.TemporaryDirectory(prefix="release-results-postgres-lines.") as name:
+        workdir = pathlib.Path(name)
+        bin_dir = workdir / "bin"
+        bin_dir.mkdir()
+        fake_gh = bin_dir / "gh"
+        fake_gh.write_text(FAKE_GH, encoding="utf-8")
+        fake_gh.chmod(0o755)
+        releases_json = workdir / "releases.json"
+        releases_json.write_text(json.dumps([releases]), encoding="utf-8")
+        config = workdir / "service-release-sources.json"
+        config.write_text(json.dumps(postgres_release_config()), encoding="utf-8")
+        for version, upstream in chosen.items():
+            manifests_dir = workdir / "manifests" / f"postgres-{version}"
+            manifests_dir.mkdir(parents=True)
+            for platform_dir, platform in (("linux-arm64", "linux/arm64"), ("darwin-arm64", "darwin/arm64")):
+                (manifests_dir / f"postgres-{version}-{platform_dir}.manifest.json").write_text(
+                    json.dumps(
+                        {
+                            "service": "postgres",
+                            "version": version,
+                            "upstream_version": upstream,
+                            "platform": platform,
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+
+        artifacts_dir = workdir / "artifacts"
+        result = run(
+            [str(DOWNLOAD)],
+            cwd=workdir,
+            env={
+                "PATH": f"{bin_dir}:{os.environ['PATH']}",
+                "GH_TOKEN": "test-token",
+                "SERVICE_RELEASE_CONFIG": str(config),
+                "RELEASE_RESULTS_REPOSITORY": "supabase/slim-services",
+                "RESULTS_ARTIFACTS_DIR": str(artifacts_dir),
+                "FAKE_RELEASES_JSON": str(releases_json),
+                "FAKE_MANIFESTS_DIR": str(workdir / "manifests"),
+            },
+        )
+        assert_true(result.returncode == 0, result.stdout + result.stderr)
+        placed = sorted(path.name for path in (artifacts_dir / "postgres").iterdir())
+        assert_true(placed == sorted(chosen), f"expected one newest revision per line, got {placed}")
+
+
+def test_results_table_keeps_one_row_per_postgres_line():
+    manifests = {
+        "17.6.1.177-r0": "17.6.1.177",
+        "17.9.0.028-orioledb-r0": "17.9.0.028-orioledb",
+        "17.9.0.029-orioledb-r0": "17.9.0.029-orioledb",
+        # Legacy manifest without upstream_version: frozen history.
+        "17.11.0.002-orioledb": None,
+    }
+    with tempfile.TemporaryDirectory(prefix="release-results-postgres-table.") as name:
+        workdir = pathlib.Path(name)
+        repo = workdir / "repo"
+        copy_repo(repo)
+        artifacts_dir = workdir / "artifacts"
+        for version, upstream in manifests.items():
+            manifest_dir = artifacts_dir / "postgres" / version / "darwin-arm64"
+            manifest_dir.mkdir(parents=True)
+            manifest = {
+                "service": "postgres",
+                "version": version,
+                "size": {"archive_mib": 5.1, "rootfs_mib": 6.2},
+                "runtime": {"runtime_rss_mib": 20.4, "idle_cpu_pct": 0.05},
+                "portable": True,
+            }
+            if upstream:
+                manifest["upstream_version"] = upstream
+            (manifest_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+        result = run(
+            [str(repo / TABLES), "--host-native-only", "--published"],
+            cwd=repo,
+            env={
+                "RESULTS_ARTIFACTS_DIR": str(artifacts_dir),
+                "RELEASE_RESULTS_REPOSITORY": "supabase/slim-services",
+            },
+        )
+        assert_true(result.returncode == 0, result.stdout + result.stderr)
+        readme = (repo / "README.md").read_text(encoding="utf-8")
+        block = readme.split("<!-- generated:host-native:begin -->", 1)[1].split(
+            "<!-- generated:host-native:end -->", 1
+        )[0]
+        rows = {line.split(" | ")[0][2:]: line for line in block.splitlines() if line.startswith("| Postgres")}
+        assert_true(set(rows) == {"Postgres 17", "Postgres OrioleDB"}, f"unexpected postgres rows:\n{block}")
+        assert_true("`17.6.1.177`" in rows["Postgres 17"], rows["Postgres 17"])
+        assert_true("`17.9.0.029-orioledb`" in rows["Postgres OrioleDB"], rows["Postgres OrioleDB"])
+        assert_true("17.11.0.002" not in block, f"legacy manifest must not be selected:\n{block}")
+
+
 tests = [value for name, value in globals().items() if name.startswith("test_")]
 for test in tests:
     test()

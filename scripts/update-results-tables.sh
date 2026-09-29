@@ -73,20 +73,9 @@ display_names=("Postgres" "PostgREST" "Auth" "Realtime" "Storage" "Edge Runtime"
 rows_tsv=""
 ORDERED_SERVICES="$(IFS=,; printf '%s' "${ordered_services[*]}")"
 DISPLAY_NAMES="$(IFS=$'\t'; printf '%s' "${display_names[*]}")"
-# Unit-separated: tab is IFS whitespace, so read would merge empty fields.
-while IFS=$'\x1f' read -r service display upstream_version linux_dir darwin_dir; do
-  [[ -n "$service" ]] || continue
-  recipe_vars="$(
-    SOURCE_REF="$upstream_version"
-    VERSION="$upstream_version"
-    # shellcheck disable=SC1090
-    source "$(recipe_file "$service")" >/dev/null 2>&1
-    printf '%s\t%s\t%s' "${UPSTREAM_IMAGE:-}" "${UPSTREAM_COMPARE_IMAGE:-}" "${RESULTS_NOTE:-}"
-  )"
-  rows_tsv+="$service"$'\t'"$display"$'\t'"$recipe_vars"$'\t'"$linux_dir"$'\t'"$darwin_dir"$'\n'
-done < <(
+# A failed selection must stop the run, not render empty tables.
+release_rows="$(
   ORDERED_SERVICES="$ORDERED_SERVICES" DISPLAY_NAMES="$DISPLAY_NAMES" \
-    MERGE="$merge" \
     python3 - "$ROOT_DIR" "$ARTIFACTS_DIR" <<'PY'
 import glob
 import json
@@ -110,12 +99,13 @@ def manifest_entry(path):
     """(upstream version, revision, artifacts/<service>/<dir> name) of a platform manifest."""
     with open(path, encoding="utf-8") as fh:
         manifest = json.load(fh)
-    upstream = manifest.get("upstream_version") or manifest.get("version", "")
     version_dir = os.path.basename(os.path.dirname(os.path.dirname(path)))
-    return upstream, manifest.get("revision", 0), version_dir
+    return manifest.get("upstream_version"), manifest.get("revision", 0), version_dir
 
 def platform_manifests(service, platform):
-    return glob.glob(os.path.join(artifacts_dir, service, "*", platform, "manifest.json"))
+    """Revision manifests only; legacy manifests without upstream_version are frozen history."""
+    paths = glob.glob(os.path.join(artifacts_dir, service, "*", platform, "manifest.json"))
+    return [path for path in paths if manifest_entry(path)[0]]
 
 def newest_in_line(entries, pattern):
     matched = [entry for entry in entries if pattern.fullmatch(entry[0])]
@@ -130,7 +120,7 @@ def postgres_line_label(pattern):
         return "Postgres 17"
     return "Postgres"
 
-# Each platform table reads its own newest manifest, as before release lines.
+# Each platform table reads its own newest manifest independently.
 for service, display in zip(services, displays):
     linux = platform_manifests(service, "linux-arm64")
     darwin = platform_manifests(service, "darwin-arm64")
@@ -146,11 +136,9 @@ for service, display in zip(services, displays):
         for line in lines:
             pattern = re.compile(line["tag_pattern"])
             label = postgres_line_label(line["tag_pattern"]) if service == "postgres" else display
-            linux_entry = newest_in_line(linux_entries, pattern)
-            darwin_entry = newest_in_line(darwin_entries, pattern)
-            # --merge keeps an existing row only when this line is still emitted.
-            if linux_entry or darwin_entry or os.environ.get("MERGE") == "1":
-                selected.append((label, linux_entry, darwin_entry))
+            selected.append(
+                (label, newest_in_line(linux_entries, pattern), newest_in_line(darwin_entries, pattern))
+            )
     for label, linux_entry, darwin_entry in selected:
         upstream = (linux_entry or darwin_entry or ("",))[0]
         print(
@@ -162,7 +150,19 @@ for service, display in zip(services, displays):
             sep="\x1f",
         )
 PY
-)
+)"
+# Unit-separated: tab is IFS whitespace, so read would merge empty fields.
+while IFS=$'\x1f' read -r service display upstream_version linux_dir darwin_dir; do
+  [[ -n "$service" ]] || continue
+  recipe_vars="$(
+    SOURCE_REF="$upstream_version"
+    VERSION="$upstream_version"
+    # shellcheck disable=SC1090
+    source "$(recipe_file "$service")" >/dev/null 2>&1
+    printf '%s\t%s\t%s' "${UPSTREAM_IMAGE:-}" "${UPSTREAM_COMPARE_IMAGE:-}" "${RESULTS_NOTE:-}"
+  )"
+  rows_tsv+="$service"$'\t'"$display"$'\t'"$recipe_vars"$'\t'"$linux_dir"$'\t'"$darwin_dir"$'\n'
+done <<< "$release_rows"
 
 # Host-native darwin-arm64 table: driven by darwin manifests only; services
 # without one are omitted (or, with --merge, keep their existing row).

@@ -29,6 +29,18 @@ let
     else
       "${upstream}/Dockerfile-${postgres_major}";
   usesIcu = lib.hasInfix "--locale-provider=icu" (builtins.readFile dockerfile);
+  # OrioleDB's preload position and logical-decoding allow-list follow the
+  # selected tag's Dockerfile-orioledb-17, which changed across releases.
+  orioledbPreloadFirst = lib.hasInfix "s|'|'orioledb,|" (builtins.readFile dockerfile);
+  outputPluginPattern = ".*(output_plugin_libraries = '[^']*').*";
+  outputPluginSettings = lib.concatMap (
+    line:
+    let
+      matched = builtins.match outputPluginPattern line;
+    in
+    if matched == null then [ ] else matched
+  ) (lib.splitString "\n" (builtins.readFile dockerfile));
+  outputPluginSetting = if outputPluginSettings == [ ] then "" else builtins.head outputPluginSettings;
   initdbArgs =
     if usesIcu then
       [ "--encoding=UTF-8" "--locale-provider=icu" "--icu-locale=en_US.UTF-8" "--allow-group-access" ]
@@ -155,8 +167,16 @@ let
         sed -i -e "s/ timescaledb,//g" -e "s/ plv8,//g" $conf
       fi
       if [ "${postgres_major}" = "orioledb-17" ]; then
-        sed -i -E "s/(shared_preload_libraries = '[^']*)'/\\1, orioledb'/" $conf
+        ${
+          if orioledbPreloadFirst then
+            ''sed -i -E "s/(shared_preload_libraries = ')/\\1orioledb,/" $conf''
+          else
+            ''sed -i -E "s/(shared_preload_libraries = '[^']*)'/\\1, orioledb'/" $conf''
+        }
         printf '\n%s\n' "default_table_access_method = 'orioledb'" >> $conf
+        ${lib.optionalString (outputPluginSetting != "") ''
+          printf '%s\n' "${outputPluginSetting}" >> $conf
+        ''}
       fi
       for want in \
         "^session_preload_libraries = 'supautils'" \
