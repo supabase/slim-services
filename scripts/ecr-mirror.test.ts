@@ -650,6 +650,13 @@ exit 1
     const unknown = run(["sync", "kong"], { PATH: `${stub}:/usr/bin:/bin` });
     expect(unknown.exitCode).not.toBe(0);
     expect(unknown.stderr.toString()).toContain("unknown release service: kong");
+
+    const legacy = run(["sync", "postgrest:v16.1"], { PATH: `${stub}:/usr/bin:/bin` });
+    expect(legacy.exitCode).not.toBe(0);
+    expect(legacy.stderr.toString()).toContain("not a revision release");
+    expect(legacy.stderr.toString()).toContain("postgrest-<U>-r<N>");
+    expect(legacy.stderr.toString()).toContain("legacy releases are frozen");
+    expect(legacy.stderr.toString()).not.toContain("no published releases found");
   });
 
   const auditedInSync = (stdout: string): string[] =>

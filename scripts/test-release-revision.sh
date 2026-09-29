@@ -175,6 +175,21 @@ def test_hotfix_ignores_a_draft_revision_on_top_of_a_published_one():
     assert_true(parsed["revision"] == 1, f"expected revision 1, draft r1 is not taken: {parsed}")
 
 
+def test_blank_service_is_rejected():
+    result = plan("", "v2.197.0", "false", "false", "refs/heads/main", tags_with_filler([]))
+    assert_true(result.returncode == 2, f"expected exit 2: {result.returncode} {result.stderr}")
+
+
+def test_blank_upstream_version_is_rejected():
+    result = plan("auth", "", "false", "false", "refs/heads/main", tags_with_filler([]))
+    assert_true(result.returncode == 2, f"expected exit 2: {result.returncode} {result.stderr}")
+
+
+def test_blank_git_ref_is_rejected():
+    result = plan("auth", "v2.197.0", "false", "false", "", tags_with_filler([]))
+    assert_true(result.returncode == 2, f"expected exit 2: {result.returncode} {result.stderr}")
+
+
 def test_hotfix_with_nothing_taken_fails():
     result = plan("auth", "v2.197.0", "false", "true", "refs/heads/main", tags_with_filler([]))
     assert_true(result.returncode == 1, f"expected exit 1: {result.returncode}")

@@ -336,7 +336,7 @@ post-publication confirmation.
   predate this scheme and are frozen: nothing parses, audits, or rewrites
   them.
 - Portable archives, platform manifests, and a combined `SHA256SUMS` (which
-  now also lists the manifest hashes) are attached to the GitHub release
+  also lists the manifest hashes) are attached to the GitHub release
   `<service>-<U>-r<N>`, which is the commit point for that revision —
   publishing is create-only and fails if the tag already exists.
 - The same archives are also published as OCI artifacts at

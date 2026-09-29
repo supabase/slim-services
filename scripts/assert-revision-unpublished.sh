@@ -32,7 +32,7 @@ status=$?
 set -e
 
 if [[ $status -eq 0 ]]; then
-  status_line="$(printf '%s\n' "$output" | head -n1)"
+  status_line="${output%%$'\n'*}"
   status_code="$(printf '%s\n' "$status_line" | awk '{print $2}')"
   if [[ "$status_code" == 2[0-9][0-9] ]]; then
     printf 'release %s is already published; revisions are immutable. Dispatch a new run (hotfix=true for a new revision).\n' "$release_tag" >&2

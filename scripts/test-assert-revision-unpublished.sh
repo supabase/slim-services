@@ -86,11 +86,11 @@ SECONDARY_RATE_LIMIT_GH = (
     "exit 1\n"
 )
 
-# Models the fail-open shape this guard replaces: `gh release view`'s combined
-# REST + GraphQL lookup can surface "release not found" even when the
-# underlying REST call actually errored on a published release. The guard no
-# longer calls `gh release view`, and must not treat this free-form text as a
-# 404 either: only the literal "(HTTP 404)" form exits 0.
+# Models the free-form error text a combined REST + GraphQL lookup such as
+# `gh release view` can surface for a published release ("release not
+# found") even though the underlying REST call actually errored. The guard
+# must not treat this free-form text as a 404: only the literal "(HTTP 404)"
+# form exits 0.
 OLD_FAIL_OPEN_SHAPE_GH = (
     "#!/bin/sh\n"
     "set -eu\n"
@@ -111,13 +111,8 @@ def test_published_release_fails_with_the_immutability_message():
 
 
 def test_missing_release_exits_zero():
-    result = run_guard(NOT_FOUND_GH)
-    assert_true(result.returncode == 0, result.stderr)
-
-
-def test_draft_release_exits_zero():
-    # The releases-by-tag REST endpoint 404s for drafts exactly as it does for
-    # a missing release, so the guard cannot and need not tell them apart.
+    # The tags endpoint returns 404 for drafts too, so this also covers draft
+    # releases; stale-draft handling is covered by the create-step test.
     result = run_guard(NOT_FOUND_GH)
     assert_true(result.returncode == 0, result.stderr)
 

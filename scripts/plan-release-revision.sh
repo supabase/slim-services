@@ -21,6 +21,10 @@ validation_only="$3"
 hotfix="$4"
 git_ref="$5"
 
+for value in "$service" "$upstream_version" "$git_ref"; do
+  [[ -n "$value" ]] || { usage >&2; exit 2; }
+done
+
 for value in "$validation_only" "$hotfix"; do
   case "$value" in
     true|false) ;;

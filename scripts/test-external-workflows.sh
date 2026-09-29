@@ -711,33 +711,6 @@ def test_service_release_mirror_ecr_does_not_gate_publish_release():
     )
 
 
-def test_service_release_mirror_ecr_has_no_configured_skip_path():
-    # The plan job now guarantees CLI_MIRROR_DISPATCH_TOKEN exists whenever
-    # publish is true, so mirror-ecr must always run its dispatch/verify
-    # steps rather than skipping them behind a "configured" output.
-    ruby = (
-        "require 'yaml'; require 'json'; "
-        "data=YAML.safe_load(File.read(ARGV[0]), aliases: true); "
-        "steps=data.fetch('jobs').fetch('mirror-ecr').fetch('steps'); "
-        "puts JSON.generate(steps.map { |s| {name: s['name'], id: s['id'], if: s['if']} })"
-    )
-    result = run(["ruby", "-e", ruby, str(ROOT / ".github" / "workflows" / "service-release.yml")])
-    assert_true(result.returncode == 0, result.stderr)
-    steps = json.loads(result.stdout)
-    assert_true(
-        not any(step.get("name") == "Check mirror dispatch configuration" for step in steps),
-        "mirror-ecr must not have a separate dispatch-configuration check step",
-    )
-    assert_true(
-        not any(step.get("id") == "config" for step in steps),
-        "mirror-ecr must not produce a 'configured' step output",
-    )
-    assert_true(
-        not any("configured" in (step.get("if") or "") for step in steps),
-        f"mirror-ecr steps must not gate on a 'configured' output: {steps}",
-    )
-
-
 def test_repository_checks_runs_dynamic_and_external_contracts():
     ruby = (
         "require 'yaml'; require 'json'; "

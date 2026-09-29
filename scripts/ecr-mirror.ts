@@ -559,6 +559,8 @@ const syncReleases = async (
     const service = separator < 0 ? selector : selector.slice(0, separator);
     const version = separator < 0 ? undefined : selector.slice(separator + 1);
     if (ctx.config.services[service] === undefined) fail(`unknown release service: ${service}`);
+    if (version !== undefined && parseReleaseVersion(version) === undefined)
+      fail(`version is not a revision release (${service}-<U>-r<N>) for ${service}: ${version}; legacy releases are frozen`);
     return { service, version };
   });
   const published = publishedReleases(ctx.config, listReleasePages(ctx));

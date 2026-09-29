@@ -218,9 +218,8 @@ grep -Fx "source_ref=$source_commit" "$valid_hotfix_reason_output" >/dev/null ||
   exit 1
 }
 
-# The token check now lives in its own step (run once, after both the
-# external and non-external plan branches, gated on publish == true), not
-# inline in "Validate inputs and check existing release".
+# The token check lives in its own step, run once after both the external
+# and non-external plan branches, gated on publish == true.
 token_check_run="$(ruby -ryaml -e '
 data = YAML.safe_load(File.read(ARGV[0]), aliases: true)
 step = data.fetch("jobs").fetch("plan").fetch("steps").find do |item|

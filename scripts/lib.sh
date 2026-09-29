@@ -202,8 +202,9 @@ resolve_image_index_digest() {
 }
 
 # Digest-pinned upstream ref. IDENTITY_SOURCE_TAG is the tag
-# SOURCE_IMAGE_DIGEST was recorded for — not SOURCE_REF, which release
-# CI overwrites to VERSION. A different image tag gets its own digest.
+# SOURCE_IMAGE_DIGEST was recorded for — not SOURCE_REF, which for Docker
+# Hub services holds the distinct provenance commit, separate from
+# VERSION. A different image tag gets its own digest.
 pinned_upstream_ref() {
   local image tag digest
   [[ -n "${SOURCE_IMAGE_DIGEST:-}" ]] || fail "SOURCE_IMAGE_DIGEST is required (refusing a floating tag)"

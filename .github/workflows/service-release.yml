@@ -1174,15 +1174,13 @@ jobs:
           SERVICE: ${{ inputs.service }}
         run: |
           set -euo pipefail
-          # scripts/assert-revision-unpublished.sh queries the REST
-          # releases-by-tag endpoint directly and fails closed on any error,
-          # unlike "gh release view" (see the script for why that lookup is
-          # ambiguous). A draft with this tag is uncommitted scratch: gh
-          # release create with assets creates a draft first, uploads, then
-          # publishes, so an interrupted upload can leave a stale draft with
-          # tag_name set. A draft has no public git tag, so only the release
-          # is deleted, and by id: "gh release delete <tag>" goes through
-          # the same ambiguous lookup this guard replaces.
+          # An interrupted "gh release create" can leave a stale draft with
+          # this tag_name behind, since it creates the draft, uploads assets,
+          # then publishes as separate steps.
+          # Drafts are deleted by id, not tag, because "gh release delete
+          # <tag>" goes through gh's combined REST/GraphQL lookup, which can
+          # misreport a REST error as "release not found" (see
+          # scripts/assert-revision-unpublished.sh for the same hazard).
           scripts/assert-revision-unpublished.sh "$RELEASE_TAG"
 
           draft_ids="$(
