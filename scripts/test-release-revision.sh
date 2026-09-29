@@ -13,6 +13,25 @@ import tempfile
 
 ROOT = pathlib.Path(sys.argv[1])
 PLANNER = ROOT / "scripts" / "plan-release-revision.sh"
+GH_REPO = "supabase/slim-services"
+
+DEFAULT_FAKE_GH = (
+    "#!/bin/sh\n"
+    "set -eu\n"
+    "printf '%s\\n' \"$*\" >> \"$FAKE_GH_ARGV\"\n"
+    "case \" $* \" in\n"
+    "  *' --paginate '*) cat \"$FAKE_TAGS\" ;;\n"
+    "  *) head -n 100 \"$FAKE_TAGS\" ;;\n"
+    "esac\n"
+)
+
+FAILING_FAKE_GH = (
+    "#!/bin/sh\n"
+    "set -eu\n"
+    "printf '%s\\n' \"$*\" >> \"$FAKE_GH_ARGV\"\n"
+    "printf 'gh: request failed\\n' >&2\n"
+    "exit 1\n"
+)
 
 
 def run(command, *, env=None, check=False):
@@ -34,31 +53,31 @@ def tags_with_filler(real_tags):
     return filler + real_tags
 
 
-def plan(service, upstream_version, validation_only, hotfix, git_ref, tags):
+def plan(service, upstream_version, validation_only, hotfix, git_ref, tags, *, gh_script=None):
     with tempfile.TemporaryDirectory(prefix="plan-release-revision-test.") as name:
         directory = pathlib.Path(name)
         bin_dir = directory / "bin"
         bin_dir.mkdir()
         fixture = directory / "tags"
         fixture.write_text("\n".join(tags) + ("\n" if tags else ""), encoding="utf-8")
+        argv_file = directory / "gh-argv"
+        argv_file.write_text("", encoding="utf-8")
         fake_gh = bin_dir / "gh"
-        fake_gh.write_text(
-            "#!/bin/sh\n"
-            "set -eu\n"
-            "cat \"$FAKE_TAGS\"\n",
-            encoding="utf-8",
-        )
+        fake_gh.write_text(gh_script or DEFAULT_FAKE_GH, encoding="utf-8")
         fake_gh.chmod(0o755)
         env = {
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
-            "GH_REPO": "supabase/slim-services",
+            "GH_REPO": GH_REPO,
             "GH_TOKEN": "test-token",
             "FAKE_TAGS": str(fixture),
+            "FAKE_GH_ARGV": str(argv_file),
         }
-        return run(
+        result = run(
             [str(PLANNER), service, upstream_version, validation_only, hotfix, git_ref],
             env=env,
         )
+        result.argv = argv_file.read_text(encoding="utf-8").strip()
+        return result
 
 
 def test_no_revision_published_allocates_r0():
@@ -116,8 +135,26 @@ def test_revision_past_pagination_boundary_is_counted():
         tags_with_filler(["beacon-v1.0.0-r0"]),
     )
     assert_true(result.returncode == 0, result.stderr)
+    assert_true(
+        result.argv == f"api --paginate repos/{GH_REPO}/releases?per_page=100 --jq .[].tag_name",
+        f"unexpected gh invocation: {result.argv!r}",
+    )
     parsed = json.loads(result.stdout)
     assert_true(parsed["revision"] == 1, f"expected revision 1: {parsed}")
+
+
+def test_gh_failure_is_not_read_as_nothing_taken():
+    result = plan(
+        "auth",
+        "v2.197.0",
+        "false",
+        "false",
+        "refs/heads/main",
+        [],
+        gh_script=FAILING_FAKE_GH,
+    )
+    assert_true(result.returncode != 0, f"expected non-zero exit: {result.returncode}")
+    assert_true(result.stdout == "", f"expected no stdout on gh failure: {result.stdout!r}")
 
 
 def test_prefix_collision_does_not_match_a_longer_upstream_version():
