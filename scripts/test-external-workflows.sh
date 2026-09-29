@@ -415,7 +415,7 @@ def test_stage_release_assets_appends_manifest_hash_to_platform_checksums():
     assert_true(
         "$RELEASE_VERSION" in run_block, "stage step must name release assets with the release version"
     )
-    assert_true("sha256sum" in run_block, "stage step must hash the copied manifest")
+    assert_true("hashlib" in run_block, "stage step must hash the copied manifest")
     assert_true("sort -k2" in run_block, "stage step must re-sort the per-platform SHA256SUMS by name")
 
 

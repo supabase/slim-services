@@ -132,6 +132,73 @@ class ImageArtifactArchiveTest(unittest.TestCase):
         self.assertTrue((release / manifest["archive"]).is_file())
         self.assertFalse((release / "postgrest.tar.zst").is_file())
 
+    def test_stage_release_assets_hashes_manifest_without_gnu_sha256sum(self):
+        result = self.run_cmd([str(self.repo / "scripts/build-artifact.sh"), "postgrest", "1.2.3"])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        artifact = self.repo / "artifacts/postgrest/1.2.3/linux-amd64"
+
+        archive_prefix = artifact / "postgrest-1.2.3-r0-linux-amd64"
+        result = self.run_cmd([str(self.repo / "scripts/archive-artifact.sh"), str(artifact / "rootfs"), str(archive_prefix)])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        (artifact / "SHA256SUMS").write_text("fixture\n", encoding="utf-8")
+
+        ruby = (
+            'require "yaml"; w=YAML.safe_load(File.read(ARGV[0]), aliases: true); '
+            's=w.fetch("jobs").values.flat_map{|j| j.fetch("steps",[])}.find{|x| x["name"]=="Stage release assets"}; '
+            'abort "stage missing" unless s; puts s.fetch("run")'
+        )
+        stage = self.temp / "stage.sh"
+        extracted = subprocess.run(
+            ["ruby", "-e", ruby, str(ROOT / ".github/workflows/service-release.yml")],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(extracted.returncode, 0, extracted.stderr)
+        stage.write_text("#!/usr/bin/env bash\n" + extracted.stdout, encoding="utf-8")
+        stage.chmod(0o755)
+
+        # Simulate a macOS runner, which has no sha256sum: put a stub that
+        # fails like the real absence (exit 127) first on PATH.
+        no_coreutils_bin = self.temp / "no-sha256sum-bin"
+        no_coreutils_bin.mkdir()
+        fake_sha256sum = no_coreutils_bin / "sha256sum"
+        fake_sha256sum.write_text(
+            "#!/usr/bin/env bash\necho 'sha256sum: command not found' >&2\nexit 127\n",
+            encoding="utf-8",
+        )
+        fake_sha256sum.chmod(0o755)
+        restricted_path = f"{no_coreutils_bin}:{self.env['PATH']}"
+
+        result = self.run_cmd(
+            [str(stage)],
+            {
+                "SERVICE": "postgrest",
+                "VERSION": "1.2.3",
+                "RELEASE_VERSION": "1.2.3-r0",
+                "PLATFORM_DIR": "linux-amd64",
+                "PATH": restricted_path,
+            },
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        checksums = (
+            self.repo / "release-assets/postgrest-1.2.3-r0-linux-amd64.SHA256SUMS"
+        ).read_text(encoding="utf-8")
+        manifest_line = next(
+            (
+                line
+                for line in checksums.splitlines()
+                if line.endswith("postgrest-1.2.3-r0-linux-amd64.manifest.json")
+            ),
+            None,
+        )
+        self.assertIsNotNone(manifest_line, checksums)
+        digest, sep, name = manifest_line.partition("  ")
+        self.assertEqual(sep, "  ", manifest_line)
+        self.assertRegex(digest, r"^[0-9a-f]{64}$", manifest_line)
+        self.assertEqual(name, "postgrest-1.2.3-r0-linux-amd64.manifest.json")
+
     def test_revision_names_manifest_and_sbom(self):
         result = self.run_cmd(
             [str(self.repo / "scripts/build-artifact.sh"), "postgrest", "1.2.3"],

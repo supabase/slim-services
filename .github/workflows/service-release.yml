@@ -542,8 +542,21 @@ jobs:
 
           # The manifest is finalized above (record-archive-digest.py and the
           # image build's UPDATE_MANIFEST already ran); hash it here, once,
-          # into the per-platform SHA256SUMS this release ships.
-          (cd "$release_dir" && sha256sum "$(basename "$manifest_dest")") >> "$checksums_dest"
+          # into the per-platform SHA256SUMS this release ships. macOS
+          # runners have no sha256sum, so hash with python3 (available on
+          # both runner OSes) rather than relying on a GNU coreutil.
+          python3 - "$manifest_dest" <<'PY' >> "$checksums_dest"
+          import hashlib
+          import os
+          import sys
+
+          manifest_dest = sys.argv[1]
+          digest = hashlib.sha256()
+          with open(manifest_dest, "rb") as fh:
+              for chunk in iter(lambda: fh.read(1 << 20), b""):
+                  digest.update(chunk)
+          print(f"{digest.hexdigest()}  {os.path.basename(manifest_dest)}")
+          PY
           sort -k2 -o "$checksums_dest" "$checksums_dest"
 
       - name: Save exact smoked image for publication
