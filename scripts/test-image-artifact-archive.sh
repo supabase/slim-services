@@ -86,6 +86,10 @@ class ImageArtifactArchiveTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         artifact = self.repo / "artifacts/postgrest/1.2.3/linux-amd64"
         manifest = json.loads((artifact / "manifest.json").read_text())
+        self.assertEqual(manifest["version"], "1.2.3-r0")
+        self.assertEqual(manifest["upstream_version"], "1.2.3")
+        self.assertEqual(manifest["revision"], 0)
+        self.assertEqual(manifest["sbom"], "postgrest-1.2.3-r0-linux-amd64.sbom.spdx.json")
         self.assertIsNone(manifest["archive"])
         self.assertIsNone(manifest["size"]["archive_bytes"])
         self.assertFalse(any(artifact.glob("postgrest.tar*")))
@@ -98,6 +102,13 @@ class ImageArtifactArchiveTest(unittest.TestCase):
         self.assertTrue((artifact / manifest["archive"]).is_file())
         (artifact / "postgrest.tar.zst").write_text("stale\n", encoding="utf-8")
         (artifact / "SHA256SUMS").write_text("fixture\n", encoding="utf-8")
+        # "Stage release assets" still looks up the SBOM by the bare upstream
+        # $SERVICE-$VERSION-$PLATFORM_DIR pattern; wiring it to the release
+        # version is a later task's change to service-release.yml.
+        shutil.copy(
+            artifact / manifest["sbom"],
+            artifact / "postgrest-1.2.3-linux-amd64.sbom.spdx.json",
+        )
 
         ruby = (
             'require "yaml"; w=YAML.safe_load(File.read(ARGV[0]), aliases: true); '
@@ -119,6 +130,27 @@ class ImageArtifactArchiveTest(unittest.TestCase):
         release = self.repo / "release-assets"
         self.assertTrue((release / manifest["archive"]).is_file())
         self.assertFalse((release / "postgrest.tar.zst").is_file())
+
+    def test_revision_names_manifest_and_sbom(self):
+        result = self.run_cmd(
+            [str(self.repo / "scripts/build-artifact.sh"), "postgrest", "1.2.3"],
+            {"REVISION": "2"},
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        artifact = self.repo / "artifacts/postgrest/1.2.3/linux-amd64"
+        manifest = json.loads((artifact / "manifest.json").read_text())
+        self.assertEqual(manifest["version"], "1.2.3-r2")
+        self.assertEqual(manifest["upstream_version"], "1.2.3")
+        self.assertEqual(manifest["revision"], 2)
+        self.assertEqual(manifest["sbom"], "postgrest-1.2.3-r2-linux-amd64.sbom.spdx.json")
+
+    def test_invalid_revision_is_rejected(self):
+        result = self.run_cmd(
+            [str(self.repo / "scripts/build-artifact.sh"), "postgrest", "1.2.3"],
+            {"REVISION": "01"},
+        )
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("REVISION must be a non-negative integer", result.stderr)
 
 
 if __name__ == "__main__":

@@ -38,7 +38,7 @@ CMD_JSON="${CMD_JSON:-[]}"
 artifact_dir="$ROOT_DIR/artifacts/$service/$VERSION/$(artifact_platform_dir "$TARGET_OS" "$ARCH")"
 rootfs="$artifact_dir/rootfs"
 manifest="$artifact_dir/manifest.json"
-sbom="$artifact_dir/$service-$VERSION-$(artifact_platform_dir "$TARGET_OS" "$ARCH").sbom.spdx.json"
+sbom="$artifact_dir/$service-$(release_version)-$(artifact_platform_dir "$TARGET_OS" "$ARCH").sbom.spdx.json"
 
 rm -rf "$rootfs"
 mkdir -p "$rootfs" "$artifact_dir"
@@ -233,7 +233,7 @@ fi
 
 "$ROOT_DIR/scripts/prune-runtime-tree.sh" "$rootfs"
 "$ROOT_DIR/scripts/generate-artifact-sbom.sh" \
-  "$rootfs" "$sbom" "$service" "$VERSION" \
+  "$rootfs" "$sbom" "$service" "$(release_version)" \
   "$(artifact_platform_dir "$TARGET_OS" "$ARCH")"
 
 archive=""
@@ -247,6 +247,7 @@ rootfs_kib="$(du -sk "$rootfs" | awk '{print $1}')"
 
 portable="$(portable_flag)"
 assumed_host_libs_json="$(portable_host_libs_json)"
+release_version_value="$(release_version)"
 
 python3 - "$manifest" <<PY
 import json
@@ -254,7 +255,9 @@ import os
 
 manifest = {
     "service": "$service",
-    "version": "$VERSION",
+    "version": "$release_version_value",
+    "upstream_version": "$VERSION",
+    "revision": $REVISION,
     "platform": "$PLATFORM",
     "arch": "$ARCH",
     "target": "$(artifact_platform_dir "$TARGET_OS" "$ARCH")",

@@ -316,6 +316,14 @@ artifact_rootfs_path() {
   printf '%s/artifacts/%s/%s/%s/rootfs' "$ROOT_DIR" "$service" "$version" "$(artifact_platform_dir "$os" "$arch")"
 }
 
+# REVISION distinguishes immutable release attempts of the same upstream
+# VERSION (a later task allocates it in the release workflow). Named build
+# outputs (archives, images, manifests) use release_version(); anything that
+# talks to upstream keeps using VERSION on its own.
+REVISION="${REVISION:-0}"
+[[ "$REVISION" =~ ^(0|[1-9][0-9]*)$ ]] || fail "REVISION must be a non-negative integer without leading zeros: $REVISION"
+release_version() { printf '%s-r%s\n' "$VERSION" "$REVISION"; }
+
 # Resolve SOURCE_REF to a commit sha inside a source checkout. CI initializes
 # submodules with `--depth 1`, which fetches the pinned commit but not the tag
 # the recipe names; fetch the missing tag shallowly before giving up.
