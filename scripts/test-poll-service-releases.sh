@@ -162,7 +162,7 @@ class ReleasePollerTest(unittest.TestCase):
             self.trace.read_text(encoding="utf-8").splitlines(),
             [
                 "workflow run service-release.yml --repo supabase/slim-services "
-                "--ref main -f service=imgproxy -f version=v3.26.0 -f force=false"
+                "--ref main -f service=imgproxy -f version=v3.26.0"
             ],
         )
         self.assertEqual(
@@ -172,7 +172,7 @@ class ReleasePollerTest(unittest.TestCase):
 
     def test_published_pinned_version_is_not_dispatched(self):
         self.configure_compose_pin()
-        self.published.write_text("imgproxy-v3.26.0\n", encoding="utf-8")
+        self.published.write_text("imgproxy-v3.26.0-r0\n", encoding="utf-8")
         result = self.run_poller(service="imgproxy")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse(self.trace.exists())
@@ -242,11 +242,64 @@ class ReleasePollerTest(unittest.TestCase):
         result = self.run_poller()
 
         self.assertEqual(result.returncode, 0, result.stderr)
+        trace_lines = self.trace.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(
+            trace_lines,
+            [
+                "workflow run service-release.yml --repo supabase/slim-services "
+                "--ref main -f service=realtime -f version=v2.128.0"
+            ],
+        )
+        self.assertNotIn("force", trace_lines[0])
+
+    def test_legacy_release_without_revision_still_dispatches(self):
+        self.published.write_text("realtime-v2.128.0\n", encoding="utf-8")
+
+        result = self.run_poller()
+
+        self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(
             self.trace.read_text(encoding="utf-8").splitlines(),
             [
                 "workflow run service-release.yml --repo supabase/slim-services "
-                "--ref main -f service=realtime -f version=v2.128.0 -f force=false"
+                "--ref main -f service=realtime -f version=v2.128.0"
+            ],
+        )
+
+    def test_revision_release_is_treated_as_published(self):
+        self.published.write_text("realtime-v2.128.0-r0\n", encoding="utf-8")
+
+        result = self.run_poller()
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            self.trace.read_text(encoding="utf-8").splitlines(),
+            [
+                "workflow run service-release.yml --repo supabase/slim-services "
+                "--ref main -f service=realtime -f version=v2.128.1"
+            ],
+        )
+
+    def test_revision_match_does_not_collide_on_tag_prefix(self):
+        self.upstream_releases.write_text(
+            "v2.128.10\nv2.128.1\n",
+            encoding="utf-8",
+        )
+        config = json.loads(self.config.read_text(encoding="utf-8"))
+        config["services"]["realtime"]["release_floor"] = "v2.128.1"
+        self.config.write_text(json.dumps(config), encoding="utf-8")
+        # A revision release exists only for v2.128.10; a naive substring or
+        # prefix check would mistake it for a release of v2.128.1.
+        self.published.write_text("realtime-v2.128.10-r0\n", encoding="utf-8")
+
+        result = self.run_poller(max_dispatches_per_service=None, max_active_releases=None)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            self.trace.read_text(encoding="utf-8").splitlines(),
+            [
+                "workflow run service-release.yml --repo supabase/slim-services "
+                "--ref main -f service=realtime -f version=v2.128.1"
             ],
         )
 
@@ -273,7 +326,7 @@ class ReleasePollerTest(unittest.TestCase):
             self.trace.read_text(encoding="utf-8").splitlines(),
             [
                 "workflow run service-release.yml --repo supabase/slim-services "
-                "--ref main -f service=realtime -f version=v2.128.1 -f force=false"
+                "--ref main -f service=realtime -f version=v2.128.1"
             ],
         )
 
@@ -300,7 +353,7 @@ class ReleasePollerTest(unittest.TestCase):
             self.trace.read_text(encoding="utf-8").splitlines(),
             [
                 "workflow run service-release.yml --repo supabase/slim-services "
-                "--ref main -f service=realtime -f version=v2.128.1 -f force=false"
+                "--ref main -f service=realtime -f version=v2.128.1"
             ],
         )
 
@@ -330,7 +383,7 @@ class ReleasePollerTest(unittest.TestCase):
             self.trace.read_text(encoding="utf-8").splitlines(),
             [
                 "workflow run service-release.yml --repo supabase/slim-services "
-                "--ref main -f service=realtime -f version=v2.128.0 -f force=false"
+                "--ref main -f service=realtime -f version=v2.128.0"
             ],
         )
 
@@ -360,7 +413,7 @@ class ReleasePollerTest(unittest.TestCase):
             self.trace.read_text(encoding="utf-8").splitlines(),
             [
                 "workflow run service-release.yml --repo supabase/slim-services "
-                "--ref main -f service=realtime -f version=v2.128.0 -f force=false"
+                "--ref main -f service=realtime -f version=v2.128.0"
             ],
         )
 
@@ -369,7 +422,7 @@ class ReleasePollerTest(unittest.TestCase):
             "v2.129.0\nv2.128.0\nv2.128.3\nv2.128.2\nv2.128.1\n",
             encoding="utf-8",
         )
-        self.published.write_text("realtime-v2.128.0\n", encoding="utf-8")
+        self.published.write_text("realtime-v2.128.0-r0\n", encoding="utf-8")
 
         result = self.run_poller()
 
@@ -378,7 +431,7 @@ class ReleasePollerTest(unittest.TestCase):
             self.trace.read_text(encoding="utf-8").splitlines(),
             [
                 "workflow run service-release.yml --repo supabase/slim-services "
-                "--ref main -f service=realtime -f version=v2.128.1 -f force=false"
+                "--ref main -f service=realtime -f version=v2.128.1"
             ],
         )
 
@@ -393,11 +446,11 @@ class ReleasePollerTest(unittest.TestCase):
             self.trace.read_text(encoding="utf-8").splitlines(),
             [
                 "workflow run service-release.yml --repo supabase/slim-services "
-                "--ref main -f service=realtime -f version=v2.128.0 -f force=false",
+                "--ref main -f service=realtime -f version=v2.128.0",
                 "workflow run service-release.yml --repo supabase/slim-services "
-                "--ref main -f service=realtime -f version=v2.128.1 -f force=false",
+                "--ref main -f service=realtime -f version=v2.128.1",
                 "workflow run service-release.yml --repo supabase/slim-services "
-                "--ref main -f service=realtime -f version=v2.128.2 -f force=false",
+                "--ref main -f service=realtime -f version=v2.128.2",
             ],
         )
 
@@ -428,9 +481,9 @@ class ReleasePollerTest(unittest.TestCase):
             self.trace.read_text(encoding="utf-8").splitlines(),
             [
                 "workflow run service-release.yml --repo supabase/slim-services "
-                "--ref main -f service=realtime -f version=v2.128.0 -f force=false",
+                "--ref main -f service=realtime -f version=v2.128.0",
                 "workflow run service-release.yml --repo supabase/slim-services "
-                "--ref main -f service=realtime -f version=v2.128.1 -f force=false",
+                "--ref main -f service=realtime -f version=v2.128.1",
             ],
         )
 
@@ -545,7 +598,7 @@ class ReleasePollerTest(unittest.TestCase):
             encoding="utf-8",
         )
         self.published.write_text(
-            "postgres-15.14.1.159\npostgres-17.6.1.159\n", encoding="utf-8"
+            "postgres-15.14.1.177-r0\npostgres-17.6.1.177-r0\n", encoding="utf-8"
         )
 
         class DockerHubHandler(http.server.BaseHTTPRequestHandler):
@@ -556,9 +609,9 @@ class ReleasePollerTest(unittest.TestCase):
                         "next": None,
                         "previous": None,
                         "results": [
-                            {"name": "15.14.1.159"},
-                            {"name": "17.6.1.159"},
-                            {"name": "17.6.1.777"},
+                            {"name": "15.14.1.177"},
+                            {"name": "17.6.1.177"},
+                            {"name": "17.6.1.900"},
                         ],
                     }
                 ).encode()
@@ -589,7 +642,7 @@ class ReleasePollerTest(unittest.TestCase):
             self.trace.read_text(encoding="utf-8").splitlines(),
             [
                 "workflow run service-release.yml --repo supabase/slim-services "
-                "--ref main -f service=postgres -f version=17.6.1.777 -f force=false"
+                "--ref main -f service=postgres -f version=17.6.1.900"
             ],
         )
 
@@ -620,16 +673,16 @@ class ReleasePollerTest(unittest.TestCase):
                         "next": None,
                         "previous": None,
                         "results": [
-                            {"name": "17.6.1.160"},
-                            {"name": "15.14.1.161"},
-                            {"name": "15.14.1.159-arm64"},
-                            {"name": "15.14.1.158"},
-                            {"name": "17.6.1.158"},
+                            {"name": "17.6.1.178"},
+                            {"name": "15.14.1.179"},
+                            {"name": "15.14.1.177-arm64"},
+                            {"name": "15.14.1.176"},
+                            {"name": "17.6.1.176"},
                             {"name": "17.4.1.004"},
-                            {"name": "17.6.1.159"},
-                            {"name": "15.14.1.160"},
-                            {"name": "15.14.1.159"},
-                            {"name": "17.6.1.161"},
+                            {"name": "17.6.1.177"},
+                            {"name": "15.14.1.178"},
+                            {"name": "15.14.1.177"},
+                            {"name": "17.6.1.179"},
                         ],
                     }
                 ).encode()
@@ -643,7 +696,7 @@ class ReleasePollerTest(unittest.TestCase):
                 pass
 
         self.published.write_text(
-            "postgres-15.14.1.159\npostgres-17.6.1.159\n", encoding="utf-8"
+            "postgres-15.14.1.177-r0\npostgres-17.6.1.177-r0\n", encoding="utf-8"
         )
         server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), DockerHubHandler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -664,11 +717,11 @@ class ReleasePollerTest(unittest.TestCase):
             self.trace.read_text(encoding="utf-8").splitlines(),
             [
                 "workflow run service-release.yml --repo supabase/slim-services "
-                "--ref main -f service=postgres -f version=15.14.1.160 -f force=false",
+                "--ref main -f service=postgres -f version=15.14.1.178",
                 "workflow run service-release.yml --repo supabase/slim-services "
-                "--ref main -f service=postgres -f version=15.14.1.161 -f force=false",
+                "--ref main -f service=postgres -f version=15.14.1.179",
                 "workflow run service-release.yml --repo supabase/slim-services "
-                "--ref main -f service=postgres -f version=17.6.1.160 -f force=false",
+                "--ref main -f service=postgres -f version=17.6.1.178",
             ],
         )
 
@@ -684,7 +737,7 @@ class ReleasePollerTest(unittest.TestCase):
             "release_floor": "15.14.1.160",
         }
         self.config.write_text(json.dumps({"services": {"postgres": config}}), encoding="utf-8")
-        self.published.write_text("postgres-15.14.1.159\n", encoding="utf-8")
+        self.published.write_text("postgres-15.14.1.159-r0\n", encoding="utf-8")
 
         class DockerHubHandler(http.server.BaseHTTPRequestHandler):
             def do_GET(self):
