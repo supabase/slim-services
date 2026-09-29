@@ -1,4 +1,4 @@
-#!/usr/bin/sh
+#!/bin/sh
 set -eu
 
 # The launcher is deliberately relative to its extracted artifact.  It keeps

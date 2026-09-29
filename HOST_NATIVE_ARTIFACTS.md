@@ -21,22 +21,25 @@ mirror exceptions: their release path verifies the selected upstream archive or
 source snapshot and mirrors the exact OCI image where applicable; it does not
 derive a new image from this repository's rootfs.
 
-The release pipeline produces this layout:
+The release pipeline builds locally under the upstream version `U` and stages
+published assets under the release version `R = <U>-r<N>` (`N` a packaging
+revision, immutable once released):
 
 ```text
-artifacts/<service>/<version>/<platform>-<arch>/
+artifacts/<service>/<U>/<platform>-<arch>/     # local build directory, keyed by U
 ├── rootfs/
-├── <service>-<version>-<platform>-<arch>.tar.zst
-├── <service>-<version>-<platform>-<arch>.sbom.spdx.json
+├── <service>-<R>-<platform>-<arch>.tar.zst
+├── <service>-<R>-<platform>-<arch>.sbom.spdx.json
 ├── SHA256SUMS
 └── manifest.json
 ```
 
 The rootfs is the canonical local build and smoke input. Archives are
-distribution products. `SHA256SUMS` covers the archive and SBOM; the manifest
-records the source ref or upstream digest, platform, entrypoint/command,
-artifact and image sizes, archive/image digests when available, and the SBOM
-and license paths.
+distribution products, named and released under `R`. `SHA256SUMS` covers the
+archive, SBOM, and (per platform, in the release) the manifest; the manifest
+records `version: R`, `upstream_version: U`, `revision: N`, the source ref or
+upstream digest, platform, entrypoint/command, artifact and image sizes,
+archive/image digests when available, and the SBOM and license paths.
 
 ## Relocation and supported hosts
 
@@ -102,8 +105,10 @@ server path) execs those tools without starting the server.
 
 The portable artifacts expose service-owned launchers alongside their main
 servers. `bin/prepare` is a one-shot runtime command: Realtime runs migrations
-and seeds when `SEED_SELF_HOST=true`, Analytics runs its migrations, Storage
-runs its migration bundle, and Pooler runs its migrations. `bin/storage`,
+and seeds in one BEAM invocation when `SEED_SELF_HOST=true`, without starting
+the Realtime application; its normal path runs the migration release command.
+Analytics runs its migrations, Storage runs its migration bundle, and Pooler
+runs its migrations. `bin/storage`,
 `bin/studio`, and `bin/pgmeta` are the relocatable Node service launchers;
 `bin/server`, `bin/logflare`, and `bin/supavisor` remain the BEAM server
 launchers. Derived images use the same artifact launchers, with image overlays

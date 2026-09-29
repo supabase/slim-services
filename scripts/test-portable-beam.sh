@@ -117,9 +117,8 @@ class PortableBeamLauncherTest(unittest.TestCase):
             "LD_PRELOAD": "/host/preload.so",
             "GLIBC_TUNABLES": "glibc.malloc.check=3",
         }
-        command = [str(launcher)] if pathlib.Path("/usr/bin/sh").exists() else ["/bin/sh", str(launcher)]
         return subprocess.run(
-            [*command, *args],
+            [str(launcher), *args],
             cwd=ROOT_DIR,
             env=env,
             input=stdin,
@@ -185,8 +184,8 @@ class PortableBeamLauncherTest(unittest.TestCase):
         self.assertEqual(result.returncode, 127)
         self.assertIn("real BEAM executable is missing", result.stderr)
 
-    def test_generated_launcher_uses_image_sh_path(self):
-        self.assertEqual(LAUNCHER.read_text(encoding="utf-8").splitlines()[0], "#!/usr/bin/sh")
+    def test_generated_launcher_uses_posix_sh_path(self):
+        self.assertEqual(LAUNCHER.read_text(encoding="utf-8").splitlines()[0], "#!/bin/sh")
 
     def test_pinned_notice_extraction_consumes_tar_under_pipefail(self):
         source_tree = self.temp / "notice-tree"
@@ -413,9 +412,8 @@ tar -xOf "$1" "$notice_member" > "$2"
         launcher = erts_bin / "beam.smp"
         self.assertTrue(launcher.is_file())
         self.assertTrue((erts_bin / ".beam.smp-portable-real").is_file())
-        command = [str(launcher)] if pathlib.Path("/usr/bin/sh").exists() else ["/bin/sh", str(launcher)]
         launch = subprocess.run(
-            [*command, "--version"],
+            [str(launcher), "--version"],
             cwd=ROOT_DIR,
             env={**environment, "PATH": os.environ["PATH"]},
             text=True,

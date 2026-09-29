@@ -73,16 +73,17 @@ display_names=("Postgres" "PostgREST" "Auth" "Realtime" "Storage" "Edge Runtime"
 rows_tsv=""
 ORDERED_SERVICES="$(IFS=,; printf '%s' "${ordered_services[*]}")"
 DISPLAY_NAMES="$(IFS=$'\t'; printf '%s' "${display_names[*]}")"
-while IFS=$'\t' read -r service display version; do
+# Unit-separated: tab is IFS whitespace, so read would merge empty fields.
+while IFS=$'\x1f' read -r service display upstream_version linux_dir darwin_dir; do
   [[ -n "$service" ]] || continue
   recipe_vars="$(
-    SOURCE_REF="$version"
-    VERSION="$version"
+    SOURCE_REF="$upstream_version"
+    VERSION="$upstream_version"
     # shellcheck disable=SC1090
     source "$(recipe_file "$service")" >/dev/null 2>&1
     printf '%s\t%s\t%s' "${UPSTREAM_IMAGE:-}" "${UPSTREAM_COMPARE_IMAGE:-}" "${RESULTS_NOTE:-}"
   )"
-  rows_tsv+="$service"$'\t'"$display"$'\t'"$recipe_vars"$'\t'"$version"$'\n'
+  rows_tsv+="$service"$'\t'"$display"$'\t'"$recipe_vars"$'\t'"$linux_dir"$'\t'"$darwin_dir"$'\n'
 done < <(
   ORDERED_SERVICES="$ORDERED_SERVICES" DISPLAY_NAMES="$DISPLAY_NAMES" \
     MERGE="$merge" \
@@ -105,9 +106,20 @@ def version_key(value):
         for part in re.findall(r"\d+|\D+", value)
     )
 
-def manifest_version(path):
+def manifest_entry(path):
+    """(upstream version, revision, artifacts/<service>/<dir> name) of a platform manifest."""
     with open(path, encoding="utf-8") as fh:
-        return json.load(fh).get("version", "")
+        manifest = json.load(fh)
+    upstream = manifest.get("upstream_version") or manifest.get("version", "")
+    version_dir = os.path.basename(os.path.dirname(os.path.dirname(path)))
+    return upstream, manifest.get("revision", 0), version_dir
+
+def platform_manifests(service, platform):
+    return glob.glob(os.path.join(artifacts_dir, service, "*", platform, "manifest.json"))
+
+def newest_in_line(entries, pattern):
+    matched = [entry for entry in entries if pattern.fullmatch(entry[0])]
+    return max(matched, key=lambda entry: (version_key(entry[0]), entry[1])) if matched else None
 
 def postgres_line_label(pattern):
     if "orioledb" in pattern:
@@ -118,25 +130,37 @@ def postgres_line_label(pattern):
         return "Postgres 17"
     return "Postgres"
 
+# Each platform table reads its own newest manifest, as before release lines.
 for service, display in zip(services, displays):
-    manifests = glob.glob(os.path.join(artifacts_dir, service, "*", "linux-arm64", "manifest.json"))
+    linux = platform_manifests(service, "linux-arm64")
+    darwin = platform_manifests(service, "darwin-arm64")
     lines = release_config.get(service, {}).get("release_lines")
     if not lines:
-        version = manifest_version(max(manifests, key=os.path.getmtime)) if manifests else ""
-        print(service, display, version, sep="\t")
-        continue
-    for line in lines:
-        pattern = re.compile(line["tag_pattern"])
-        matched = [path for path in manifests if pattern.fullmatch(manifest_version(path))]
-        if not matched:
+        linux_entry = manifest_entry(max(linux, key=os.path.getmtime)) if linux else None
+        darwin_entry = manifest_entry(max(darwin, key=os.path.getmtime)) if darwin else None
+        selected = [(display, linux_entry, darwin_entry)]
+    else:
+        linux_entries = [manifest_entry(path) for path in linux]
+        darwin_entries = [manifest_entry(path) for path in darwin]
+        selected = []
+        for line in lines:
+            pattern = re.compile(line["tag_pattern"])
+            label = postgres_line_label(line["tag_pattern"]) if service == "postgres" else display
+            linux_entry = newest_in_line(linux_entries, pattern)
+            darwin_entry = newest_in_line(darwin_entries, pattern)
             # --merge keeps an existing row only when this line is still emitted.
-            if os.environ.get("MERGE") == "1":
-                label = postgres_line_label(line["tag_pattern"]) if service == "postgres" else display
-                print(service, label, "", sep="\t")
-            continue
-        version = max((manifest_version(path) for path in matched), key=version_key)
-        label = postgres_line_label(line["tag_pattern"]) if service == "postgres" else display
-        print(service, label, version, sep="\t")
+            if linux_entry or darwin_entry or os.environ.get("MERGE") == "1":
+                selected.append((label, linux_entry, darwin_entry))
+    for label, linux_entry, darwin_entry in selected:
+        upstream = (linux_entry or darwin_entry or ("",))[0]
+        print(
+            service,
+            label,
+            upstream,
+            linux_entry[2] if linux_entry else "",
+            darwin_entry[2] if darwin_entry else "",
+            sep="\x1f",
+        )
 PY
 )
 
@@ -183,7 +207,7 @@ for line in os.environ["ROWS_TSV"].splitlines():
     if not line.strip():
         continue
     service, display = line.split("\t")[:2]
-    version = line.split("\t")[5] if len(line.split("\t")) > 5 else ""
+    version = (line.split("\t") + [""] * 7)[6]
 
     manifest_path = (
         os.path.join(artifacts_dir, service, version, "darwin-arm64", "manifest.json")
@@ -197,7 +221,8 @@ for line in os.environ["ROWS_TSV"].splitlines():
     with open(manifest_path, encoding="utf-8") as fh:
         manifest = json.load(fh)
 
-    version = manifest.get("version", "?")
+    release_version = manifest.get("version", "?")
+    upstream_version = manifest.get("upstream_version", release_version)
     size = manifest.get("size") or {}
     archive_mib = size.get("archive_mib")
     rootfs_mib = size.get("rootfs_mib")
@@ -213,13 +238,13 @@ for line in os.environ["ROWS_TSV"].splitlines():
     portable_cell = "yes" if portable else "**no**"
     sources = f"[report](services/{service}/REPORT.md)"
     if published:
-        release_tag = f"{service}-{version}"
+        release_tag = f"{service}-{release_version}"
         sources = (
             f"[release](https://github.com/{results_repository}/releases/tag/{release_tag})"
             f" · {sources}"
         )
     rows.append(
-        f"| {display} | `{version}` | {archive_cell} | {rootfs_cell} "
+        f"| {display} | `{upstream_version}` | {archive_cell} | {rootfs_cell} "
         f"| {rss_cell} | {cpu_cell} | {portable_cell} "
         f"| {sources} |"
     )
@@ -347,7 +372,8 @@ for line in os.environ["ROWS_TSV"].splitlines():
     with open(manifest_path, encoding="utf-8") as fh:
         manifest = json.load(fh)
 
-    version = manifest.get("version", "?")
+    release_version = manifest.get("version", "?")
+    upstream_version = manifest.get("upstream_version", release_version)
     image = manifest.get("image") or {}
     slim_mib = image.get("gzip_mib")
     runtime = manifest.get("runtime") or {}
@@ -369,12 +395,12 @@ for line in os.environ["ROWS_TSV"].splitlines():
 
     reduction = (1 - slim_mib / up) * 100
 
-    version_cell = f"`{version}`" + (f" ({note})" if note else "")
+    version_cell = f"`{upstream_version}`" + (f" ({note})" if note else "")
     rss_cell = f"`{rss:.1f} MiB`" if rss is not None else "—"
     cpu_cell = f"`{cpu:.2f}%`" if cpu is not None else "—"
     sources = f"[report](services/{service}/REPORT.md)"
     if published:
-        release_tag = f"{service}-{version}"
+        release_tag = f"{service}-{release_version}"
         sources = (
             f"[release](https://github.com/{results_repository}/releases/tag/{release_tag})"
             f" · {sources}"

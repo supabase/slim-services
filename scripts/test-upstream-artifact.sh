@@ -155,6 +155,9 @@ class UpstreamArtifactTest(unittest.TestCase):
         self.assertEqual((rootfs / "share/doc/mailpit/README.md").read_bytes(), CONTENTS["README.md"][0])
 
         manifest = json.loads((self.artifact_dir / "manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["version"], "v1.30.2-r0")
+        self.assertEqual(manifest["upstream_version"], "v1.30.2")
+        self.assertEqual(manifest["revision"], 0)
         self.assertEqual(manifest["libc"], "glibc")
         self.assertEqual(manifest["artifact_source"], "upstream-release-archive")
         self.assertEqual(manifest["provenance"]["kind"], "repackaged-upstream-release")
@@ -168,6 +171,7 @@ class UpstreamArtifactTest(unittest.TestCase):
         self.assertTrue((self.artifact_dir / manifest["sbom"]).is_file())
         archive = self.artifact_dir / manifest["archive"]
         self.assertEqual(archive.suffixes[-2:], [".tar", ".zst"])
+        self.assertEqual(archive.name, "mailpit-v1.30.2-r0-linux-amd64.tar.zst")
         sums = self.artifact_dir / "SHA256SUMS"
         self.assertTrue(sums.is_file())
         archive_sha256 = hashlib.sha256(archive.read_bytes()).hexdigest()
@@ -177,6 +181,22 @@ class UpstreamArtifactTest(unittest.TestCase):
             manifest["provenance"]["normalized_archive"],
             {"name": archive.name, "sha256": archive_sha256},
         )
+
+    def test_revision_names_archive_and_manifest(self):
+        result = self.run_build(REVISION="2")
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        manifest = json.loads((self.artifact_dir / "manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["version"], "v1.30.2-r2")
+        self.assertEqual(manifest["upstream_version"], "v1.30.2")
+        self.assertEqual(manifest["revision"], 2)
+        archive = self.artifact_dir / manifest["archive"]
+        self.assertEqual(archive.name, "mailpit-v1.30.2-r2-linux-amd64.tar.zst")
+
+    def test_invalid_revision_is_rejected(self):
+        result = self.run_build(REVISION="01")
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("REVISION must be a non-negative integer", result.stderr)
 
     def test_unset_optional_mapping_json_parses(self):
         env = self.env.copy()

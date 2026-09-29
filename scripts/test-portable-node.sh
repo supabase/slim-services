@@ -100,12 +100,8 @@ class PortableNodeLauncherTest(unittest.TestCase):
         if extra_env:
             env.update(extra_env)
         launcher = root / "node" / "bin" / "node"
-        # macOS lacks the image-provided /usr/bin/sh; invoke the exact
-        # template through the host shell there while preserving its image
-        # shebang assertion above.
-        command = [str(launcher)] if pathlib.Path("/usr/bin/sh").exists() else ["/bin/sh", str(launcher)]
         return subprocess.run(
-            [*command, *args],
+            [str(launcher), *args],
             cwd=ROOT_DIR,
             env=env,
             text=True,
@@ -118,14 +114,6 @@ class PortableNodeLauncherTest(unittest.TestCase):
         runtime_root = image_root / "slim-runtime"
         shutil.copytree(self.rootfs, runtime_root, symlinks=True)
         (image_root / "node").symlink_to("slim-runtime/node")
-        if not pathlib.Path("/usr/bin/sh").exists():
-            fixture_launcher = runtime_root / "node" / "bin" / "node"
-            fixture_launcher.write_text(
-                fixture_launcher.read_text(encoding="utf-8").replace(
-                    "#!/usr/bin/sh", "#!/bin/sh", 1
-                ),
-                encoding="utf-8",
-            )
         if real_node is not None:
             real = runtime_root / "node" / "bin" / ".node-real"
             real.unlink()
@@ -385,8 +373,8 @@ in (import ./nix/portable-node/default.nix { pkgs = fakePkgs; nodeMajor = 24; })
             ["unset", "unset", "unset", "unset", "unset"],
         )
 
-    def test_generated_launcher_uses_image_sh_path(self):
-        self.assertEqual(LAUNCHER.read_text(encoding="utf-8").splitlines()[0], "#!/usr/bin/sh")
+    def test_generated_launcher_uses_posix_sh_path(self):
+        self.assertEqual(LAUNCHER.read_text(encoding="utf-8").splitlines()[0], "#!/bin/sh")
 
     def test_launcher_relocates_with_the_extracted_root(self):
         relocated = self.temp / "relocated root"

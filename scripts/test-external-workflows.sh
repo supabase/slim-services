@@ -14,13 +14,37 @@ import tempfile
 ROOT = pathlib.Path(__import__("sys").argv[1])
 PLAN = ROOT / "scripts" / "plan-external-release.sh"
 VERIFY = ROOT / "scripts" / "verify-external-release.sh"
-DECISION = ROOT / "scripts" / "release-workflow-decision.sh"
 
 
 def run(command, *, env=None, check=False):
     merged = os.environ.copy()
     merged.update(env or {})
     return subprocess.run(command, cwd=ROOT, text=True, capture_output=True, env=merged, check=check)
+
+
+def run_in(cwd, command, *, env=None, check=False):
+    merged = os.environ.copy()
+    merged.update(env or {})
+    return subprocess.run(command, cwd=cwd, text=True, capture_output=True, env=merged, check=check)
+
+
+def extract_step_run(job, step_name):
+    ruby = (
+        "require 'yaml'; "
+        "data=YAML.safe_load(File.read(ARGV[0]), aliases: true); "
+        f"step=data.fetch('jobs').fetch({job!r}).fetch('steps').find " + "{ |s| s['name'] == ARGV[1] }; "
+        "abort \"#{ARGV[1]} missing\" unless step; puts step.fetch('run')"
+    )
+    result = run(["ruby", "-e", ruby, str(ROOT / ".github" / "workflows" / "service-release.yml"), step_name])
+    assert_true(result.returncode == 0, result.stderr)
+    return result.stdout
+
+
+def write_script(directory, name, body):
+    script = directory / name
+    script.write_text("#!/usr/bin/env bash\n" + body, encoding="utf-8")
+    script.chmod(0o755)
+    return script
 
 
 def assert_true(condition, message):
@@ -315,24 +339,293 @@ def test_validation_only_builds_existing_releases_without_publication():
     assert_true("validation_only" in parsed["outputs"], "plan must expose validation_only")
     assert_true("build" in parsed["outputs"], "plan must expose build decision")
     assert_true("VALIDATION_ONLY" in parsed["plan_env"], "plan must receive VALIDATION_ONLY")
-    assert_true("scripts/release-workflow-decision.sh" in parsed["plan_run"], "plan must consume the decision seam")
     assert_true(parsed["build_if"] == "needs.plan.outputs.build == 'true'", "build must use the decision output")
-
-    scenarios = {
-        ("true", "false", "true"): {"build": True, "publish": False},
-        ("true", "true", "true"): {"build": True, "publish": False},
-        ("false", "false", "true"): {"build": False, "publish": False},
-        ("false", "true", "true"): {"build": True, "publish": True},
-        ("false", "false", "false"): {"build": True, "publish": True},
-    }
-    for arguments, expected in scenarios.items():
-        decision = run([str(DECISION), *arguments])
-        assert_true(decision.returncode == 0, decision.stderr)
-        assert_true(json.loads(decision.stdout) == expected, f"decision mismatch for {arguments}: {decision.stdout}")
 
     for key in ("publish_image_if", "publish_release_if"):
         condition = parsed[key]
         assert_true("needs.plan.outputs.publish == 'true'" in condition, f"{key} lost publication gate")
+
+
+def test_release_workflow_uses_hotfix_input_and_revision_planner():
+    ruby = (
+        "require 'yaml'; require 'json'; "
+        "data=YAML.safe_load(File.read(ARGV[0]), aliases: true); "
+        "dispatch=data.fetch('on').fetch('workflow_dispatch').fetch('inputs'); "
+        "call=data.fetch('on').fetch('workflow_call').fetch('inputs'); "
+        "plan=data.fetch('jobs').fetch('plan'); "
+        "plan_step=plan.fetch('steps').find { |s| s['name'] == 'Validate inputs and check existing release' }; "
+        "puts JSON.generate({dispatch: dispatch, call: call, outputs: plan.fetch('outputs'), "
+        "plan_env: plan_step.fetch('env'), plan_run: plan_step.fetch('run')})"
+    )
+    result = run(["ruby", "-e", ruby, str(ROOT / ".github" / "workflows" / "service-release.yml")])
+    assert_true(result.returncode == 0, result.stderr)
+    parsed = json.loads(result.stdout)
+    for name, inputs in (("workflow_dispatch", parsed["dispatch"]), ("workflow_call", parsed["call"])):
+        assert_true("force" not in inputs, f"{name} must not have a force input")
+        hotfix = inputs.get("hotfix")
+        assert_true(hotfix is not None, f"{name} lacks hotfix input")
+        assert_true(hotfix.get("type") == "boolean", f"{name} hotfix must be boolean")
+        assert_true(hotfix.get("default") is False, f"{name} hotfix must default false")
+        hotfix_reason = inputs.get("hotfix_reason")
+        assert_true(hotfix_reason is not None, f"{name} lacks hotfix_reason input")
+        assert_true(hotfix_reason.get("type") == "string", f"{name} hotfix_reason must be a string")
+        assert_true(hotfix_reason.get("default") == "", f"{name} hotfix_reason must default to an empty string")
+    assert_true("release_version" in parsed["outputs"], "plan must expose release_version")
+    assert_true("revision" in parsed["outputs"], "plan must expose revision")
+    assert_true("FORCE" not in parsed["plan_env"], "plan must not reference the removed force input")
+    assert_true("HOTFIX" in parsed["plan_env"], "plan must receive HOTFIX")
+    assert_true("scripts/plan-release-revision.sh" in parsed["plan_run"], "plan must call the revision planner")
+    assert_true(
+        "release-workflow-decision.sh" not in parsed["plan_run"],
+        "plan must not call the deleted decision helper",
+    )
+
+
+def test_build_step_labels_image_with_release_version():
+    # Kept as the one structural check here: nothing executes the workflow's
+    # "Build, audit, smoke, and package" step (it needs Docker/Nix), so this
+    # is the only place that would notice IMAGE_TAG regressing to the bare
+    # upstream version instead of the release version. OCI_VERSION and
+    # OCI_REVISION were dropped: they are plain "does this string equal that
+    # string" checks with no such gap to cover.
+    ruby = (
+        "require 'yaml'; require 'json'; "
+        "data=YAML.safe_load(File.read(ARGV[0]), aliases: true); "
+        "s=data.fetch('jobs').fetch('build').fetch('steps').find { |x| x['name'] == 'Build, audit, smoke, and package' }; "
+        "abort 'build step missing' unless s; puts JSON.generate(s.fetch('env'))"
+    )
+    result = run(["ruby", "-e", ruby, str(ROOT / ".github" / "workflows" / "service-release.yml")])
+    assert_true(result.returncode == 0, result.stderr)
+    env = json.loads(result.stdout)
+    assert_true(
+        env.get("IMAGE_TAG")
+        == "local/${{ inputs.service }}:${{ needs.plan.outputs.release_version }}-${{ matrix.platform_dir }}",
+        f"IMAGE_TAG must be tagged with the release version, got: {env.get('IMAGE_TAG')!r}",
+    )
+
+
+def test_publish_release_is_create_only():
+    ruby = (
+        "require 'yaml'; require 'json'; "
+        "data=YAML.safe_load(File.read(ARGV[0]), aliases: true); "
+        "steps=data.fetch('jobs').fetch('publish-release').fetch('steps'); "
+        "puts JSON.generate(steps.map { |s| {name: s['name'], run: s['run']} })"
+    )
+    result = run(["ruby", "-e", ruby, str(ROOT / ".github" / "workflows" / "service-release.yml")])
+    assert_true(result.returncode == 0, result.stderr)
+    steps = json.loads(result.stdout)
+    combined_run = "\n".join(step.get("run") or "" for step in steps)
+    assert_true("gh release edit" not in combined_run, "publish-release must not edit an existing release")
+    assert_true("gh release create" in combined_run, "publish-release must still create the release")
+    assert_true(
+        any("scripts/assert-revision-unpublished.sh" in (step.get("run") or "") for step in steps),
+        "publish-release must reuse the shared fail-closed guard before creating",
+    )
+
+
+def test_notify_cli_job_runs_once_publish_release_succeeds():
+    # gates and wiring: the executable contract (payload, missing-token and
+    # failed-dispatch behavior) is covered by the notify_cli_* tests below.
+    ruby = (
+        "require 'yaml'; require 'json'; "
+        "data=YAML.safe_load(File.read(ARGV[0]), aliases: true); "
+        "job=data.fetch('jobs').fetch('notify-cli'); "
+        "abort 'notify-cli step missing' unless job.fetch('steps').any? { |s| s['name'] == 'Notify CLI repository of published release' }; "
+        "puts JSON.generate({needs: job.fetch('needs'), if: job.fetch('if')})"
+    )
+    result = run(["ruby", "-e", ruby, str(ROOT / ".github" / "workflows" / "service-release.yml")])
+    assert_true(result.returncode == 0, result.stderr)
+    parsed = json.loads(result.stdout)
+    assert_true(sorted(parsed["needs"]) == ["plan", "publish-release"], f"notify-cli needs: {parsed['needs']}")
+    assert_true(
+        parsed["if"]
+        == "${{ !cancelled() && needs.plan.outputs.publish == 'true' && needs.publish-release.result == 'success' }}",
+        f"notify-cli must run only after publish-release succeeds, and not be skipped by an "
+        f"unrelated ancestor job failing (e.g. mirror-ecr): {parsed['if']!r}",
+    )
+
+
+NOTIFY_CLI_ENV = {
+    "RELEASE_TAG": "auth-v2.197.0-r0",
+    "RELEASE_VERSION": "v2.197.0-r0",
+    "REVISION": "0",
+    "SERVICE": "auth",
+    "VERSION": "v2.197.0",
+}
+
+
+def run_notify_cli(*, gh_script=None):
+    run_block = extract_step_run("notify-cli", "Notify CLI repository of published release")
+    with tempfile.TemporaryDirectory(prefix="notify-cli-test.") as name:
+        directory = pathlib.Path(name)
+        script = write_script(directory, "notify.sh", run_block)
+        bin_dir = directory / "bin"
+        bin_dir.mkdir()
+        payload_file = directory / "payload.json"
+        default_gh = (
+            "#!/bin/sh\n"
+            "set -eu\n"
+            "cat > \"$FAKE_PAYLOAD_FILE\"\n"
+        )
+        write_script(bin_dir, "gh", gh_script or default_gh)
+        env = dict(NOTIFY_CLI_ENV)
+        env["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
+        env["FAKE_PAYLOAD_FILE"] = str(payload_file)
+        env["MIRROR_DISPATCH_TOKEN"] = "test-token"
+        result = run_in(directory, [str(script)], env=env)
+        result.payload = payload_file.read_text(encoding="utf-8") if payload_file.exists() else None
+        return result
+
+
+def test_notify_cli_dispatches_the_published_release_payload():
+    result = run_notify_cli()
+    assert_true(result.returncode == 0, result.stderr)
+    payload = json.loads(result.payload)
+    assert_true(payload["event_type"] == "slim-release-published", payload)
+    assert_true(
+        payload["client_payload"]
+        == {
+            "service": "auth",
+            "upstream_version": "v2.197.0",
+            "revision": 0,
+            "release_version": "v2.197.0-r0",
+        },
+        payload,
+    )
+
+
+def test_notify_cli_fails_when_the_dispatch_call_fails():
+    failing_gh = "#!/bin/sh\nset -eu\ncat >/dev/null\nexit 1\n"
+    result = run_notify_cli(gh_script=failing_gh)
+    assert_true(result.returncode != 0, "expected a non-zero exit when the dispatch call fails")
+    assert_true("repository_dispatch of slim-release-published" in result.stderr, result.stderr)
+
+
+CREATE_RELEASE_GH_REPO = "supabase/slim-services"
+CREATE_RELEASE_TAG = "auth-v2.197.0-r0"
+
+
+def run_create_release_step(state):
+    # Exercises the real scripts/assert-revision-unpublished.sh (symlinked
+    # in, not reimplemented) plus the step's own draft lookup and delete, so
+    # a regression in either the shared guard or the step's use of it is
+    # caught here.
+    run_block = extract_step_run("publish-release", "Create GitHub release")
+    with tempfile.TemporaryDirectory(prefix="create-release-test.") as name:
+        directory = pathlib.Path(name)
+        (directory / "scripts").symlink_to(ROOT / "scripts", target_is_directory=True)
+        script = write_script(directory, "create.sh", run_block)
+        bin_dir = directory / "bin"
+        bin_dir.mkdir()
+        trace_file = directory / "gh-trace"
+        trace_file.write_text("", encoding="utf-8")
+        # $1/$2 dispatch: "api -i" is the published-release guard lookup,
+        # "api --paginate" is the stale-draft listing (piped through the
+        # real system jq with the exact --jq filter the step passes, so a
+        # changed filter breaks this test rather than silently returning
+        # nothing), "api -X" is delete-by-id, and "release create" is the
+        # final create.
+        fake_gh = (
+            "#!/bin/sh\n"
+            "set -eu\n"
+            "printf '%s\\n' \"$*\" >> \"$FAKE_GH_TRACE\"\n"
+            "case \"$1 $2\" in\n"
+            "  'api -i')\n"
+            "    case \"$FAKE_RELEASE_STATE\" in\n"
+            "      missing|draft) printf 'gh: Not Found (HTTP 404)\\n' >&2; exit 1 ;;\n"
+            "      published) printf 'HTTP/2.0 200 OK\\n\\n{}\\n' ;;\n"
+            "      error500) printf 'gh: Internal Server Error (HTTP 500)\\n' >&2; exit 1 ;;\n"
+            "    esac\n"
+            "    ;;\n"
+            "  'api --paginate')\n"
+            "    filter=\"$5\"\n"
+            "    case \"$FAKE_RELEASE_STATE\" in\n"
+            "      draft) fixture='[{\"id\":555,\"draft\":true,\"tag_name\":\"'\"$RELEASE_TAG\"'\"}]' ;;\n"
+            "      *) fixture='[]' ;;\n"
+            "    esac\n"
+            "    printf '%s' \"$fixture\" | jq -r \"$filter\"\n"
+            "    ;;\n"
+            "  'api -X') exit 0 ;;\n"
+            "  'release create') exit 0 ;;\n"
+            "  *) printf 'unexpected gh invocation: %s\\n' \"$*\" >&2; exit 2 ;;\n"
+            "esac\n"
+        )
+        write_script(bin_dir, "gh", fake_gh)
+        env = {
+            "GH_TOKEN": "test-token",
+            "GH_REPO": CREATE_RELEASE_GH_REPO,
+            "GITHUB_SHA": "0" * 40,
+            "RELEASE_TAG": CREATE_RELEASE_TAG,
+            "RELEASE_VERSION": "v2.197.0-r0",
+            "SERVICE": "auth",
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "FAKE_GH_TRACE": str(trace_file),
+            "FAKE_RELEASE_STATE": state,
+        }
+        result = run_in(directory, [str(script)], env=env)
+        result.trace = trace_file.read_text(encoding="utf-8").splitlines()
+        return result
+
+
+def test_create_release_step_creates_when_nothing_exists():
+    result = run_create_release_step("missing")
+    assert_true(result.returncode == 0, result.stderr)
+    assert_true(any(line.startswith("release create ") for line in result.trace), result.trace)
+    assert_true(not any(line.startswith("api -X ") for line in result.trace), result.trace)
+
+
+def test_create_release_step_deletes_a_stale_draft_then_creates():
+    result = run_create_release_step("draft")
+    assert_true(result.returncode == 0, result.stderr)
+    delete_index = next((i for i, line in enumerate(result.trace) if line.startswith("api -X DELETE ")), None)
+    create_index = next((i for i, line in enumerate(result.trace) if line.startswith("release create ")), None)
+    assert_true(delete_index is not None, f"expected a stale draft deletion by id: {result.trace}")
+    assert_true(create_index is not None, f"expected a create after deleting the draft: {result.trace}")
+    assert_true(delete_index < create_index, f"draft must be deleted before re-creating: {result.trace}")
+    assert_true(
+        result.trace[delete_index].endswith("releases/555"),
+        f"draft must be deleted by id, not by tag: {result.trace[delete_index]}",
+    )
+    assert_true("stale draft" in result.stdout, result.stdout)
+
+
+def test_create_release_step_fails_when_already_published():
+    result = run_create_release_step("published")
+    assert_true(result.returncode != 0, "expected a non-zero exit for an already-published release")
+    assert_true("already published; revisions are immutable" in result.stderr, result.stderr)
+    assert_true(not any(line.startswith("api -X ") for line in result.trace), result.trace)
+    assert_true(not any(line.startswith("release create ") for line in result.trace), result.trace)
+
+
+def test_create_release_step_fails_when_the_published_check_errors():
+    # A REST 5xx on the guard lookup must fail closed: never read as
+    # "not published", and must never reach the draft listing or create.
+    result = run_create_release_step("error500")
+    assert_true(result.returncode != 0, "expected a non-zero exit when the published check errors")
+    assert_true("already published" not in result.stderr, result.stderr)
+    assert_true("HTTP 500" in result.stderr, result.stderr)
+    assert_true(not any(line.startswith("api --paginate ") for line in result.trace), result.trace)
+    assert_true(not any(line.startswith("api -X ") for line in result.trace), result.trace)
+    assert_true(not any(line.startswith("release create ") for line in result.trace), result.trace)
+
+
+def test_stage_release_assets_appends_manifest_hash_to_platform_checksums():
+    # The manifest-hashing and re-sort behavior this step performs is
+    # exercised end to end in scripts/test-image-artifact-archive.sh, which
+    # runs this exact run: block against real fixture files. Only the naming
+    # wiring (release assets keyed by RELEASE_VERSION) is checked here.
+    ruby = (
+        "require 'yaml'; require 'json'; "
+        "data=YAML.safe_load(File.read(ARGV[0]), aliases: true); "
+        "s=data.fetch('jobs').fetch('build').fetch('steps').find { |x| x['name'] == 'Stage release assets' }; "
+        "abort 'stage missing' unless s; puts s.fetch('run')"
+    )
+    result = run(["ruby", "-e", ruby, str(ROOT / ".github" / "workflows" / "service-release.yml")])
+    assert_true(result.returncode == 0, result.stderr)
+    run_block = result.stdout
+    assert_true(
+        "$RELEASE_VERSION" in run_block, "stage step must name release assets with the release version"
+    )
 
 
 def test_workflow_downloads_and_verifies_snapshot_before_recipe_build_consumers():
@@ -504,7 +797,16 @@ def test_release_aggregate_checksums_cover_external_evidence():
             encoding="utf-8",
         )
         merged = os.environ.copy()
-        merged.update({"IMAGE_RELEASE": "mirror", "SERVICE": service, "VERSION": version})
+        merged.update({
+            "GITHUB_SHA": "f" * 40,
+            "HOTFIX": "false",
+            "HOTFIX_REASON": "",
+            "IMAGE_RELEASE": "mirror",
+            "RELEASE_VERSION": f"{version}-r0",
+            "REVISION": "0",
+            "SERVICE": service,
+            "VERSION": version,
+        })
         executed = subprocess.run(
             ["bash", "-c", run_block], cwd=temp_path, text=True, capture_output=True, env=merged
         )

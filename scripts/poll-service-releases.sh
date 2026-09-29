@@ -217,21 +217,23 @@ PY
 
 release_candidate_state() {
   local version="$1"
-  local release_tag="$service-$version"
-  if grep -Fxq "$release_tag" <<< "$published_release_tags"; then
-    printf 'published'
-    return
-  fi
-  RUNS_JSON="$runs_json" python3 - \
-    "Release $service $version" \
+  RUNS_JSON="$runs_json" PUBLISHED_RELEASE_TAGS="$published_release_tags" python3 - \
+    "$service" \
+    "$version" \
     "$POLL_RETRY_COOLDOWN_SECONDS" \
     "$POLL_SUCCESS_GRACE_SECONDS" <<'PY'
 import datetime
 import json
 import os
+import re
 import sys
 
-expected_title, cooldown_raw, success_grace_raw = sys.argv[1:]
+svc, upstream_version, cooldown_raw, success_grace_raw = sys.argv[1:]
+published = re.compile(rf"^{re.escape(svc)}-{re.escape(upstream_version)}-r(0|[1-9][0-9]*)$")
+if any(published.match(tag) for tag in os.environ["PUBLISHED_RELEASE_TAGS"].splitlines()):
+    print("published")
+    raise SystemExit(0)
+expected_title = f"Release {svc} {upstream_version}"
 runs_raw = os.environ["RUNS_JSON"]
 cooldown = int(cooldown_raw)
 success_grace = int(success_grace_raw)
@@ -269,7 +271,7 @@ PY
 
 published_release_tags="$(
   gh api --paginate "repos/$TARGET_REPOSITORY/releases?per_page=100" \
-    --jq '.[].tag_name'
+    --jq '.[] | select(.draft | not) | .tag_name'
 )"
 runs_json="$(
   gh run list \
@@ -484,7 +486,7 @@ PY
       run_state="$(release_candidate_state "$version")"
       case "$run_state" in
         published)
-          printf '%s is already published as %s\n' "$service" "$service-$version"
+          printf '%s is already published as a revision of %s\n' "$service" "$version"
           ;;
         active)
           printf '%s is already being built by %s\n' "$service" "Release $service $version"
@@ -534,10 +536,9 @@ PY
 
   while IFS= read -r version; do
     [[ -n "$version" ]] || continue
-    release_tag="$service-$version"
     run_state="$(release_candidate_state "$version")"
     if [[ "$run_state" == "published" ]]; then
-      printf '%s is already published as %s\n' "$service" "$release_tag"
+      printf '%s is already published as a revision of %s\n' "$service" "$version"
       continue
     fi
 
@@ -573,8 +574,7 @@ PY
         --repo "$TARGET_REPOSITORY" \
         --ref "$TARGET_REF" \
         -f "service=$service" \
-        -f "version=$version" \
-        -f force=false
+        -f "version=$version"
     fi
 
     service_dispatch_count=$((service_dispatch_count + 1))

@@ -26,11 +26,16 @@ run-name: Release ${{ inputs.service }} ${{ inputs.version }}
         description: Published stable upstream release or image tag.
         required: true
         type: string
-      force:
-        description: Rebuild and replace assets when the release already exists.
+      hotfix:
+        description: Publish a new revision of an already-published release.
         required: false
         type: boolean
         default: false
+      hotfix_reason:
+        description: Required when hotfix is set; recorded in the release notes.
+        required: false
+        type: string
+        default: ""
       validation_only:
         description: Build, smoke, and upload CI artifacts without publishing.
         required: false
@@ -44,10 +49,14 @@ run-name: Release ${{ inputs.service }} ${{ inputs.version }}
       version:
         required: true
         type: string
-      force:
+      hotfix:
         required: false
         type: boolean
         default: false
+      hotfix_reason:
+        required: false
+        type: string
+        default: ""
       validation_only:
         required: false
         type: boolean
@@ -78,6 +87,8 @@ jobs:
       matrix: ${{ steps.plan.outputs.matrix }}
       publish: ${{ steps.plan.outputs.publish }}
       release_tag: ${{ steps.plan.outputs.release_tag }}
+      release_version: ${{ steps.plan.outputs.release_version }}
+      revision: ${{ steps.plan.outputs.revision }}
       source_ref: ${{ steps.plan.outputs.source_ref }}
       upstream_image_repository: ${{ steps.plan.outputs.upstream_image_repository }}
       upstream_asset_sha256: ${{ steps.plan.outputs.upstream_asset_sha256 }}
@@ -141,14 +152,21 @@ jobs:
         id: plan
         shell: bash
         env:
-          FORCE: ${{ inputs.force }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOTFIX: ${{ inputs.hotfix }}
+          HOTFIX_REASON: ${{ inputs.hotfix_reason }}
           SERVICE: ${{ inputs.service }}
           VALIDATION_ONLY: ${{ inputs.validation_only }}
           VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
           VALIDATION_ONLY="${VALIDATION_ONLY:-false}"
+          HOTFIX="${HOTFIX:-false}"
+
+          if [[ "$HOTFIX" == "true" && ! "$HOTFIX_REASON" =~ [^[:space:]] ]]; then
+            printf 'hotfix_reason is required when hotfix is true\n' >&2
+            exit 1
+          fi
 
           case "$SERVICE" in
             auth|postgrest|realtime|pooler|analytics|storage|edge-runtime|studio|pgmeta|postgres|mailpit|vector|imgproxy) ;;
@@ -190,20 +208,15 @@ jobs:
             snapshot="$snapshot_dir/snapshot.json"
             metadata="$(scripts/plan-external-release.sh "$SERVICE" "$VERSION" "$snapshot")"
             source_ref="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("source_commit", ""))' "$metadata")"
-            release_tag="$SERVICE-$VERSION"
             image_repository="ghcr.io/$(
               printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]'
             )/cli/$SERVICE"
-            release_exists=false
-            if gh release view "$release_tag" >/dev/null 2>&1; then
-              release_exists=true
-              if [[ "$VALIDATION_ONLY" != "true" && "$FORCE" != "true" ]]; then
-                printf 'release %s already exists; skipping (use force=true to replace it)\n' "$release_tag"
-              fi
-            fi
-            decision_json="$(scripts/release-workflow-decision.sh "$VALIDATION_ONLY" "$FORCE" "$release_exists")"
-            build="$(python3 -c 'import json,sys; print(str(json.loads(sys.argv[1])["build"]).lower())' "$decision_json")"
-            publish="$(python3 -c 'import json,sys; print(str(json.loads(sys.argv[1])["publish"]).lower())' "$decision_json")"
+            revision_json="$(scripts/plan-release-revision.sh "$SERVICE" "$VERSION" "$VALIDATION_ONLY" "$HOTFIX" "$GITHUB_REF")"
+            build="$(python3 -c 'import json,sys; print(str(json.loads(sys.argv[1])["build"]).lower())' "$revision_json")"
+            publish="$(python3 -c 'import json,sys; print(str(json.loads(sys.argv[1])["publish"]).lower())' "$revision_json")"
+            revision="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["revision"])' "$revision_json")"
+            release_version="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["release_version"])' "$revision_json")"
+            release_tag="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["release_tag"])' "$revision_json")"
             matrix='{"include":[{"target_os":"linux","arch":"arm64","platform_dir":"linux-arm64","runner":"large-linux-arm"},{"target_os":"linux","arch":"amd64","platform_dir":"linux-amd64","runner":"large-linux-x86"},{"target_os":"darwin","arch":"arm64","platform_dir":"darwin-arm64","runner":"macos-14-xlarge"}]}'
             {
               printf 'artifact_source=%s\n' "$artifact_source"
@@ -215,6 +228,8 @@ jobs:
               printf 'matrix=%s\n' "$matrix"
               printf 'publish=%s\n' "$publish"
               printf 'release_tag=%s\n' "$release_tag"
+              printf 'release_version=%s\n' "$release_version"
+              printf 'revision=%s\n' "$revision"
               printf 'source_ref=%s\n' "$source_ref"
               printf 'upstream_image_repository=%s\n' "$upstream_image_repository"
               printf 'upstream_asset_sha256=\n'
@@ -322,20 +337,15 @@ jobs:
             upstream_asset_sha256="${upstream_asset_digest#sha256:}"
           fi
 
-          release_tag="$SERVICE-$VERSION"
           image_repository="ghcr.io/$(
             printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]'
           )/cli/$SERVICE"
-          release_exists=false
-          if gh release view "$release_tag" >/dev/null 2>&1; then
-            release_exists=true
-            if [[ "$VALIDATION_ONLY" != "true" && "$FORCE" != "true" ]]; then
-              printf 'release %s already exists; skipping (use force=true to replace it)\n' "$release_tag"
-            fi
-          fi
-          decision_json="$(scripts/release-workflow-decision.sh "$VALIDATION_ONLY" "$FORCE" "$release_exists")"
-          build="$(python3 -c 'import json,sys; print(str(json.loads(sys.argv[1])["build"]).lower())' "$decision_json")"
-          publish="$(python3 -c 'import json,sys; print(str(json.loads(sys.argv[1])["publish"]).lower())' "$decision_json")"
+          revision_json="$(scripts/plan-release-revision.sh "$SERVICE" "$VERSION" "$VALIDATION_ONLY" "$HOTFIX" "$GITHUB_REF")"
+          build="$(python3 -c 'import json,sys; print(str(json.loads(sys.argv[1])["build"]).lower())' "$revision_json")"
+          publish="$(python3 -c 'import json,sys; print(str(json.loads(sys.argv[1])["publish"]).lower())' "$revision_json")"
+          revision="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["revision"])' "$revision_json")"
+          release_version="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["release_version"])' "$revision_json")"
+          release_tag="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["release_tag"])' "$revision_json")"
 
           matrix='{"include":[{"target_os":"linux","arch":"arm64","platform_dir":"linux-arm64","runner":"large-linux-arm"},{"target_os":"linux","arch":"amd64","platform_dir":"linux-amd64","runner":"large-linux-x86"},{"target_os":"darwin","arch":"arm64","platform_dir":"darwin-arm64","runner":"macos-14-xlarge"}]}'
           {
@@ -348,12 +358,26 @@ jobs:
             printf 'matrix=%s\n' "$matrix"
             printf 'publish=%s\n' "$publish"
             printf 'release_tag=%s\n' "$release_tag"
+            printf 'release_version=%s\n' "$release_version"
+            printf 'revision=%s\n' "$revision"
             printf 'source_ref=%s\n' "$source_ref"
             printf 'upstream_image_repository=%s\n' "$upstream_image_repository"
             printf 'upstream_asset_sha256=%s\n' "$upstream_asset_sha256"
             printf 'upstream_asset_url=%s\n' "$upstream_asset_url"
             printf 'validation_only=%s\n' "$VALIDATION_ONLY"
           } >> "$GITHUB_OUTPUT"
+
+      - name: Require the CLI notification token when publishing
+        if: steps.plan.outputs.publish == 'true'
+        shell: bash
+        env:
+          NOTIFY_TOKEN_PRESENT: ${{ secrets.CLI_MIRROR_DISPATCH_TOKEN != '' }}
+        run: |
+          set -euo pipefail
+          if [[ "$NOTIFY_TOKEN_PRESENT" != "true" ]]; then
+            printf 'CLI_MIRROR_DISPATCH_TOKEN is not configured; publishing would leave the CLI unnotified\n' >&2
+            exit 1
+          fi
 
       - name: Upload external release snapshot
         if: steps.plan.outputs.external == 'true'
@@ -455,10 +479,11 @@ jobs:
         shell: bash
         env:
           ARCH: ${{ matrix.arch }}
-          IMAGE_TAG: local/${{ inputs.service }}:${{ inputs.version }}-${{ matrix.platform_dir }}
+          IMAGE_TAG: local/${{ inputs.service }}:${{ needs.plan.outputs.release_version }}-${{ matrix.platform_dir }}
           OCI_REVISION: ${{ github.sha }}
           OCI_SOURCE: https://github.com/${{ github.repository }}
-          OCI_VERSION: ${{ inputs.version }}
+          OCI_VERSION: ${{ needs.plan.outputs.release_version }}
+          REVISION: ${{ needs.plan.outputs.revision }}
           SLIM_SMOKE_HOST_POSTGRES: ${{ matrix.target_os == 'darwin' && '1' || '0' }}
           SOURCE_REF: ${{ needs.plan.outputs.source_ref }}
           STUDIO_RELEASE: ${{ inputs.version }}
@@ -487,6 +512,7 @@ jobs:
         shell: bash
         env:
           PLATFORM_DIR: ${{ matrix.platform_dir }}
+          RELEASE_VERSION: ${{ needs.plan.outputs.release_version }}
           SERVICE: ${{ inputs.service }}
           VERSION: ${{ inputs.version }}
         run: |
@@ -495,7 +521,7 @@ jobs:
           release_dir="release-assets"
           mkdir -p "$release_dir"
 
-          archive_prefix="$SERVICE-$VERSION-$PLATFORM_DIR"
+          archive_prefix="$SERVICE-$RELEASE_VERSION-$PLATFORM_DIR"
           archive_name="$(python3 - "$artifact_dir/manifest.json" "$archive_prefix" <<'PY'
           import json
           import sys
@@ -519,19 +545,35 @@ jobs:
             exit 1
           }
           cp "$archive" "$release_dir/"
-          cp "$artifact_dir/manifest.json" \
-            "$release_dir/$SERVICE-$VERSION-$PLATFORM_DIR.manifest.json"
-          cp "$artifact_dir/$SERVICE-$VERSION-$PLATFORM_DIR.sbom.spdx.json" \
+          manifest_dest="$release_dir/$SERVICE-$RELEASE_VERSION-$PLATFORM_DIR.manifest.json"
+          cp "$artifact_dir/manifest.json" "$manifest_dest"
+          cp "$artifact_dir/$SERVICE-$RELEASE_VERSION-$PLATFORM_DIR.sbom.spdx.json" \
             "$release_dir/"
-          cp "$artifact_dir/SHA256SUMS" \
-            "$release_dir/$SERVICE-$VERSION-$PLATFORM_DIR.SHA256SUMS"
+          checksums_dest="$release_dir/$SERVICE-$RELEASE_VERSION-$PLATFORM_DIR.SHA256SUMS"
+          cp "$artifact_dir/SHA256SUMS" "$checksums_dest"
+
+          # Hash the finalized manifest into the per-platform SHA256SUMS.
+          # macOS runners have no sha256sum, so use python3 instead.
+          python3 - "$manifest_dest" <<'PY' >> "$checksums_dest"
+          import hashlib
+          import os
+          import sys
+
+          manifest_dest = sys.argv[1]
+          digest = hashlib.sha256()
+          with open(manifest_dest, "rb") as fh:
+              for chunk in iter(lambda: fh.read(1 << 20), b""):
+                  digest.update(chunk)
+          print(f"{digest.hexdigest()}  {os.path.basename(manifest_dest)}")
+          PY
+          sort -k2 -o "$checksums_dest" "$checksums_dest"
 
       - name: Save exact smoked image for publication
         if: matrix.target_os == 'linux' && needs.plan.outputs.image_release == 'derived'
         shell: bash
         env:
           ARCH: ${{ matrix.arch }}
-          LOCAL_IMAGE: local/${{ inputs.service }}:${{ inputs.version }}-${{ matrix.platform_dir }}
+          LOCAL_IMAGE: local/${{ inputs.service }}:${{ needs.plan.outputs.release_version }}-${{ matrix.platform_dir }}
           PLATFORM: linux/${{ matrix.arch }}
           SERVICE: ${{ inputs.service }}
           VERSION: ${{ inputs.version }}
@@ -586,6 +628,21 @@ jobs:
       contents: read
       packages: write
     steps:
+      - name: Checkout packaging repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Guard against a published revision
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.plan.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          scripts/assert-revision-unpublished.sh "$RELEASE_TAG"
+
       - name: Download exact smoked images
         if: needs.plan.outputs.image_release == 'derived'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -597,13 +654,6 @@ jobs:
       - name: Set up Docker Buildx
         if: needs.plan.outputs.image_release == 'derived'
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
-
-      - name: Checkout mirror helper
-        if: needs.plan.outputs.image_release == 'mirror'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 1
-          persist-credentials: false
 
       - name: Download planned external release snapshot for mirror
         if: needs.plan.outputs.external == 'true' && needs.plan.outputs.image_release == 'mirror'
@@ -656,7 +706,7 @@ jobs:
         shell: bash
         env:
           IMAGE_REPOSITORY: ${{ needs.plan.outputs.image_repository }}
-          VERSION: ${{ inputs.version }}
+          RELEASE_VERSION: ${{ needs.plan.outputs.release_version }}
         run: |
           set -euo pipefail
           refs=()
@@ -666,7 +716,7 @@ jobs:
             archive="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["archive"])' "$metadata")"
             local_image="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["local_image"])' "$metadata")"
             platform="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["platform"])' "$metadata")"
-            platform_tag="${IMAGE_REPOSITORY}:${VERSION}-${platform//\//-}"
+            platform_tag="${IMAGE_REPOSITORY}:${RELEASE_VERSION}-${platform//\//-}"
 
             gzip -dc "$(dirname "$metadata_file")/$archive" | docker load
             docker tag "$local_image" "$platform_tag"
@@ -685,7 +735,7 @@ jobs:
             exit 1
           fi
 
-          image_tag="$IMAGE_REPOSITORY:$VERSION"
+          image_tag="$IMAGE_REPOSITORY:$RELEASE_VERSION"
           docker buildx imagetools create -t "$image_tag" "${refs[@]}"
           docker buildx imagetools inspect "$image_tag"
           digest="$(docker buildx imagetools inspect "$image_tag" | awk '$1 == "Digest:" { print $2 }')"
@@ -705,14 +755,15 @@ jobs:
         shell: bash
         env:
           IMAGE_REPOSITORY: ${{ needs.plan.outputs.image_repository }}
+          RELEASE_VERSION: ${{ needs.plan.outputs.release_version }}
           SERVICE: ${{ inputs.service }}
           VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
           scripts/mirror-upstream-image.sh \
-            "$SERVICE" "$VERSION" "$IMAGE_REPOSITORY" mirror-provenance.json
+            "$SERVICE" "$VERSION" "$IMAGE_REPOSITORY" mirror-provenance.json "$RELEASE_VERSION"
           digest="$(python3 -c 'import json; print(json.load(open("mirror-provenance.json"))["destination_index_digest"])')"
-          image_tag="$IMAGE_REPOSITORY:$VERSION"
+          image_tag="$IMAGE_REPOSITORY:$RELEASE_VERSION"
           {
             printf 'digest=%s\n' "$digest"
             printf 'image_tag=%s\n' "$image_tag"
@@ -789,6 +840,15 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
+      - name: Guard against a published revision
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.plan.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          scripts/assert-revision-unpublished.sh "$RELEASE_TAG"
+
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version-file: .bun-version
@@ -829,12 +889,12 @@ jobs:
         shell: bash
         env:
           IMAGE_REPOSITORY: ${{ needs.plan.outputs.image_repository }}
+          RELEASE_VERSION: ${{ needs.plan.outputs.release_version }}
           SERVICE: ${{ inputs.service }}
-          VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
           bun scripts/publish-native-oci.ts \
-            "$SERVICE" "$VERSION" "$IMAGE_REPOSITORY" release-assets published-natives.json
+            "$SERVICE" "$RELEASE_VERSION" "$IMAGE_REPOSITORY" release-assets published-natives.json
 
       - name: Upload published native metadata
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -861,39 +921,31 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
+      - name: Guard against a published revision
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.plan.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          scripts/assert-revision-unpublished.sh "$RELEASE_TAG"
+
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version-file: .bun-version
 
-      - name: Check mirror dispatch configuration
-        id: config
-        shell: bash
-        env:
-          MIRROR_DISPATCH_TOKEN: ${{ secrets.CLI_MIRROR_DISPATCH_TOKEN }}
-        run: |
-          set -euo pipefail
-          if [[ -z "$MIRROR_DISPATCH_TOKEN" ]]; then
-            echo "::notice::CLI_MIRROR_DISPATCH_TOKEN is not configured; skipping the ECR Public mirror"
-            printf 'configured=false\n' >> "$GITHUB_OUTPUT"
-          else
-            printf 'configured=true\n' >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Download published image metadata
-        if: steps.config.outputs.configured == 'true'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: published-image-${{ inputs.service }}-${{ inputs.version }}
 
       - name: Download published native metadata
-        if: steps.config.outputs.configured == 'true'
         continue-on-error: true
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: published-natives-${{ inputs.service }}-${{ inputs.version }}
 
       - name: Install regctl
-        if: steps.config.outputs.configured == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -913,19 +965,18 @@ jobs:
 
       - name: Request and verify ECR Public mirror
         id: mirror
-        if: steps.config.outputs.configured == 'true'
         shell: bash
         env:
           MIRROR_DISPATCH_TOKEN: ${{ secrets.CLI_MIRROR_DISPATCH_TOKEN }}
+          RELEASE_VERSION: ${{ needs.plan.outputs.release_version }}
           SERVICE: ${{ inputs.service }}
-          VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
           digest="$(bun scripts/ecr-mirror.ts published-digest published-image.json)"
           if [[ -f published-natives.json ]]; then
             export NATIVE_ARTIFACTS_FILE="$PWD/published-natives.json"
           fi
-          bun scripts/ecr-mirror.ts request "$SERVICE" "$VERSION" "$digest"
+          bun scripts/ecr-mirror.ts request "$SERVICE" "$RELEASE_VERSION" "$digest"
 
   publish-release:
     name: publish ${{ inputs.service }} release
@@ -1007,8 +1058,12 @@ jobs:
       - name: Prepare checksums and release notes
         shell: bash
         env:
+          HOTFIX: ${{ inputs.hotfix }}
+          HOTFIX_REASON: ${{ inputs.hotfix_reason }}
           IMAGE_RELEASE: ${{ needs.plan.outputs.image_release }}
           MIRRORED: ${{ needs.mirror-ecr.outputs.mirrored }}
+          RELEASE_VERSION: ${{ needs.plan.outputs.release_version }}
+          REVISION: ${{ needs.plan.outputs.revision }}
           SERVICE: ${{ inputs.service }}
           VERSION: ${{ inputs.version }}
         run: |
@@ -1047,7 +1102,10 @@ jobs:
           image="$(python3 -c 'import json; print(json.load(open("published-image.json"))["image"])')"
           digest="$(python3 -c 'import json; print(json.load(open("published-image.json"))["digest"])')"
           cat > release-notes.md <<EOF
-          Portable, smoke-tested runtime artifacts for **$SERVICE $VERSION**.
+          Portable, smoke-tested runtime artifacts for **$SERVICE $RELEASE_VERSION**.
+
+          - Upstream version: \`$VERSION\`
+          - Revision: \`$REVISION\` (packaging commit \`$GITHUB_SHA\`)
 
           Targets:
 
@@ -1066,13 +1124,21 @@ jobs:
           Verify a downloaded archive with the attached \`SHA256SUMS\` file.
           EOF
 
+          if [[ "${HOTFIX:-false}" == "true" ]]; then
+            previous_tag="$SERVICE-$VERSION-r$((REVISION - 1))"
+            cat >> release-notes.md <<EOF
+
+          Hotfix of $previous_tag: $HOTFIX_REASON
+          EOF
+          fi
+
           if [[ "${MIRRORED:-}" == "true" ]]; then
             ecr_image="$(bun scripts/ecr-mirror.ts destination-repo "$SERVICE")"
             cat >> release-notes.md <<EOF
 
           AWS ECR Public mirror (same digests):
 
-          \`$ecr_image:$VERSION\`
+          \`$ecr_image:$RELEASE_VERSION\`
 
           \`$ecr_image@$digest\`
           EOF
@@ -1099,28 +1165,89 @@ jobs:
           PY
           fi
 
-      - name: Create or update GitHub release
+      - name: Create GitHub release
         shell: bash
         env:
-          FORCE: ${{ inputs.force }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ needs.plan.outputs.release_tag }}
+          RELEASE_VERSION: ${{ needs.plan.outputs.release_version }}
+          SERVICE: ${{ inputs.service }}
+        run: |
+          set -euo pipefail
+          # An interrupted "gh release create" can leave a stale draft with
+          # this tag_name behind, since it creates the draft, uploads assets,
+          # then publishes as separate steps.
+          # Drafts are deleted by id, not tag, because "gh release delete
+          # <tag>" goes through gh's combined REST/GraphQL lookup, which can
+          # misreport a REST error as "release not found" (see
+          # scripts/assert-revision-unpublished.sh for the same hazard).
+          scripts/assert-revision-unpublished.sh "$RELEASE_TAG"
+
+          draft_ids="$(
+            gh api --paginate "repos/$GH_REPO/releases?per_page=100" \
+              --jq '.[] | select(.draft and .tag_name == env.RELEASE_TAG) | .id'
+          )"
+          if [[ -n "$draft_ids" ]]; then
+            while IFS= read -r draft_id; do
+              [[ -n "$draft_id" ]] || continue
+              echo "::warning::release $RELEASE_TAG exists as a stale draft (id $draft_id) from an interrupted create; deleting it before re-creating"
+              gh api -X DELETE "repos/$GH_REPO/releases/$draft_id"
+            done <<< "$draft_ids"
+          fi
+
+          gh release create "$RELEASE_TAG" release-assets/* \
+            --target "$GITHUB_SHA" \
+            --title "$SERVICE $RELEASE_VERSION" \
+            --notes-file release-notes.md
+
+  notify-cli:
+    name: notify CLI of published ${{ inputs.service }} release
+    needs:
+      - plan
+      - publish-release
+    if: ${{ !cancelled() && needs.plan.outputs.publish == 'true' && needs.publish-release.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Notify CLI repository of published release
+        shell: bash
+        env:
+          MIRROR_DISPATCH_TOKEN: ${{ secrets.CLI_MIRROR_DISPATCH_TOKEN }}
+          RELEASE_TAG: ${{ needs.plan.outputs.release_tag }}
+          RELEASE_VERSION: ${{ needs.plan.outputs.release_version }}
+          REVISION: ${{ needs.plan.outputs.revision }}
           SERVICE: ${{ inputs.service }}
           VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            [[ "$FORCE" == "true" ]] || {
-              printf 'release appeared while this run was building: %s\n' "$RELEASE_TAG" >&2
-              exit 1
-            }
-            gh release upload "$RELEASE_TAG" release-assets/* --clobber
-            gh release edit "$RELEASE_TAG" \
-              --title "$SERVICE $VERSION" \
-              --notes-file release-notes.md
-          else
-            gh release create "$RELEASE_TAG" release-assets/* \
-              --target "$GITHUB_SHA" \
-              --title "$SERVICE $VERSION" \
-              --notes-file release-notes.md
+          # Reuses the dispatch repository configured for the ECR/S3 mirror
+          # (scripts/ecr-mirror.ts's MIRROR_DISPATCH_REPO, default
+          # supabase/cli) and the same CLI_MIRROR_DISPATCH_TOKEN secret. This
+          # is its own job (not a step of publish-release) so that "re-run
+          # failed jobs" retries only the notification: the release already
+          # exists by the time this runs, so a failed dispatch fails this job
+          # loudly instead of silently rebuilding. The plan job already
+          # requires CLI_MIRROR_DISPATCH_TOKEN whenever publish is true, so
+          # this job has no missing-token path of its own.
+          dispatch_repo="${MIRROR_DISPATCH_REPO:-supabase/cli}"
+          payload="$(python3 - "$SERVICE" "$VERSION" "$REVISION" "$RELEASE_VERSION" <<'PY'
+          import json
+          import sys
+
+          service, upstream_version, revision, release_version = sys.argv[1:]
+          print(json.dumps({
+              "event_type": "slim-release-published",
+              "client_payload": {
+                  "service": service,
+                  "upstream_version": upstream_version,
+                  "revision": int(revision),
+                  "release_version": release_version,
+              },
+          }))
+          PY
+          )"
+          if ! GH_TOKEN="$MIRROR_DISPATCH_TOKEN" gh api "repos/$dispatch_repo/dispatches" --input - <<<"$payload"; then
+            printf 'repository_dispatch of slim-release-published to %s failed; release %s exists but the CLI must be told by hand\n' \
+              "$dispatch_repo" "$RELEASE_TAG" >&2
+            exit 1
           fi

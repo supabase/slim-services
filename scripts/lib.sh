@@ -202,8 +202,9 @@ resolve_image_index_digest() {
 }
 
 # Digest-pinned upstream ref. IDENTITY_SOURCE_TAG is the tag
-# SOURCE_IMAGE_DIGEST was recorded for — not SOURCE_REF, which release
-# CI overwrites to VERSION. A different image tag gets its own digest.
+# SOURCE_IMAGE_DIGEST was recorded for — not SOURCE_REF, which for Docker
+# Hub services holds the distinct provenance commit, separate from
+# VERSION. A different image tag gets its own digest.
 pinned_upstream_ref() {
   local image tag digest
   [[ -n "${SOURCE_IMAGE_DIGEST:-}" ]] || fail "SOURCE_IMAGE_DIGEST is required (refusing a floating tag)"
@@ -315,6 +316,14 @@ artifact_rootfs_path() {
   local arch="${4:-$(target_arch)}"
   printf '%s/artifacts/%s/%s/%s/rootfs' "$ROOT_DIR" "$service" "$version" "$(artifact_platform_dir "$os" "$arch")"
 }
+
+# REVISION distinguishes immutable release attempts of the same upstream
+# VERSION (set by the release workflow's plan job). Named build outputs
+# (archives, images, manifests) use release_version(); anything that talks
+# to upstream keeps using VERSION on its own.
+REVISION="${REVISION:-0}"
+[[ "$REVISION" =~ ^(0|[1-9][0-9]*)$ ]] || fail "REVISION must be a non-negative integer without leading zeros: $REVISION"
+release_version() { printf '%s-r%s\n' "$VERSION" "$REVISION"; }
 
 # Resolve SOURCE_REF to a commit sha inside a source checkout. CI initializes
 # submodules with `--depth 1`, which fetches the pinned commit but not the tag

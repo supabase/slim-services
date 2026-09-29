@@ -31,7 +31,7 @@ PLATFORM="$TARGET_OS/$ARCH"
 artifact_dir="$(dirname "$(artifact_rootfs_path "$service" "$VERSION" "$TARGET_OS" "$ARCH")")"
 rootfs="$artifact_dir/rootfs"
 manifest="$artifact_dir/manifest.json"
-sbom="$artifact_dir/$service-$VERSION-$(artifact_platform_dir "$TARGET_OS" "$ARCH").sbom.spdx.json"
+sbom="$artifact_dir/$service-$(release_version)-$(artifact_platform_dir "$TARGET_OS" "$ARCH").sbom.spdx.json"
 mkdir -p "$artifact_dir"
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/slim-nix-release.XXXXXX")"
 release_dir="$work_dir/release"
@@ -189,20 +189,23 @@ fi
 if [[ "$service" == studio ]]; then
   "$ROOT_DIR/services/studio/validate-artifact.sh" "$rootfs"
 fi
-"$ROOT_DIR/scripts/generate-artifact-sbom.sh" "$rootfs" "$sbom" "$service" "$VERSION" "$(artifact_platform_dir "$TARGET_OS" "$ARCH")"
+"$ROOT_DIR/scripts/generate-artifact-sbom.sh" "$rootfs" "$sbom" "$service" "$(release_version)" "$(artifact_platform_dir "$TARGET_OS" "$ARCH")"
 
 python3 - "$manifest" "$release_dir/release.json" "$PLATFORM" "$(artifact_platform_dir "$TARGET_OS" "$ARCH")" \
   "${SOURCE_DIR:-}" "${SOURCE_REF:-}" "${UPSTREAM_IMAGE:-${SOURCE_IMAGE:-}}" \
   "${ENTRYPOINT_JSON:-[]}" "${CMD_JSON:-[]}" "$(portable_flag)" "$(portable_host_libs_json)" \
-  "$sbom" "$NIX_SYSTEM" "$runtime" "$(du -sk "$rootfs" | awk '{print $1}')" <<'PY'
+  "$sbom" "$NIX_SYSTEM" "$runtime" "$(du -sk "$rootfs" | awk '{print $1}')" \
+  "$(release_version)" "$REVISION" <<'PY'
 import json, os, sys
 (path, release_path, platform, target, source_dir, source_ref, upstream_image,
- entrypoint, cmd, portable, host_libs, sbom, system, runtime, rootfs_kib) = sys.argv[1:]
+ entrypoint, cmd, portable, host_libs, sbom, system, runtime, rootfs_kib,
+ release_version, revision) = sys.argv[1:]
 with open(release_path, encoding="utf-8") as stream:
     release = json.load(stream)
 rootfs_bytes = int(rootfs_kib) * 1024
 manifest = {
-    "service": release["service"], "version": release["version"],
+    "service": release["service"], "version": release_version,
+    "upstream_version": release["version"], "revision": int(revision),
     "platform": platform, "arch": platform.split("/")[1], "target": target,
     "libc": "glibc" if platform.startswith("linux/") else None,
     "source_dir": source_dir or None, "source_ref": source_ref or None,

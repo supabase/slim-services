@@ -170,7 +170,7 @@ if [[ "$TARGET_OS" != "linux" || "${FORCE_ARTIFACT_SMOKE:-0}" == "1" || "$mirror
   merge_runtime_metrics "$manifest" "$runtime_metrics_file"
 fi
 
-archive_prefix="${ARTIFACT_ARCHIVE_PREFIX:-$artifact_dir/$service-$version-$platform_dir}"
+archive_prefix="${ARTIFACT_ARCHIVE_PREFIX:-$artifact_dir/$service-$(release_version)-$platform_dir}"
 log "creating distribution archive for $platform_dir"
 "$ROOT_DIR/scripts/archive-artifact.sh" "$rootfs" "$archive_prefix"
 
@@ -225,7 +225,7 @@ if [[ "$artifact_source" == "upstream-release-archive" ]]; then
 fi
 
 if [[ "$TARGET_OS" == "linux" && "$mirror_mode" != "1" ]]; then
-  image_tag="${IMAGE_TAG:-local/$service:slim-$version-linux-$ARCH}"
+  image_tag="${IMAGE_TAG:-local/$service:slim-$(release_version)-linux-$ARCH}"
 
   log "building Linux Docker image: $image_tag"
   PLATFORM="$(docker_platform "$TARGET_OS" "$ARCH")" \
