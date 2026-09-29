@@ -10,6 +10,7 @@ import http.server
 import json
 import os
 import pathlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -20,8 +21,19 @@ import unittest
 ROOT = pathlib.Path(sys.argv.pop(1))
 POLLER = ROOT / "scripts" / "poll-service-releases.sh"
 
+if shutil.which("jq") is None:
+    raise SystemExit(
+        "jq is required to run these tests (the fake gh runs the real --jq "
+        "filter through it); install jq and retry"
+    )
+
 
 def published_records(tags):
+    # A raw REST releases-list page: a JSON array of {tag_name, draft}
+    # records, run through the real `--jq` filter by the fake `gh` below,
+    # so a regression in that filter (for example dropping the draft
+    # exclusion) fails these tests instead of the fixture silently
+    # papering over it.
     records = []
     for tag in tags:
         if isinstance(tag, tuple):
@@ -29,7 +41,7 @@ def published_records(tags):
         else:
             name, draft = tag, False
         records.append({"tag_name": name, "draft": draft})
-    return "".join(json.dumps(record) + "\n" for record in records)
+    return json.dumps(records)
 
 
 def draft_tag(name):
@@ -57,23 +69,6 @@ class ReleasePollerTest(unittest.TestCase):
         self.runs.write_text("[]\n", encoding="utf-8")
         self.published = self.directory / "published"
         self.published.write_text(published_jsonl_from_lines(""), encoding="utf-8")
-        # Stands in for the real `gh api --jq '.[] | select(.draft | not) |
-        # .tag_name'` filter: reads one release JSON record per line and
-        # prints the tag_name of the non-draft ones, so fixtures can model a
-        # draft release that must not count as published.
-        self.published_filter = self.directory / "published-filter.py"
-        self.published_filter.write_text(
-            "import json\n"
-            "import sys\n"
-            "for line in sys.stdin:\n"
-            "    line = line.strip()\n"
-            "    if not line:\n"
-            "        continue\n"
-            "    record = json.loads(line)\n"
-            "    if not record.get('draft'):\n"
-            "        print(record['tag_name'])\n",
-            encoding="utf-8",
-        )
         self.config = self.directory / "service-release-sources.json"
         self.config.write_text(
             json.dumps(
@@ -98,7 +93,15 @@ class ReleasePollerTest(unittest.TestCase):
             "  api)\n"
             "    case \"$*\" in\n"
             "      *contents*) printf '%s\\n' \"$*\" >> \"$FAKE_API_TRACE\"; [ \"${FAKE_COMPOSE_FAILURE:-0}\" = 1 ] && exit 1; printf '%s\\n' \"$FAKE_COMPOSE_CONTENT\" ;;\n"
-            "      *supabase/slim-services/releases*) cat \"$FAKE_PUBLISHED_RELEASES\" | python3 \"$FAKE_PUBLISHED_FILTER\" ;;\n"
+            "      *supabase/slim-services/releases*)\n"
+            "        jq_filter=\"\"\n"
+            "        prev=\"\"\n"
+            "        for arg in \"$@\"; do\n"
+            "          [ \"$prev\" = \"--jq\" ] && jq_filter=\"$arg\"\n"
+            "          prev=\"$arg\"\n"
+            "        done\n"
+            "        jq -r \"$jq_filter\" \"$FAKE_PUBLISHED_RELEASES\"\n"
+            "        ;;\n"
             "      *) cat \"$FAKE_UPSTREAM_RELEASES\" ;;\n"
             "    esac\n"
             "    ;;\n"
@@ -143,7 +146,6 @@ class ReleasePollerTest(unittest.TestCase):
             "SERVICE_RELEASE_CONFIG": str(self.config),
             "FAKE_GH_TRACE": str(self.trace),
             "FAKE_PUBLISHED_RELEASES": str(self.published),
-            "FAKE_PUBLISHED_FILTER": str(self.published_filter),
             "FAKE_RUNS_JSON": str(self.runs),
             "FAKE_UPSTREAM_RELEASES": str(self.upstream_releases),
             "FAKE_COMPOSE_CONTENT": self.compose_content,

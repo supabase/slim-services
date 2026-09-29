@@ -418,8 +418,8 @@ def test_publish_release_is_create_only():
     assert_true("gh release edit" not in combined_run, "publish-release must not edit an existing release")
     assert_true("gh release create" in combined_run, "publish-release must still create the release")
     assert_true(
-        any("already exists; revisions are immutable" in (step.get("run") or "") for step in steps),
-        "publish-release must fail create-only when a published release tag already exists",
+        any("scripts/assert-revision-unpublished.sh" in (step.get("run") or "") for step in steps),
+        "publish-release must reuse the shared fail-closed guard before creating",
     )
 
 
@@ -438,8 +438,10 @@ def test_notify_cli_job_runs_once_publish_release_succeeds():
     parsed = json.loads(result.stdout)
     assert_true(sorted(parsed["needs"]) == ["plan", "publish-release"], f"notify-cli needs: {parsed['needs']}")
     assert_true(
-        parsed["if"] == "needs.plan.outputs.publish == 'true' && needs.publish-release.result == 'success'",
-        f"notify-cli must run only after publish-release succeeds: {parsed['if']!r}",
+        parsed["if"]
+        == "${{ !cancelled() && needs.plan.outputs.publish == 'true' && needs.publish-release.result == 'success' }}",
+        f"notify-cli must run only after publish-release succeeds, and not be skipped by an "
+        f"unrelated ancestor job failing (e.g. mirror-ecr): {parsed['if']!r}",
     )
 
 
@@ -452,7 +454,7 @@ NOTIFY_CLI_ENV = {
 }
 
 
-def run_notify_cli(*, token="test-token", gh_script=None):
+def run_notify_cli(*, gh_script=None):
     run_block = extract_step_run("notify-cli", "Notify CLI repository of published release")
     with tempfile.TemporaryDirectory(prefix="notify-cli-test.") as name:
         directory = pathlib.Path(name)
@@ -469,8 +471,7 @@ def run_notify_cli(*, token="test-token", gh_script=None):
         env = dict(NOTIFY_CLI_ENV)
         env["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
         env["FAKE_PAYLOAD_FILE"] = str(payload_file)
-        if token is not None:
-            env["MIRROR_DISPATCH_TOKEN"] = token
+        env["MIRROR_DISPATCH_TOKEN"] = "test-token"
         result = run_in(directory, [str(script)], env=env)
         result.payload = payload_file.read_text(encoding="utf-8") if payload_file.exists() else None
         return result
@@ -493,12 +494,6 @@ def test_notify_cli_dispatches_the_published_release_payload():
     )
 
 
-def test_notify_cli_fails_without_a_dispatch_token():
-    result = run_notify_cli(token=None)
-    assert_true(result.returncode != 0, "expected a non-zero exit with no dispatch token")
-    assert_true("CLI_MIRROR_DISPATCH_TOKEN is not configured" in result.stderr, result.stderr)
-
-
 def test_notify_cli_fails_when_the_dispatch_call_fails():
     failing_gh = "#!/bin/sh\nset -eu\ncat >/dev/null\nexit 1\n"
     result = run_notify_cli(gh_script=failing_gh)
@@ -506,28 +501,51 @@ def test_notify_cli_fails_when_the_dispatch_call_fails():
     assert_true("repository_dispatch of slim-release-published" in result.stderr, result.stderr)
 
 
+CREATE_RELEASE_GH_REPO = "supabase/slim-services"
+CREATE_RELEASE_TAG = "auth-v2.197.0-r0"
+
+
 def run_create_release_step(state):
+    # Exercises the real scripts/assert-revision-unpublished.sh (symlinked
+    # in, not reimplemented) plus the step's own draft lookup and delete, so
+    # a regression in either the shared guard or the step's use of it is
+    # caught here.
     run_block = extract_step_run("publish-release", "Create GitHub release")
     with tempfile.TemporaryDirectory(prefix="create-release-test.") as name:
         directory = pathlib.Path(name)
+        (directory / "scripts").symlink_to(ROOT / "scripts", target_is_directory=True)
         script = write_script(directory, "create.sh", run_block)
         bin_dir = directory / "bin"
         bin_dir.mkdir()
         trace_file = directory / "gh-trace"
         trace_file.write_text("", encoding="utf-8")
+        # $1/$2 dispatch: "api -i" is the published-release guard lookup,
+        # "api --paginate" is the stale-draft listing (piped through the
+        # real system jq with the exact --jq filter the step passes, so a
+        # changed filter breaks this test rather than silently returning
+        # nothing), "api -X" is delete-by-id, and "release create" is the
+        # final create.
         fake_gh = (
             "#!/bin/sh\n"
             "set -eu\n"
             "printf '%s\\n' \"$*\" >> \"$FAKE_GH_TRACE\"\n"
             "case \"$1 $2\" in\n"
-            "  'release view')\n"
+            "  'api -i')\n"
             "    case \"$FAKE_RELEASE_STATE\" in\n"
-            "      missing) printf 'release not found\\n' >&2; exit 1 ;;\n"
-            "      draft) printf '{\"isDraft\":true}\\n' ;;\n"
-            "      published) printf '{\"isDraft\":false}\\n' ;;\n"
+            "      missing|draft) printf 'gh: Not Found (HTTP 404)\\n' >&2; exit 1 ;;\n"
+            "      published) printf 'HTTP/2.0 200 OK\\n\\n{}\\n' ;;\n"
+            "      error500) printf 'gh: Internal Server Error (HTTP 500)\\n' >&2; exit 1 ;;\n"
             "    esac\n"
             "    ;;\n"
-            "  'release delete') exit 0 ;;\n"
+            "  'api --paginate')\n"
+            "    filter=\"$5\"\n"
+            "    case \"$FAKE_RELEASE_STATE\" in\n"
+            "      draft) fixture='[{\"id\":555,\"draft\":true,\"tag_name\":\"'\"$RELEASE_TAG\"'\"}]' ;;\n"
+            "      *) fixture='[]' ;;\n"
+            "    esac\n"
+            "    printf '%s' \"$fixture\" | jq -r \"$filter\"\n"
+            "    ;;\n"
+            "  'api -X') exit 0 ;;\n"
             "  'release create') exit 0 ;;\n"
             "  *) printf 'unexpected gh invocation: %s\\n' \"$*\" >&2; exit 2 ;;\n"
             "esac\n"
@@ -535,8 +553,9 @@ def run_create_release_step(state):
         write_script(bin_dir, "gh", fake_gh)
         env = {
             "GH_TOKEN": "test-token",
+            "GH_REPO": CREATE_RELEASE_GH_REPO,
             "GITHUB_SHA": "0" * 40,
-            "RELEASE_TAG": "auth-v2.197.0-r0",
+            "RELEASE_TAG": CREATE_RELEASE_TAG,
             "RELEASE_VERSION": "v2.197.0-r0",
             "SERVICE": "auth",
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
@@ -552,26 +571,41 @@ def test_create_release_step_creates_when_nothing_exists():
     result = run_create_release_step("missing")
     assert_true(result.returncode == 0, result.stderr)
     assert_true(any(line.startswith("release create ") for line in result.trace), result.trace)
-    assert_true(not any(line.startswith("release delete ") for line in result.trace), result.trace)
+    assert_true(not any(line.startswith("api -X ") for line in result.trace), result.trace)
 
 
 def test_create_release_step_deletes_a_stale_draft_then_creates():
     result = run_create_release_step("draft")
     assert_true(result.returncode == 0, result.stderr)
-    delete_index = next((i for i, line in enumerate(result.trace) if line.startswith("release delete ")), None)
+    delete_index = next((i for i, line in enumerate(result.trace) if line.startswith("api -X DELETE ")), None)
     create_index = next((i for i, line in enumerate(result.trace) if line.startswith("release create ")), None)
-    assert_true(delete_index is not None, f"expected a stale draft deletion: {result.trace}")
+    assert_true(delete_index is not None, f"expected a stale draft deletion by id: {result.trace}")
     assert_true(create_index is not None, f"expected a create after deleting the draft: {result.trace}")
     assert_true(delete_index < create_index, f"draft must be deleted before re-creating: {result.trace}")
-    assert_true("--cleanup-tag" not in result.trace[delete_index], "a draft has no tag to clean up")
+    assert_true(
+        result.trace[delete_index].endswith("releases/555"),
+        f"draft must be deleted by id, not by tag: {result.trace[delete_index]}",
+    )
     assert_true("stale draft" in result.stdout, result.stdout)
 
 
 def test_create_release_step_fails_when_already_published():
     result = run_create_release_step("published")
     assert_true(result.returncode != 0, "expected a non-zero exit for an already-published release")
-    assert_true("already exists; revisions are immutable" in result.stderr, result.stderr)
-    assert_true(not any(line.startswith("release delete ") for line in result.trace), result.trace)
+    assert_true("already published; revisions are immutable" in result.stderr, result.stderr)
+    assert_true(not any(line.startswith("api -X ") for line in result.trace), result.trace)
+    assert_true(not any(line.startswith("release create ") for line in result.trace), result.trace)
+
+
+def test_create_release_step_fails_when_the_published_check_errors():
+    # A REST 5xx on the guard lookup must fail closed: never read as
+    # "not published", and must never reach the draft listing or create.
+    result = run_create_release_step("error500")
+    assert_true(result.returncode != 0, "expected a non-zero exit when the published check errors")
+    assert_true("already published" not in result.stderr, result.stderr)
+    assert_true("HTTP 500" in result.stderr, result.stderr)
+    assert_true(not any(line.startswith("api --paginate ") for line in result.trace), result.trace)
+    assert_true(not any(line.startswith("api -X ") for line in result.trace), result.trace)
     assert_true(not any(line.startswith("release create ") for line in result.trace), result.trace)
 
 
@@ -674,6 +708,33 @@ def test_service_release_mirror_ecr_does_not_gate_publish_release():
     assert_true(
         "needs.mirror-ecr.outputs.mirrored" in str(parsed["notes_env"].get("MIRRORED", "")),
         "notes step env omits needs.mirror-ecr.outputs.mirrored",
+    )
+
+
+def test_service_release_mirror_ecr_has_no_configured_skip_path():
+    # The plan job now guarantees CLI_MIRROR_DISPATCH_TOKEN exists whenever
+    # publish is true, so mirror-ecr must always run its dispatch/verify
+    # steps rather than skipping them behind a "configured" output.
+    ruby = (
+        "require 'yaml'; require 'json'; "
+        "data=YAML.safe_load(File.read(ARGV[0]), aliases: true); "
+        "steps=data.fetch('jobs').fetch('mirror-ecr').fetch('steps'); "
+        "puts JSON.generate(steps.map { |s| {name: s['name'], id: s['id'], if: s['if']} })"
+    )
+    result = run(["ruby", "-e", ruby, str(ROOT / ".github" / "workflows" / "service-release.yml")])
+    assert_true(result.returncode == 0, result.stderr)
+    steps = json.loads(result.stdout)
+    assert_true(
+        not any(step.get("name") == "Check mirror dispatch configuration" for step in steps),
+        "mirror-ecr must not have a separate dispatch-configuration check step",
+    )
+    assert_true(
+        not any(step.get("id") == "config" for step in steps),
+        "mirror-ecr must not produce a 'configured' step output",
+    )
+    assert_true(
+        not any("configured" in (step.get("if") or "") for step in steps),
+        f"mirror-ecr steps must not gate on a 'configured' output: {steps}",
     )
 
 

@@ -141,7 +141,6 @@ touch "$github_output"
     GITHUB_REPOSITORY_OWNER=supabase \
     GITHUB_WORKSPACE="$ROOT_DIR" \
     HOTFIX=false \
-    NOTIFY_TOKEN_PRESENT=true \
     RUNNER_TEMP="$temp_dir/runner" \
     SERVICE=postgres \
     VALIDATION_ONLY=false \
@@ -158,7 +157,19 @@ grep -Fx 'upstream_image_repository=supabase/postgres' "$github_output" >/dev/nu
   exit 1
 }
 
+# The token check now lives in its own step (run once, after both the
+# external and non-external plan branches, gated on publish == true), not
+# inline in "Validate inputs and check existing release".
+token_check_run="$(ruby -ryaml -e '
+data = YAML.safe_load(File.read(ARGV[0]), aliases: true)
+step = data.fetch("jobs").fetch("plan").fetch("steps").find do |item|
+  item["name"] == "Require the CLI notification token when publishing"
+end
+puts step.fetch("run")
+' "$ROOT_DIR/.github/workflows/service-release.yml")"
+
 missing_token_log="$temp_dir/missing-token.log"
+missing_token_output="$temp_dir/missing-token-output"
 if (
   cd "$ROOT_DIR"
   env \
@@ -169,25 +180,58 @@ if (
     DOCKER_PROVENANCE="{\"linux/amd64\":{\"SLSA\":{\"invocation\":{\"configSource\":{\"digest\":{\"sha1\":\"$source_commit\"}}}}},\"linux/arm64\":{\"SLSA\":{\"invocation\":{\"configSource\":{\"digest\":{\"sha1\":\"$source_commit\"}}}}}}" \
     GH_REPO=supabase/slim-services \
     GH_TOKEN=test-token \
-    GITHUB_OUTPUT="$temp_dir/missing-token-output" \
+    GITHUB_OUTPUT="$missing_token_output" \
     GITHUB_REF=refs/heads/main \
     GITHUB_REPOSITORY_OWNER=supabase \
     GITHUB_WORKSPACE="$ROOT_DIR" \
     HOTFIX=false \
-    NOTIFY_TOKEN_PRESENT=false \
     RUNNER_TEMP="$temp_dir/runner-missing-token" \
     SERVICE=postgres \
     VALIDATION_ONLY=false \
     VERSION=17.6.1.163 \
-    bash -c "$plan_run"
+    bash -c "$plan_run" &&
+  grep -Fxq 'publish=true' "$missing_token_output" &&
+  env NOTIFY_TOKEN_PRESENT=false bash -c "$token_check_run"
 ) >"$missing_token_log" 2>&1; then
-  printf 'plan step published without the CLI dispatch token configured\n' >&2
+  printf 'plan published without the CLI dispatch token configured\n' >&2
   cat "$missing_token_log" >&2
   exit 1
 fi
 grep -F 'CLI_MIRROR_DISPATCH_TOKEN is not configured' "$missing_token_log" >/dev/null || {
-  printf 'plan step failed for the wrong reason with a missing dispatch token\n' >&2
+  printf 'plan failed for the wrong reason with a missing dispatch token\n' >&2
   cat "$missing_token_log" >&2
+  exit 1
+}
+
+validation_only_log="$temp_dir/validation-only-missing-token.log"
+validation_only_output="$temp_dir/validation-only-missing-token-output"
+if ! (
+  cd "$ROOT_DIR"
+  env \
+    "${base_environment[@]}" \
+    EXPECTED_IMAGE_REPOSITORY=supabase/postgres \
+    EXPECTED_VERSION=17.6.1.163 \
+    DOCKER_HUB_RESPONSE_TAG=17.6.1.163 \
+    DOCKER_PROVENANCE="{\"linux/amd64\":{\"SLSA\":{\"invocation\":{\"configSource\":{\"digest\":{\"sha1\":\"$source_commit\"}}}}},\"linux/arm64\":{\"SLSA\":{\"invocation\":{\"configSource\":{\"digest\":{\"sha1\":\"$source_commit\"}}}}}}" \
+    GH_REPO=supabase/slim-services \
+    GH_TOKEN=test-token \
+    GITHUB_OUTPUT="$validation_only_output" \
+    GITHUB_REF=refs/heads/main \
+    GITHUB_REPOSITORY_OWNER=supabase \
+    GITHUB_WORKSPACE="$ROOT_DIR" \
+    HOTFIX=false \
+    RUNNER_TEMP="$temp_dir/runner-validation-only" \
+    SERVICE=postgres \
+    VALIDATION_ONLY=true \
+    VERSION=17.6.1.163 \
+    bash -c "$plan_run"
+) >"$validation_only_log" 2>&1; then
+  printf 'plan step failed for validation_only with no dispatch token configured\n' >&2
+  cat "$validation_only_log" >&2
+  exit 1
+fi
+grep -Fxq 'publish=false' "$validation_only_output" || {
+  printf 'validation_only run unexpectedly planned to publish: %s\n' "$(cat "$validation_only_output")" >&2
   exit 1
 }
 

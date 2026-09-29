@@ -155,7 +155,6 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOTFIX: ${{ inputs.hotfix }}
           HOTFIX_REASON: ${{ inputs.hotfix_reason }}
-          NOTIFY_TOKEN_PRESENT: ${{ secrets.CLI_MIRROR_DISPATCH_TOKEN != '' }}
           SERVICE: ${{ inputs.service }}
           VALIDATION_ONLY: ${{ inputs.validation_only }}
           VERSION: ${{ inputs.version }}
@@ -218,10 +217,6 @@ jobs:
             revision="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["revision"])' "$revision_json")"
             release_version="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["release_version"])' "$revision_json")"
             release_tag="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["release_tag"])' "$revision_json")"
-            if [[ "$publish" == "true" && "${NOTIFY_TOKEN_PRESENT:-false}" != "true" ]]; then
-              printf 'CLI_MIRROR_DISPATCH_TOKEN is not configured; publishing would leave the CLI unnotified\n' >&2
-              exit 1
-            fi
             matrix='{"include":[{"target_os":"linux","arch":"arm64","platform_dir":"linux-arm64","runner":"large-linux-arm"},{"target_os":"linux","arch":"amd64","platform_dir":"linux-amd64","runner":"large-linux-x86"},{"target_os":"darwin","arch":"arm64","platform_dir":"darwin-arm64","runner":"macos-14-xlarge"}]}'
             {
               printf 'artifact_source=%s\n' "$artifact_source"
@@ -352,11 +347,6 @@ jobs:
           release_version="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["release_version"])' "$revision_json")"
           release_tag="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["release_tag"])' "$revision_json")"
 
-          if [[ "$publish" == "true" && "${NOTIFY_TOKEN_PRESENT:-false}" != "true" ]]; then
-            printf 'CLI_MIRROR_DISPATCH_TOKEN is not configured; publishing would leave the CLI unnotified\n' >&2
-            exit 1
-          fi
-
           matrix='{"include":[{"target_os":"linux","arch":"arm64","platform_dir":"linux-arm64","runner":"large-linux-arm"},{"target_os":"linux","arch":"amd64","platform_dir":"linux-amd64","runner":"large-linux-x86"},{"target_os":"darwin","arch":"arm64","platform_dir":"darwin-arm64","runner":"macos-14-xlarge"}]}'
           {
             printf 'artifact_source=%s\n' "$artifact_source"
@@ -376,6 +366,18 @@ jobs:
             printf 'upstream_asset_url=%s\n' "$upstream_asset_url"
             printf 'validation_only=%s\n' "$VALIDATION_ONLY"
           } >> "$GITHUB_OUTPUT"
+
+      - name: Require the CLI notification token when publishing
+        if: steps.plan.outputs.publish == 'true'
+        shell: bash
+        env:
+          NOTIFY_TOKEN_PRESENT: ${{ secrets.CLI_MIRROR_DISPATCH_TOKEN != '' }}
+        run: |
+          set -euo pipefail
+          if [[ "$NOTIFY_TOKEN_PRESENT" != "true" ]]; then
+            printf 'CLI_MIRROR_DISPATCH_TOKEN is not configured; publishing would leave the CLI unnotified\n' >&2
+            exit 1
+          fi
 
       - name: Upload external release snapshot
         if: steps.plan.outputs.external == 'true'
@@ -932,35 +934,18 @@ jobs:
         with:
           bun-version-file: .bun-version
 
-      - name: Check mirror dispatch configuration
-        id: config
-        shell: bash
-        env:
-          MIRROR_DISPATCH_TOKEN: ${{ secrets.CLI_MIRROR_DISPATCH_TOKEN }}
-        run: |
-          set -euo pipefail
-          if [[ -z "$MIRROR_DISPATCH_TOKEN" ]]; then
-            echo "::notice::CLI_MIRROR_DISPATCH_TOKEN is not configured; skipping the ECR Public mirror"
-            printf 'configured=false\n' >> "$GITHUB_OUTPUT"
-          else
-            printf 'configured=true\n' >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Download published image metadata
-        if: steps.config.outputs.configured == 'true'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: published-image-${{ inputs.service }}-${{ inputs.version }}
 
       - name: Download published native metadata
-        if: steps.config.outputs.configured == 'true'
         continue-on-error: true
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: published-natives-${{ inputs.service }}-${{ inputs.version }}
 
       - name: Install regctl
-        if: steps.config.outputs.configured == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -980,7 +965,6 @@ jobs:
 
       - name: Request and verify ECR Public mirror
         id: mirror
-        if: steps.config.outputs.configured == 'true'
         shell: bash
         env:
           MIRROR_DISPATCH_TOKEN: ${{ secrets.CLI_MIRROR_DISPATCH_TOKEN }}
@@ -1190,27 +1174,27 @@ jobs:
           SERVICE: ${{ inputs.service }}
         run: |
           set -euo pipefail
-          # A draft with this tag is uncommitted scratch: gh release create
-          # with assets creates a draft first, uploads, then publishes, so an
-          # interrupted upload can leave a stale draft with tag_name set. A
-          # draft has no public git tag, so only the release is deleted.
-          set +e
-          existing="$(gh release view "$RELEASE_TAG" --json isDraft 2>&1)"
-          status=$?
-          set -e
+          # scripts/assert-revision-unpublished.sh queries the REST
+          # releases-by-tag endpoint directly and fails closed on any error,
+          # unlike "gh release view" (see the script for why that lookup is
+          # ambiguous). A draft with this tag is uncommitted scratch: gh
+          # release create with assets creates a draft first, uploads, then
+          # publishes, so an interrupted upload can leave a stale draft with
+          # tag_name set. A draft has no public git tag, so only the release
+          # is deleted, and by id: "gh release delete <tag>" goes through
+          # the same ambiguous lookup this guard replaces.
+          scripts/assert-revision-unpublished.sh "$RELEASE_TAG"
 
-          if [[ $status -eq 0 ]]; then
-            is_draft="$(python3 -c 'import json,sys; print(str(json.loads(sys.argv[1])["isDraft"]).lower())' "$existing")"
-            if [[ "$is_draft" == "true" ]]; then
-              echo "::warning::release $RELEASE_TAG exists as a stale draft from an interrupted create; deleting it before re-creating"
-              gh release delete "$RELEASE_TAG" --yes
-            else
-              printf 'release %s already exists; revisions are immutable\n' "$RELEASE_TAG" >&2
-              exit 1
-            fi
-          elif [[ "$existing" != *"release not found"* ]]; then
-            printf '%s\n' "$existing" >&2
-            exit 1
+          draft_ids="$(
+            gh api --paginate "repos/$GH_REPO/releases?per_page=100" \
+              --jq '.[] | select(.draft and .tag_name == env.RELEASE_TAG) | .id'
+          )"
+          if [[ -n "$draft_ids" ]]; then
+            while IFS= read -r draft_id; do
+              [[ -n "$draft_id" ]] || continue
+              echo "::warning::release $RELEASE_TAG exists as a stale draft (id $draft_id) from an interrupted create; deleting it before re-creating"
+              gh api -X DELETE "repos/$GH_REPO/releases/$draft_id"
+            done <<< "$draft_ids"
           fi
 
           gh release create "$RELEASE_TAG" release-assets/* \
@@ -1223,7 +1207,7 @@ jobs:
     needs:
       - plan
       - publish-release
-    if: needs.plan.outputs.publish == 'true' && needs.publish-release.result == 'success'
+    if: ${{ !cancelled() && needs.plan.outputs.publish == 'true' && needs.publish-release.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -1243,14 +1227,11 @@ jobs:
           # supabase/cli) and the same CLI_MIRROR_DISPATCH_TOKEN secret. This
           # is its own job (not a step of publish-release) so that "re-run
           # failed jobs" retries only the notification: the release already
-          # exists by the time this runs, so a missing token or a failed
-          # dispatch fails this job loudly instead of silently rebuilding.
+          # exists by the time this runs, so a failed dispatch fails this job
+          # loudly instead of silently rebuilding. The plan job already
+          # requires CLI_MIRROR_DISPATCH_TOKEN whenever publish is true, so
+          # this job has no missing-token path of its own.
           dispatch_repo="${MIRROR_DISPATCH_REPO:-supabase/cli}"
-          if [[ -z "${MIRROR_DISPATCH_TOKEN:-}" ]]; then
-            printf 'CLI_MIRROR_DISPATCH_TOKEN is not configured; release %s exists but the CLI must be told by hand\n' \
-              "$RELEASE_TAG" >&2
-            exit 1
-          fi
           payload="$(python3 - "$SERVICE" "$VERSION" "$REVISION" "$RELEASE_VERSION" <<'PY'
           import json
           import sys

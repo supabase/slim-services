@@ -39,7 +39,7 @@ recorded in supabase/cli
    and then copies each native tag. `mirror-ecr` waits, within one shared
    timeout, for the image digest on ECR Public and each native `SHA256SUMS`
    on S3, and reports each destination separately. Either one missing fails
-   `mirror-ecr` (once `CLI_MIRROR_DISPATCH_TOKEN` exists), which marks the
+   `mirror-ecr`, which marks the
    run red but does not stop `publish-release`; the ECR lines in the release
    notes only depend on the image check. Native ECR copy is best-effort and
    only enforced under `ECR_MIRROR_REQUIRE_NATIVES=1`.
@@ -86,14 +86,15 @@ recorded in supabase/cli
    are immutable, publish a hotfix (`hotfix=true` on `service-release.yml`)
    to get a new revision with natives, rather than rebuilding the old one.
 
-Release-time mirroring (`service-release.yml` `mirror-ecr`) is skipped,
-with a workflow notice, until the `CLI_MIRROR_DISPATCH_TOKEN` secret
-exists. Once the secret is set, a failed or unverified image mirror or S3
-native copy fails the `mirror-ecr` job and the run, but the GitHub Release
-is still published (with a warning, and without the ECR lines in its notes
-when the image did not verify). Mirroring never gates the GitHub Release:
-mirror-side problems are repaired by backfilling with
-`ecr-mirror-check.yml` (`request: true`), not by rebuilding the release.
+Release-time mirroring (`service-release.yml` `mirror-ecr`) always runs
+when publishing: the `plan` job fails the run before any build or push
+work starts if `CLI_MIRROR_DISPATCH_TOKEN` is not configured. A failed or
+unverified image mirror or S3 native copy fails the `mirror-ecr` job and
+the run, but the GitHub Release is still published (with a warning, and
+without the ECR lines in its notes when the image did not verify).
+Mirroring never gates the GitHub Release: mirror-side problems are
+repaired by backfilling with `ecr-mirror-check.yml` (`request: true`), not
+by rebuilding the release.
 
 ## Dispatch contract
 
@@ -160,9 +161,10 @@ GitHub release has been created:
 }
 ```
 
-Unlike the mirror dispatch, a missing token or a failed dispatch fails the
-run: the release already exists by this point, so a failure means the CLI
-must be told by hand, not that anything needs to be republished. A CLI
+Unlike the mirror dispatch, a failed dispatch fails the run: the release
+already exists by this point, so a failure means the CLI must be told by
+hand, not that anything needs to be republished. (The token itself is
+guaranteed present by the `plan` job's check, not by `notify-cli`.) A CLI
 workflow consumes this to sync its artifact catalog to the new revision.
 
 ## Follow-up

@@ -7,6 +7,7 @@ python3 - "$ROOT_DIR" <<'PY'
 import json
 import os
 import pathlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -15,30 +16,32 @@ ROOT = pathlib.Path(sys.argv[1])
 PLANNER = ROOT / "scripts" / "plan-release-revision.sh"
 GH_REPO = "supabase/slim-services"
 
+if shutil.which("jq") is None:
+    raise SystemExit(
+        "jq is required to run these tests (the fake gh runs the real --jq "
+        "filter through it); install jq and retry"
+    )
+
+# Runs the real `--jq` filter the planner passes (extracted from argv below)
+# through the real `jq`, rather than reimplementing it, so a regression in
+# the filter (for example dropping the draft exclusion) fails these tests
+# instead of a hand-written stand-in silently papering over it. `jq -s`
+# slurps the JSONL fixture (one release record per line) into the array the
+# filter's `.[] | ...` expects.
 DEFAULT_FAKE_GH = (
     "#!/bin/sh\n"
     "set -eu\n"
     "printf '%s\\n' \"$*\" >> \"$FAKE_GH_ARGV\"\n"
+    "jq_filter=\"\"\n"
+    "prev=\"\"\n"
+    "for arg in \"$@\"; do\n"
+    "  [ \"$prev\" = \"--jq\" ] && jq_filter=\"$arg\"\n"
+    "  prev=\"$arg\"\n"
+    "done\n"
     "case \" $* \" in\n"
     "  *' --paginate '*) cat \"$FAKE_TAGS\" ;;\n"
     "  *) head -n 100 \"$FAKE_TAGS\" ;;\n"
-    "esac | python3 \"$FAKE_FILTER\"\n"
-)
-
-# Stands in for the real `gh api --jq '.[] | select(.draft | not) | .tag_name'`
-# filter: reads one release JSON record per line from stdin and prints the
-# tag_name of the non-draft ones. The fixture rows are release records
-# (tag_name + draft), never bare tag strings, so a draft can be modeled.
-FAKE_FILTER = (
-    "import json\n"
-    "import sys\n"
-    "for line in sys.stdin:\n"
-    "    line = line.strip()\n"
-    "    if not line:\n"
-    "        continue\n"
-    "    record = json.loads(line)\n"
-    "    if not record.get('draft'):\n"
-    "        print(record['tag_name'])\n"
+    "esac | jq -s -r \"$jq_filter\"\n"
 )
 
 FAILING_FAKE_GH = (
@@ -95,15 +98,12 @@ def plan(service, upstream_version, validation_only, hotfix, git_ref, tags, *, g
         fake_gh = bin_dir / "gh"
         fake_gh.write_text(gh_script or DEFAULT_FAKE_GH, encoding="utf-8")
         fake_gh.chmod(0o755)
-        fake_filter = directory / "filter.py"
-        fake_filter.write_text(FAKE_FILTER, encoding="utf-8")
         env = {
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
             "GH_REPO": GH_REPO,
             "GH_TOKEN": "test-token",
             "FAKE_TAGS": str(fixture),
             "FAKE_GH_ARGV": str(argv_file),
-            "FAKE_FILTER": str(fake_filter),
         }
         result = run(
             [str(PLANNER), service, upstream_version, validation_only, hotfix, git_ref],
