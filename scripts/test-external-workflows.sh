@@ -321,6 +321,79 @@ def test_validation_only_builds_existing_releases_without_publication():
         assert_true("needs.plan.outputs.publish == 'true'" in condition, f"{key} lost publication gate")
 
 
+def test_release_workflow_uses_hotfix_input_and_revision_planner():
+    ruby = (
+        "require 'yaml'; require 'json'; "
+        "data=YAML.safe_load(File.read(ARGV[0]), aliases: true); "
+        "dispatch=data.fetch('on').fetch('workflow_dispatch').fetch('inputs'); "
+        "call=data.fetch('on').fetch('workflow_call').fetch('inputs'); "
+        "plan=data.fetch('jobs').fetch('plan'); "
+        "plan_step=plan.fetch('steps').find { |s| s['name'] == 'Validate inputs and check existing release' }; "
+        "puts JSON.generate({dispatch: dispatch, call: call, outputs: plan.fetch('outputs'), "
+        "plan_env: plan_step.fetch('env'), plan_run: plan_step.fetch('run')})"
+    )
+    result = run(["ruby", "-e", ruby, str(ROOT / ".github" / "workflows" / "service-release.yml")])
+    assert_true(result.returncode == 0, result.stderr)
+    parsed = json.loads(result.stdout)
+    for name, inputs in (("workflow_dispatch", parsed["dispatch"]), ("workflow_call", parsed["call"])):
+        assert_true("force" not in inputs, f"{name} must not have a force input")
+        hotfix = inputs.get("hotfix")
+        assert_true(hotfix is not None, f"{name} lacks hotfix input")
+        assert_true(hotfix.get("type") == "boolean", f"{name} hotfix must be boolean")
+        assert_true(hotfix.get("default") is False, f"{name} hotfix must default false")
+        hotfix_reason = inputs.get("hotfix_reason")
+        assert_true(hotfix_reason is not None, f"{name} lacks hotfix_reason input")
+        assert_true(hotfix_reason.get("type") == "string", f"{name} hotfix_reason must be a string")
+        assert_true(hotfix_reason.get("default") == "", f"{name} hotfix_reason must default to an empty string")
+    assert_true("release_version" in parsed["outputs"], "plan must expose release_version")
+    assert_true("revision" in parsed["outputs"], "plan must expose revision")
+    assert_true("FORCE" not in parsed["plan_env"], "plan must not reference the removed force input")
+    assert_true("HOTFIX" in parsed["plan_env"], "plan must receive HOTFIX")
+    assert_true("scripts/plan-release-revision.sh" in parsed["plan_run"], "plan must call the revision planner")
+    assert_true(
+        "release-workflow-decision.sh" not in parsed["plan_run"],
+        "plan must not call the deleted decision helper",
+    )
+
+
+def test_publish_release_is_create_only_and_notifies_cli():
+    ruby = (
+        "require 'yaml'; require 'json'; "
+        "data=YAML.safe_load(File.read(ARGV[0]), aliases: true); "
+        "steps=data.fetch('jobs').fetch('publish-release').fetch('steps'); "
+        "puts JSON.generate(steps.map { |s| {name: s['name'], run: s['run']} })"
+    )
+    result = run(["ruby", "-e", ruby, str(ROOT / ".github" / "workflows" / "service-release.yml")])
+    assert_true(result.returncode == 0, result.stderr)
+    steps = json.loads(result.stdout)
+    combined_run = "\n".join(step.get("run") or "" for step in steps)
+    assert_true("--clobber" not in combined_run, "publish-release must not clobber an existing release")
+    assert_true("gh release edit" not in combined_run, "publish-release must not edit an existing release")
+    assert_true("gh release create" in combined_run, "publish-release must still create the release")
+    assert_true("slim-release-published" in combined_run, "publish-release must dispatch slim-release-published")
+    assert_true(
+        any("already exists; revisions are immutable" in (step.get("run") or "") for step in steps),
+        "publish-release must fail create-only when the release tag already exists",
+    )
+
+
+def test_stage_release_assets_appends_manifest_hash_to_platform_checksums():
+    ruby = (
+        "require 'yaml'; require 'json'; "
+        "data=YAML.safe_load(File.read(ARGV[0]), aliases: true); "
+        "s=data.fetch('jobs').fetch('build').fetch('steps').find { |x| x['name'] == 'Stage release assets' }; "
+        "abort 'stage missing' unless s; puts s.fetch('run')"
+    )
+    result = run(["ruby", "-e", ruby, str(ROOT / ".github" / "workflows" / "service-release.yml")])
+    assert_true(result.returncode == 0, result.stderr)
+    run_block = result.stdout
+    assert_true(
+        "$RELEASE_VERSION" in run_block, "stage step must name release assets with the release version"
+    )
+    assert_true("sha256sum" in run_block, "stage step must hash the copied manifest")
+    assert_true("sort -k2" in run_block, "stage step must re-sort the per-platform SHA256SUMS by name")
+
+
 def test_workflow_downloads_and_verifies_snapshot_before_recipe_build_consumers():
     def workflow_steps(path, job):
         ruby = (
@@ -490,7 +563,16 @@ def test_release_aggregate_checksums_cover_external_evidence():
             encoding="utf-8",
         )
         merged = os.environ.copy()
-        merged.update({"IMAGE_RELEASE": "mirror", "SERVICE": service, "VERSION": version})
+        merged.update({
+            "GITHUB_SHA": "f" * 40,
+            "HOTFIX": "false",
+            "HOTFIX_REASON": "",
+            "IMAGE_RELEASE": "mirror",
+            "RELEASE_VERSION": f"{version}-r0",
+            "REVISION": "0",
+            "SERVICE": service,
+            "VERSION": version,
+        })
         executed = subprocess.run(
             ["bash", "-c", run_block], cwd=temp_path, text=True, capture_output=True, env=merged
         )

@@ -95,20 +95,13 @@ class ImageArtifactArchiveTest(unittest.TestCase):
         self.assertFalse(any(artifact.glob("postgrest.tar*")))
         self.assertIn("fixture-container:/bin/postgrest", self.docker_log.read_text())
 
-        archive_prefix = artifact / "postgrest-1.2.3-linux-amd64"
+        archive_prefix = artifact / "postgrest-1.2.3-r0-linux-amd64"
         result = self.run_cmd([str(self.repo / "scripts/archive-artifact.sh"), str(artifact / "rootfs"), str(archive_prefix)])
         self.assertEqual(result.returncode, 0, result.stderr)
         manifest = json.loads((artifact / "manifest.json").read_text())
         self.assertTrue((artifact / manifest["archive"]).is_file())
         (artifact / "postgrest.tar.zst").write_text("stale\n", encoding="utf-8")
         (artifact / "SHA256SUMS").write_text("fixture\n", encoding="utf-8")
-        # "Stage release assets" still looks up the SBOM by the bare upstream
-        # $SERVICE-$VERSION-$PLATFORM_DIR pattern; wiring it to the release
-        # version is a later task's change to service-release.yml.
-        shutil.copy(
-            artifact / manifest["sbom"],
-            artifact / "postgrest-1.2.3-linux-amd64.sbom.spdx.json",
-        )
 
         ruby = (
             'require "yaml"; w=YAML.safe_load(File.read(ARGV[0]), aliases: true); '
@@ -125,7 +118,15 @@ class ImageArtifactArchiveTest(unittest.TestCase):
         self.assertEqual(extracted.returncode, 0, extracted.stderr)
         stage.write_text("#!/usr/bin/env bash\n" + extracted.stdout, encoding="utf-8")
         stage.chmod(0o755)
-        result = self.run_cmd([str(stage)], {"SERVICE": "postgrest", "VERSION": "1.2.3", "PLATFORM_DIR": "linux-amd64"})
+        result = self.run_cmd(
+            [str(stage)],
+            {
+                "SERVICE": "postgrest",
+                "VERSION": "1.2.3",
+                "RELEASE_VERSION": "1.2.3-r0",
+                "PLATFORM_DIR": "linux-amd64",
+            },
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
         release = self.repo / "release-assets"
         self.assertTrue((release / manifest["archive"]).is_file())

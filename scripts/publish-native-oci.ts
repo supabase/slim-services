@@ -1,7 +1,10 @@
 /**
  * Push each native triplet (tar.zst + manifest.json + SHA256SUMS) to
- * IMAGE_REPOSITORY:<VERSION>-native-<target>. Do not use <VERSION>-linux-*
- * tags; those are image platform manifests.
+ * IMAGE_REPOSITORY:<RELEASE_VERSION>-native-<target>. Do not use
+ * <RELEASE_VERSION>-linux-* tags; those are image platform manifests.
+ *
+ * VERSION is the release version R (<upstream>-r<N>): it names both the
+ * staged release assets read from ASSETS_DIR and the pushed tag.
  *
  * Run: `bun scripts/publish-native-oci.ts SERVICE VERSION IMAGE_REPOSITORY ASSETS_DIR [OUTPUT_JSON]`
  */
@@ -31,8 +34,9 @@ const usage = `Usage:
   bun scripts/publish-native-oci.ts SERVICE VERSION IMAGE_REPOSITORY ASSETS_DIR [OUTPUT_JSON]
 
 Push each native triplet (tar.zst + manifest.json + SHA256SUMS) to
-IMAGE_REPOSITORY:<VERSION>-native-<target>. Writes OUTPUT_JSON
-(default: published-natives.json) as [{tag,digest}, ...]. Missing
+IMAGE_REPOSITORY:<RELEASE_VERSION>-native-<target>. VERSION is the release
+version R and names both the staged assets and the pushed tag. Writes
+OUTPUT_JSON (default: published-natives.json) as [{tag,digest}, ...]. Missing
 platforms are skipped. Never prune untagged manifests.`;
 
 export const artifactPutArgv = (

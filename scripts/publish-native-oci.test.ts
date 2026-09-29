@@ -20,12 +20,12 @@ describe("publish-native-oci", () => {
     const tmp = mkdtempSync(join(tmpdir(), "publish-native-"));
     const assets = join(tmp, "assets");
     mkdirSync(assets);
-    const archive = join(assets, "postgrest-v16.2-linux-arm64.tar.zst");
-    const manifest = join(assets, "postgrest-v16.2-linux-arm64.manifest.json");
-    const checksum = join(assets, "postgrest-v16.2-linux-arm64.SHA256SUMS");
+    const archive = join(assets, "postgrest-v16.2-r0-linux-arm64.tar.zst");
+    const manifest = join(assets, "postgrest-v16.2-r0-linux-arm64.manifest.json");
+    const checksum = join(assets, "postgrest-v16.2-r0-linux-arm64.SHA256SUMS");
     writeFileSync(archive, "archive");
     writeFileSync(manifest, "{}");
-    writeFileSync(checksum, "deadbeef  postgrest-v16.2-linux-arm64.tar.zst\n");
+    writeFileSync(checksum, "deadbeef  postgrest-v16.2-r0-linux-arm64.tar.zst\n");
     const stub = join(tmp, "bin");
     mkdirSync(stub);
     const puts = join(tmp, "puts");
@@ -43,12 +43,12 @@ exit 1
     chmodSync(join(stub, "regctl"), 0o755);
     const output = join(tmp, "published-natives.json");
     const result = run(
-      ["postgrest", "v16.2", "ghcr.io/supabase/cli/postgrest", assets, output],
+      ["postgrest", "v16.2-r0", "ghcr.io/supabase/cli/postgrest", assets, output],
       { PATH: `${stub}:/usr/bin:/bin`, FAKE_PUTS: puts },
     );
     expect(result.exitCode, result.stderr.toString() + result.stdout.toString()).toBe(0);
     expect(JSON.parse(await Bun.file(output).text())).toEqual([
-      { tag: "v16.2-native-linux-arm64", digest: DIGEST },
+      { tag: "v16.2-r0-native-linux-arm64", digest: DIGEST },
     ]);
     expect((await Bun.file(puts).text()).split("\n").filter(Boolean)).toEqual([
       "artifact",
@@ -67,7 +67,7 @@ exit 1
       checksum,
       "--file-media-type",
       "application/vnd.supabase.slim.checksum.v1",
-      "ghcr.io/supabase/cli/postgrest:v16.2-native-linux-arm64",
+      "ghcr.io/supabase/cli/postgrest:v16.2-r0-native-linux-arm64",
     ]);
     expect(result.stdout.toString()).toContain("skipping linux-amd64");
     expect(result.stdout.toString()).toContain("skipping darwin-arm64");

@@ -7,15 +7,17 @@ source "$ROOT_DIR/scripts/lib.sh"
 
 usage() {
   cat <<'EOF'
-Usage: scripts/mirror-upstream-image.sh SERVICE VERSION DESTINATION OUTPUT
+Usage: scripts/mirror-upstream-image.sh SERVICE VERSION DESTINATION OUTPUT [RELEASE_VERSION]
 
 Copy the pinned upstream OCI image and verify the destination's complete index
-and referrer tree before proving an anonymous pull and service smoke.
+and referrer tree before proving an anonymous pull and service smoke. The
+destination is tagged with RELEASE_VERSION (defaults to VERSION); the source
+lookup always uses the upstream VERSION.
 EOF
 }
 
 [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { usage; exit 0; }
-[[ $# -eq 4 ]] || { usage >&2; exit 2; }
+[[ $# -eq 4 || $# -eq 5 ]] || { usage >&2; exit 2; }
 
 require_cmd python3
 require_cmd regctl
@@ -24,6 +26,7 @@ service="$1"
 version="$2"
 destination="$3"
 output="$4"
+release_version="${5:-$version}"
 
 load_recipe "$service"
 policy_file="${UPSTREAM_ASSETS_FILE:?recipe must define UPSTREAM_ASSETS_FILE}"
@@ -42,7 +45,7 @@ image = json.loads(os.environ["IMAGE_JSON"])
 print(image["source"], image["index_digest"])
 PY
 )"
-destination_ref="$destination:$version"
+destination_ref="$destination:$release_version"
 source_ref="$source@$expected_index_digest"
 
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/slim-oci-mirror.XXXXXX")"

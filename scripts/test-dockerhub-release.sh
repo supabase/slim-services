@@ -38,7 +38,7 @@ cat > "$fake_bin/gh" <<'SH'
 set -eu
 case "$*" in
   "api repos/${EXPECTED_SOURCE_REPOSITORY}/commits/${EXPECTED_SOURCE_COMMIT} --silent") ;;
-  "release view postgres-${EXPECTED_VERSION}") exit 1 ;;
+  "api --paginate repos/${GH_REPO}/releases?per_page=100 --jq .[].tag_name") ;;
   *)
     printf 'unexpected gh invocation: %s\n' "$*" >&2
     exit 2
@@ -134,13 +134,16 @@ touch "$github_output"
     EXPECTED_VERSION=17.6.1.163 \
     DOCKER_HUB_RESPONSE_TAG=17.6.1.163 \
     DOCKER_PROVENANCE="{\"linux/amd64\":{\"SLSA\":{\"invocation\":{\"configSource\":{\"digest\":{\"sha1\":\"$source_commit\"}}}}},\"linux/arm64\":{\"SLSA\":{\"invocation\":{\"configSource\":{\"digest\":{\"sha1\":\"$source_commit\"}}}}}}" \
-    FORCE=false \
+    GH_REPO=supabase/slim-services \
     GH_TOKEN=test-token \
     GITHUB_OUTPUT="$github_output" \
+    GITHUB_REF=refs/heads/main \
     GITHUB_REPOSITORY_OWNER=supabase \
     GITHUB_WORKSPACE="$ROOT_DIR" \
+    HOTFIX=false \
     RUNNER_TEMP="$temp_dir/runner" \
     SERVICE=postgres \
+    VALIDATION_ONLY=false \
     VERSION=17.6.1.163 \
     bash -c "$plan_run"
 )
