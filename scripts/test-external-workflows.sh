@@ -14,7 +14,6 @@ import tempfile
 ROOT = pathlib.Path(__import__("sys").argv[1])
 PLAN = ROOT / "scripts" / "plan-external-release.sh"
 VERIFY = ROOT / "scripts" / "verify-external-release.sh"
-DECISION = ROOT / "scripts" / "release-workflow-decision.sh"
 
 
 def run(command, *, env=None, check=False):
@@ -315,20 +314,7 @@ def test_validation_only_builds_existing_releases_without_publication():
     assert_true("validation_only" in parsed["outputs"], "plan must expose validation_only")
     assert_true("build" in parsed["outputs"], "plan must expose build decision")
     assert_true("VALIDATION_ONLY" in parsed["plan_env"], "plan must receive VALIDATION_ONLY")
-    assert_true("scripts/release-workflow-decision.sh" in parsed["plan_run"], "plan must consume the decision seam")
     assert_true(parsed["build_if"] == "needs.plan.outputs.build == 'true'", "build must use the decision output")
-
-    scenarios = {
-        ("true", "false", "true"): {"build": True, "publish": False},
-        ("true", "true", "true"): {"build": True, "publish": False},
-        ("false", "false", "true"): {"build": False, "publish": False},
-        ("false", "true", "true"): {"build": True, "publish": True},
-        ("false", "false", "false"): {"build": True, "publish": True},
-    }
-    for arguments, expected in scenarios.items():
-        decision = run([str(DECISION), *arguments])
-        assert_true(decision.returncode == 0, decision.stderr)
-        assert_true(json.loads(decision.stdout) == expected, f"decision mismatch for {arguments}: {decision.stdout}")
 
     for key in ("publish_image_if", "publish_release_if"):
         condition = parsed[key]

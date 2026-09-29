@@ -48,6 +48,7 @@ jobs:
           set -euo pipefail
           scripts/test-external-release.sh
           scripts/test-external-workflows.sh
+          scripts/test-release-revision.sh
           scripts/test-dockerhub-release.sh
           scripts/test-poll-service-releases.sh
           scripts/test-portable-audit.sh
