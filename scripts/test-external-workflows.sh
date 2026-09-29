@@ -374,6 +374,11 @@ def test_build_step_labels_image_with_release_version():
         env.get("OCI_REVISION") == "${{ github.sha }}",
         "OCI_REVISION must stay the packaging commit sha",
     )
+    assert_true(
+        env.get("IMAGE_TAG")
+        == "local/${{ inputs.service }}:${{ needs.plan.outputs.release_version }}-${{ matrix.platform_dir }}",
+        f"IMAGE_TAG must be tagged with the release version, got: {env.get('IMAGE_TAG')!r}",
+    )
 
 
 def test_publish_release_is_create_only_and_notifies_cli():
