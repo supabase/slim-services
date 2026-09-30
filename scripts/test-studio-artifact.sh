@@ -123,6 +123,47 @@ class StudioArtifactBoundaryTest(unittest.TestCase):
         self.assertTrue(valid_alias.is_symlink())
         self.assertEqual(valid_alias.resolve(strict=True), valid_destination.resolve())
 
+    def test_next_standalone_removes_dangling_links_to_excluded_sharp_packages(self):
+        self.installed_store.mkdir(parents=True)
+        next_pkg = self.standalone / "app/node_modules/.pnpm/next@16.3.5_x/node_modules"
+        next_pkg.mkdir(parents=True)
+        (next_pkg / "sharp").symlink_to(
+            "../../sharp@0.35.4_x/node_modules/sharp"
+        )
+        img_scope = next_pkg / "@img"
+        img_scope.mkdir()
+        (img_scope / "sharp-linux-x64").symlink_to(
+            "../../@img+sharp-linux-x64@0.35.4/node_modules/@img/sharp-linux-x64"
+        )
+
+        result = self.run_script(NORMALIZE, self.standalone, self.installed_store)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(
+            "removed dangling link to excluded package: "
+            "app/node_modules/.pnpm/next@16.3.5_x/node_modules/sharp",
+            result.stdout,
+        )
+        self.assertIn(
+            "removed dangling link to excluded package: "
+            "app/node_modules/.pnpm/next@16.3.5_x/node_modules/@img/sharp-linux-x64",
+            result.stdout,
+        )
+        self.assertFalse((next_pkg / "sharp").exists())
+        self.assertFalse((next_pkg / "sharp").is_symlink())
+        self.assertFalse(img_scope.exists())
+
+    def test_next_standalone_still_rejects_other_dangling_symlinks(self):
+        self.installed_store.mkdir(parents=True)
+        other_pkg = self.standalone / "app/node_modules/.pnpm/foo@1.0.0_x/node_modules"
+        other_pkg.mkdir(parents=True)
+        (other_pkg / "bar").symlink_to("../../bar@1.0.0/node_modules/bar")
+
+        result = self.run_script(NORMALIZE, self.standalone, self.installed_store)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("dangling symlink is not a pnpm alias", result.stderr)
+
     def test_next_standalone_materialization_fails_when_exact_target_is_missing(self):
         stores = self.standalone / "app/node_modules/.pnpm"
         (stores / "node_modules").mkdir(parents=True)
