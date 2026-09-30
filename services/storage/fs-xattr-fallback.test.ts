@@ -149,9 +149,20 @@ describe("fs-xattr sidecar fallback", () => {
 
     xattr.setAttributeSync(object, ATTR, "image/png");
     expect(xattr.getAttributeSync(object, ATTR).toString()).toBe("image/png");
+    expect(sidecarFiles()).toEqual([]);
     xattr.removeAttributeSync(object, ATTR);
     expect(codeOf(() => xattr.getAttributeSync(object, ATTR))).toBe(MISSING_CODE);
     expect(sidecarFiles()).toEqual([]);
+  });
+
+  test("a native rewrite drops the sidecar copy instead of leaving it stale", () => {
+    fake.supported = false;
+    xattr.setAttributeSync(object, "user.supabase.etag", "part-etag-a");
+    fake.supported = true;
+    xattr.setAttributeSync(object, "user.supabase.etag", "part-etag-b");
+
+    fake.supported = false;
+    expect(codeOf(() => xattr.getAttributeSync(object, "user.supabase.etag"))).toBe(MISSING_CODE);
   });
 
   test("SLIM_STORAGE_XATTR_SIDECAR=force bypasses native attributes", () => {
@@ -252,6 +263,32 @@ describe("sidecar sweep", () => {
     await sweep({ force: false });
     expect(sidecarFiles().map((file) => file.split("/").at(-2))).toEqual(["10"]);
     expect(existsSync(join(sidecarDir, ".sweep-cursor"))).toBe(false);
+  });
+
+  test("resumes inside a shard after the last swept entry", async () => {
+    orphansInShard("ab", 120);
+    writeFileSync(join(sidecarDir, ".sweep-cursor"), `ab/ab${String(59).padStart(62, "0")}.json`);
+
+    await sweep({ force: false });
+    expect(sidecarFiles()).toHaveLength(60);
+    expect(existsSync(join(sidecarDir, ".sweep-cursor"))).toBe(false);
+  });
+
+  test("saves the cursor at each pause and releases only its own lock", async () => {
+    orphansInShard("ab", 51);
+    const cursorFile = join(sidecarDir, ".sweep-cursor");
+    const lock = join(sidecarDir, ".sweep-lock");
+    const running = xattr.sweepSidecars({ force: true, pauseMs: 300 });
+    const cursor = () => (existsSync(cursorFile) ? readFileSync(cursorFile, "utf8") : "");
+    for (let attempt = 0; attempt < 100 && !cursor().startsWith("ab/"); attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect(cursor()).toBe(`ab/ab${String(49).padStart(62, "0")}.json`);
+    writeFileSync(lock, "other");
+
+    await running;
+    expect(readFileSync(lock, "utf8")).toBe("other");
+    expect(existsSync(cursorFile)).toBe(false);
   });
 
   test("skips while another sweeper holds a fresh lock, not a stale one", async () => {

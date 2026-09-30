@@ -197,22 +197,31 @@ exports a function the wrapper does not.
   versions (every upload writes a new version path) and multipart parts leave
   orphaned sidecars, about one per upsert, move or delete. Each records its
   relative `path`, and a background sweep removes entries whose file is gone,
-  plus `.tmp` files older than an hour. Those paths are never reused, since
-  every upload, copy and multipart part writes a fresh one.
+  plus `.tmp` files older than an hour. Uploads, copies and multipart parts
+  write fresh versioned paths; the unversioned Iceberg S3 `PutObject` path can
+  be rewritten, so a delete and re-upload racing the sweep can lose that
+  object's metadata. A native set or remove also drops the sidecar copy, since
+  multipart parts are rewritten in place.
 - The sweep never blocks requests. The first pass starts 30 s after the
   process loads (every wake from idle sleep is a fresh container), and later
   passes repeat hourly while it lives. A pass processes one entry at a time
   with async I/O and pauses after every 50 entries for at least 100 ms, twice
   the batch time when the filesystem is slow. A `.sweep-cursor` records the
-  next shard, so a pass cut short by idle sleep resumes on the next start; a
-  completed pass writes `.last-sweep` and is not repeated within the hour. A
+  last swept entry at every pause, so a pass cut short by idle sleep resumes
+  there, even inside a large shard; a completed pass writes `.last-sweep`
+  and is not repeated within the hour. A
   `.sweep-lock`, refreshed after every batch and stale after 2 minutes, keeps
   a second process from sweeping the same directory; a container stopped
   mid-pass leaves it behind, so the resume waits for it to expire. Unreadable entries are left alone.
   `SLIM_STORAGE_XATTR_SWEEP=immediate` skips the delay and interval for the
   smoke.
-- The fallback needs an absolute storage root; a relative one leaves the
-  original `ENOTSUP`.
+- A relative storage root is resolved against the working directory, which
+  usually differs from Storage's own resolution, so the original `ENOTSUP`
+  remains; the fallback needs an absolute root.
+- A multipart part rewritten in place under Docker Desktop keeps the native
+  etag it had on an engine with xattrs; completing that upload back on such an
+  engine reads the stale native value and fails. It needs two engine switches
+  within one upload.
 - Upstream `supabase/storage-api` reading a fallback directory serves
   `application/octet-stream` and `no-cache`.
 - `SLIM_STORAGE_XATTR_SIDECAR=force` makes the wrapper act as if the filesystem
