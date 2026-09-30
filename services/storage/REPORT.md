@@ -168,3 +168,56 @@ ships `wget` for the CLI healthcheck, and pairwise smokes cover leftover
   it when the stack omits `--health-cmd`, giving the CLI real readiness on a
   distroless image. The smoke waits for `docker inspect` to report
   `healthy`, not just a 200.
+
+## Extended-attribute sidecar fallback (2026-09)
+
+Storage's file backend keeps each object's content type, cache control and
+multipart part etags in extended attributes. Docker Desktop's macOS file
+sharing (VirtioFS and gRPC FUSE) rejects them with `ENOTSUP`, so every upload
+into a bind-mounted directory failed there. OrbStack, Linux bind mounts and
+APFS keep them.
+
+Decision: the slim artifact replaces the bundled `fs-xattr` package with a
+wrapper (`overlay/fs-xattr/index.js`) instead of patching upstream sources or
+moving CLI uploads into engine volumes. `prepare-bundle-dist.mjs` moves the
+real package to `node_modules/fs-xattr/native` and installs the wrapper in its
+place; it fails the build if the real package's ESM entry changes or it
+exports a function the wrapper does not.
+
+- Native attributes stay authoritative. On `ENOTSUP` the wrapper stores the
+  values in `<storage root>/.slim-xattr/<2 hex>/<sha256(relative path)>.json`,
+  outside the object tree so empty-directory cleanup keeps working. Storage
+  only creates its internal bucket (`GLOBAL_S3_BUCKET`) and `multiparts/` at
+  the root; user buckets live below `<internal bucket>/<tenant>/`. The
+  two-character shards keep each directory small.
+- A native miss also reads the sidecar, so a directory written through Docker
+  Desktop keeps its metadata when served from an engine with xattrs; native
+  removal also clears the sidecar copy.
+- Deletion does not go through `fs-xattr`, so deleted objects, superseded
+  versions (every upload writes a new version path) and multipart parts leave
+  orphaned sidecars, about one per upsert, move or delete. Each records its
+  relative `path`, and a background sweep removes entries whose file is gone,
+  plus `.tmp` files older than an hour. Those paths are never reused, since
+  every upload, copy and multipart part writes a fresh one.
+- The sweep never blocks requests. The first pass starts 30 s after the
+  process loads (every wake from idle sleep is a fresh container), and later
+  passes repeat hourly while it lives. A pass processes one entry at a time
+  with async I/O and pauses after every 50 entries for at least 100 ms, twice
+  the batch time when the filesystem is slow. A `.sweep-cursor` records the
+  next shard, so a pass cut short by idle sleep resumes on the next start; a
+  completed pass writes `.last-sweep` and is not repeated within the hour. A
+  `.sweep-lock`, refreshed after every batch and stale after 2 minutes, keeps
+  a second process from sweeping the same directory; a container stopped
+  mid-pass leaves it behind, so the resume waits for it to expire. Unreadable entries are left alone.
+  `SLIM_STORAGE_XATTR_SWEEP=immediate` skips the delay and interval for the
+  smoke.
+- The fallback needs an absolute storage root; a relative one leaves the
+  original `ENOTSUP`.
+- Upstream `supabase/storage-api` reading a fallback directory serves
+  `application/octet-stream` and `no-cache`.
+- `SLIM_STORAGE_XATTR_SIDECAR=force` makes the wrapper act as if the filesystem
+  had rejected every attribute; the image smoke uses it because CI runners'
+  volumes support xattrs.
+
+Drop the wrapper once every version at or above `release_floor` handles
+`ENOTSUP` itself.

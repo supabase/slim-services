@@ -41,6 +41,8 @@ let
       cp ${../../services/storage/overlay/rolldown.config.mjs} rolldown.config.mjs
       cp ${../../services/storage/overlay/bundle-manifest.mjs} bundle-manifest.mjs
       cp ${../../services/storage/overlay/scripts/prepare-bundle-dist.mjs} scripts/prepare-bundle-dist.mjs
+      mkdir -p scripts/slim-fs-xattr
+      cp ${../../services/storage/overlay/fs-xattr/index.js} scripts/slim-fs-xattr/index.js
     '';
     buildPhase = ''
       runHook preBuild

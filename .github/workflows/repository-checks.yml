@@ -69,7 +69,7 @@ jobs:
           scripts/test-extract-upstream-archive.sh
           scripts/test-upstream-artifact.sh
           scripts/test-oci-mirror.sh
-          bun test ./scripts/ecr-mirror.test.ts ./scripts/publish-native-oci.test.ts
+          bun test ./scripts/ecr-mirror.test.ts ./scripts/publish-native-oci.test.ts ./services/storage/fs-xattr-fallback.test.ts
           bun build --no-bundle --target=bun \
             scripts/ecr-mirror.ts scripts/publish-native-oci.ts \
             --outdir="$RUNNER_TEMP/slim-ts-check"
