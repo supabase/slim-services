@@ -105,6 +105,16 @@ function writeValues(sidecar, values) {
   fs.renameSync(temporary, sidecar.path)
 }
 
+// Drops a sidecar copy of `attr` so a later native miss cannot answer with it.
+function dropSidecarCopy(sidecar, attr) {
+  if (sidecar === undefined) return false
+  const values = readValues(sidecar)
+  if (!Object.hasOwn(values, attr)) return false
+  delete values[attr]
+  writeValues(sidecar, values)
+  return true
+}
+
 export function getAttributeSync(file, attr) {
   try {
     return callNative(() => native.getAttributeSync(file, attr))
@@ -117,14 +127,17 @@ export function getAttributeSync(file, attr) {
 
 export function setAttributeSync(file, attr, value) {
   try {
-    return callNative(() => native.setAttributeSync(file, attr, value))
+    callNative(() => native.setAttributeSync(file, attr, value))
   } catch (error) {
     if (!isUnsupported(error)) throw error
     const sidecar = sidecarFor(file, error)
     const values = readValues(sidecar)
     values[attr] = Buffer.from(value).toString('base64')
     writeValues(sidecar, values)
+    return
   }
+  // Multipart parts are rewritten in place, possibly from another engine.
+  dropSidecarCopy(sidecarPath(file), attr)
 }
 
 export function removeAttributeSync(file, attr) {
@@ -135,13 +148,8 @@ export function removeAttributeSync(file, attr) {
     if (!isUnsupported(error) && !isMissing(error)) throw error
     nativeError = error
   }
-  // Also drop a sidecar copy, or a later native miss would resurrect it.
   const sidecar = nativeError === undefined ? sidecarPath(file) : sidecarFor(file, nativeError)
-  const values = sidecar === undefined ? {} : readValues(sidecar)
-  if (Object.hasOwn(values, attr)) {
-    delete values[attr]
-    writeValues(sidecar, values)
-  } else if (nativeError !== undefined) {
+  if (!dropSidecarCopy(sidecar, attr) && nativeError !== undefined) {
     throw isUnsupported(nativeError) ? missingAttribute() : nativeError
   }
 }
@@ -178,8 +186,10 @@ const modifiedAt = (file) =>
     () => undefined
   )
 
-// Every upload, copy and multipart part writes a fresh path, so a file that is
-// gone does not come back and its sidecar can go.
+// Uploads, copies and multipart parts write fresh versioned paths, so a missing
+// file normally stays gone. Unversioned paths (the Iceberg S3 PutObject route)
+// can be rewritten: a delete and re-upload landing between the stat and the rm
+// loses that object's metadata.
 async function sweepEntry(root, entry, now) {
   if (entry.endsWith('.tmp')) {
     const modified = await modifiedAt(entry)
@@ -199,24 +209,35 @@ async function sweepEntry(root, entry, now) {
   if (!(await exists(path.resolve(root, relative)))) await fsp.rm(entry, { force: true })
 }
 
-// Best-effort single sweeper per directory; a racing takeover of a stale lock
-// only duplicates idempotent removals.
-async function acquireLock(lock) {
+// Best-effort single sweeper per directory: two processes taking over the same
+// stale lock can both sweep, which only duplicates idempotent removals. The
+// token keeps each from releasing a lock it no longer holds.
+async function acquireLock(lock, retry = true) {
+  const token = `${process.pid}.${crypto.randomUUID()}`
   try {
-    await (await fsp.open(lock, 'wx')).close()
-    return true
+    await fsp.writeFile(lock, token, { flag: 'wx' })
+    return token
   } catch (error) {
-    if (error?.code !== 'EEXIST') return false
+    if (error?.code !== 'EEXIST') return undefined
   }
   const modified = await modifiedAt(lock)
-  if (modified !== undefined && Date.now() - modified < SWEEP_LOCK_STALE_MS) return false
+  if (!retry || (modified !== undefined && Date.now() - modified < SWEEP_LOCK_STALE_MS)) {
+    return undefined
+  }
   await fsp.rm(lock, { force: true })
-  return acquireLock(lock)
+  return acquireLock(lock, false)
+}
+
+async function releaseLock(lock, token) {
+  if ((await fsp.readFile(lock, 'utf8').catch(() => undefined)) === token) {
+    await fsp.rm(lock, { force: true })
+  }
 }
 
 // Removes sidecars whose file is gone, in the background: async I/O, one entry
 // at a time, pausing after every batch (longer when the filesystem is slow).
-// A pass interrupted by idle sleep resumes from its cursor on the next start;
+// A pass interrupted by idle sleep resumes after the last entry its cursor
+// records (`<shard>/<entry>`, or `<shard>` for a shard not yet started);
 // a completed pass stamps the directory and is not repeated within the
 // interval. Not part of fs-xattr's API.
 export async function sweepSidecars({ force = false, pauseMs = SWEEP_PAUSE_MS } = {}) {
@@ -232,19 +253,24 @@ export async function sweepSidecars({ force = false, pauseMs = SWEEP_PAUSE_MS } 
     if (Date.now() - stamped < SWEEP_INTERVAL_MS - 60_000) return
   }
   const lock = path.join(dir, SWEEP_LOCK)
-  if (!(await acquireLock(lock))) return
+  const token = await acquireLock(lock)
+  if (token === undefined) return
   try {
     const now = Date.now()
     let batchStarted = Date.now()
     let processed = 0
-    const start = Math.max(0, SHARDS.indexOf(cursor?.trim()))
+    const [cursorShard, resumeAfter] = (cursor?.trim() ?? '').split('/')
+    const start = Math.max(0, SHARDS.indexOf(cursorShard))
     for (const shard of SHARDS.slice(start)) {
-      const names = await fsp.readdir(path.join(dir, shard)).catch(() => [])
-      for (const name of names) {
+      const names = (await fsp.readdir(path.join(dir, shard)).catch(() => [])).sort()
+      const pending =
+        shard === cursorShard && resumeAfter ? names.filter((name) => name > resumeAfter) : names
+      for (const name of pending) {
         await sweepEntry(root, path.join(dir, shard, name), now).catch(() => {})
         processed += 1
         if (processed % SWEEP_BATCH === 0 && pauseMs > 0) {
           const pause = Math.max(pauseMs, 2 * (Date.now() - batchStarted))
+          await fsp.writeFile(cursorFile, `${shard}/${name}`)
           await fsp.utimes(lock, new Date(), new Date()).catch(() => {})
           await sleep(pause, undefined, { ref: false })
           batchStarted = Date.now()
@@ -257,7 +283,7 @@ export async function sweepSidecars({ force = false, pauseMs = SWEEP_PAUSE_MS } 
     await fsp.writeFile(path.join(dir, SWEEP_STAMP), '')
     await fsp.rm(cursorFile, { force: true })
   } finally {
-    await fsp.rm(lock, { force: true })
+    await releaseLock(lock, token)
   }
 }
 
