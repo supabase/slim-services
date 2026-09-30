@@ -73,6 +73,9 @@ native stack.
   (e.g. `.pnpm/next@x/node_modules/sharp`), and fails the build if any
   `sharp`/`@img` package trace remains in the standalone output.
 
+The self-hosted artifact ships no native addons; `services/studio/recipe.env`'s
+`FLOOR_CHECK_CMD` asserts that instead of requiring one.
+
 Measurements will enter the generated README tables from the first published
 native Studio release manifest.
 
