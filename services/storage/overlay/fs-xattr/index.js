@@ -273,6 +273,7 @@ export async function sweepSidecars({ force = false, pauseMs = SWEEP_PAUSE_MS } 
           await fsp.writeFile(cursorFile, `${shard}/${name}`)
           await fsp.utimes(lock, new Date(), new Date()).catch(() => {})
           await sleep(pause, undefined, { ref: false })
+          await fsp.utimes(lock, new Date(), new Date()).catch(() => {})
           batchStarted = Date.now()
         }
       }

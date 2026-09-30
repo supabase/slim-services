@@ -208,8 +208,8 @@ exports a function the wrapper does not.
   with async I/O and pauses after every 50 entries for at least 100 ms, twice
   the batch time when the filesystem is slow. A `.sweep-cursor` records the
   last swept entry at every pause, so a pass cut short by idle sleep resumes
-  there, even inside a large shard; a
-  completed pass writes `.last-sweep` and is not repeated within the hour. A
+  there, even inside a large shard; a completed pass writes `.last-sweep`
+  and is not repeated within the hour. A
   `.sweep-lock`, refreshed after every batch and stale after 2 minutes, keeps
   a second process from sweeping the same directory; a container stopped
   mid-pass leaves it behind, so the resume waits for it to expire. Unreadable entries are left alone.
@@ -218,6 +218,10 @@ exports a function the wrapper does not.
 - A relative storage root is resolved against the working directory, which
   usually differs from Storage's own resolution, so the original `ENOTSUP`
   remains; the fallback needs an absolute root.
+- A multipart part rewritten in place under Docker Desktop keeps the native
+  etag it had on an engine with xattrs; completing that upload back on such an
+  engine reads the stale native value and fails. It needs two engine switches
+  within one upload.
 - Upstream `supabase/storage-api` reading a fallback directory serves
   `application/octet-stream` and `no-cache`.
 - `SLIM_STORAGE_XATTR_SIDECAR=force` makes the wrapper act as if the filesystem
