@@ -234,6 +234,76 @@ storage_object_roundtrip "$port" print_storage_container_logs
 
 record_runtime_metrics "$container"
 
+# Docker Desktop's macOS file sharing rejects extended attributes, where the
+# file backend keeps each object's content type and cache control. Force the
+# fs-xattr wrapper onto its sidecar store, then serve the same volume with
+# native attributes, as when a project directory moves between engines.
+sidecar_volume="storage-sidecar-$RUN_ID"
+create_volume "$sidecar_volume"
+start_sidecar_storage() {
+  local name="$1"
+  shift
+  run_container \
+    "$name" \
+    --network "$NETWORK" \
+    -p 127.0.0.1::5000 \
+    -v "$sidecar_volume:/mnt" \
+    -e DATABASE_URL="postgresql://postgres:postgres@$POSTGRES_CONTAINER:5432/storage_smoke" \
+    -e AUTH_JWT_SECRET="$jwt_secret" \
+    -e PGRST_JWT_SECRET="$jwt_secret" \
+    -e STORAGE_BACKEND=file \
+    -e FILE_STORAGE_BACKEND_PATH=/mnt \
+    "$@" \
+    "$image"
+  if ! wait_for_http_code "http://127.0.0.1:$(host_port "$name" 5000)/status" "200" 120 "" "$name"; then
+    container_logs "$name"
+    fail "$name /status did not return 200"
+  fi
+}
+assert_sidecar_metadata() {
+  local name="$1"
+  local headers
+  headers="$(curl -fsS -D - -o /dev/null -H "Authorization: Bearer $sidecar_jwt" \
+    "http://127.0.0.1:$(host_port "$name" 5000)/object/sidecar-bucket/hello.txt")" \
+    || { container_logs "$name"; fail "$name sidecar object download failed"; }
+  grep -qi '^content-type: text/plain' <<<"$headers" \
+    || { container_logs "$name"; fail "$name lost the sidecar content type: $headers"; }
+  grep -qi '^cache-control: max-age=4242' <<<"$headers" \
+    || { container_logs "$name"; fail "$name lost the sidecar cache control: $headers"; }
+}
+
+log "xattr sidecar: upload without extended attributes"
+sidecar_jwt="$(make_role_jwt "$jwt_secret" service_role)"
+sidecar_forced="storage-sidecar-forced-$RUN_ID"
+start_sidecar_storage "$sidecar_forced" -e SLIM_STORAGE_XATTR_SIDECAR=force
+sidecar_port="$(host_port "$sidecar_forced" 5000)"
+curl -fsS -X POST \
+  -H "Authorization: Bearer $sidecar_jwt" \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"sidecar-bucket"}' \
+  "http://127.0.0.1:$sidecar_port/bucket" >/dev/null \
+  || { container_logs "$sidecar_forced"; fail "sidecar bucket creation failed"; }
+curl -fsS -X POST \
+  -H "Authorization: Bearer $sidecar_jwt" \
+  -H 'Content-Type: text/plain' \
+  -H 'Cache-Control: max-age=4242' \
+  --data-binary 'hello-sidecar' \
+  "http://127.0.0.1:$sidecar_port/object/sidecar-bucket/hello.txt" >/dev/null \
+  || { container_logs "$sidecar_forced"; fail "sidecar object upload failed"; }
+assert_sidecar_metadata "$sidecar_forced"
+docker run --rm -v "$sidecar_volume:/mnt:ro" --entrypoint /node/bin/node "$image" -e '
+const fs = require("node:fs");
+const entries = fs.existsSync("/mnt/.slim-xattr") ? fs.readdirSync("/mnt/.slim-xattr") : [];
+process.exit(entries.some((name) => name.endsWith(".json")) ? 0 : 1);
+' || fail "forced sidecar mode wrote no metadata under /mnt/.slim-xattr"
+docker rm -f "$sidecar_forced" >/dev/null
+
+log "xattr sidecar: serve the same volume with extended attributes"
+sidecar_native="storage-sidecar-native-$RUN_ID"
+start_sidecar_storage "$sidecar_native"
+assert_sidecar_metadata "$sidecar_native"
+docker rm -f "$sidecar_native" >/dev/null
+
 log "leftover volume: docker.io -> slim"
 vol_up="storage-leftover-up-$RUN_ID"
 create_volume "$vol_up"
