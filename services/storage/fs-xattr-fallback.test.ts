@@ -6,6 +6,7 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -44,8 +45,13 @@ const fake = (globalThis as any).fakeXattr;
 
 const root = join(temp, "storage");
 const object = join(root, "stub", "bucket", "key", "version");
+const sidecarDir = join(root, ".slim-xattr");
 const sidecarFiles = () =>
-  existsSync(join(root, ".slim-xattr")) ? readdirSync(join(root, ".slim-xattr")) : [];
+  existsSync(sidecarDir)
+    ? readdirSync(sidecarDir, { recursive: true, encoding: "utf8" })
+        .filter((name) => name.endsWith(".json"))
+        .map((name) => join(sidecarDir, name))
+    : [];
 const codeOf = (run: () => unknown) => {
   try {
     run();
@@ -88,9 +94,8 @@ describe("fs-xattr sidecar fallback", () => {
     ]);
     expect(readdirSync(join(object, ".."))).toEqual(["version"]);
     const [sidecar] = sidecarFiles();
-    expect(JSON.parse(readFileSync(join(root, ".slim-xattr", sidecar!), "utf8")).path).toBe(
-      "stub/bucket/key/version",
-    );
+    expect(sidecar).toMatch(/\/\.slim-xattr\/([0-9a-f]{2})\/\1[0-9a-f]{62}\.json$/);
+    expect(JSON.parse(readFileSync(sidecar!, "utf8")).path).toBe("stub/bucket/key/version");
   });
 
   test("reports a missing attribute, then removes the sidecar once empty", () => {
@@ -163,5 +168,108 @@ describe("fs-xattr sidecar fallback", () => {
     expect(await xattr.listAttributes(object)).toEqual([ATTR]);
     await xattr.removeAttribute(object, ATTR);
     await expect(xattr.getAttribute(object, ATTR)).rejects.toMatchObject({ code: MISSING_CODE });
+  });
+});
+
+describe("sidecar sweep", () => {
+  const sweep = (options: { force?: boolean } = {}) =>
+    xattr.sweepSidecars({ force: true, pauseMs: 0, ...options });
+  const orphanAt = (key: string) => {
+    const file = join(root, "stub", "bucket", key, "version");
+    mkdirSync(join(file, ".."), { recursive: true });
+    writeFileSync(file, "body");
+    xattr.setAttributeSync(file, ATTR, "text/plain");
+    rmSync(file);
+    return file;
+  };
+
+  beforeEach(() => {
+    fake.supported = false;
+  });
+
+  test("removes sidecars whose file is gone and keeps live ones", async () => {
+    xattr.setAttributeSync(object, ATTR, "text/plain");
+    orphanAt("deleted");
+    expect(sidecarFiles()).toHaveLength(2);
+
+    await sweep();
+    expect(sidecarFiles()).toHaveLength(1);
+    expect(xattr.getAttributeSync(object, ATTR).toString()).toBe("text/plain");
+  });
+
+  test("keeps unreadable entries and fresh temporary files, drops stale ones", async () => {
+    xattr.setAttributeSync(object, ATTR, "text/plain");
+    const shard = join(sidecarDir, "ab");
+    mkdirSync(shard, { recursive: true });
+    writeFileSync(join(shard, `${"a".repeat(64)}.json`), "{not json");
+    writeFileSync(join(shard, "fresh.json.1.x.tmp"), "{}");
+    writeFileSync(join(shard, "stale.json.1.x.tmp"), "{}");
+    const old = new Date(Date.now() - 2 * 60 * 60_000);
+    utimesSync(join(shard, "stale.json.1.x.tmp"), old, old);
+
+    await sweep();
+    expect(readdirSync(shard).sort()).toEqual([`${"a".repeat(64)}.json`, "fresh.json.1.x.tmp"]);
+    expect(sidecarFiles()).toHaveLength(2);
+  });
+
+  test("runs at most once per interval unless forced", async () => {
+    orphanAt("first");
+    await sweep({ force: false });
+    expect(sidecarFiles()).toEqual([]);
+
+    orphanAt("second");
+    await sweep({ force: false });
+    expect(sidecarFiles()).toHaveLength(1);
+    await sweep();
+    expect(sidecarFiles()).toEqual([]);
+  });
+
+  // Orphans written straight into one shard, so batches cross the 50-entry mark.
+  const orphansInShard = (shard: string, count: number) => {
+    mkdirSync(join(sidecarDir, shard), { recursive: true });
+    for (let index = 0; index < count; index += 1) {
+      writeFileSync(
+        join(sidecarDir, shard, `${shard}${String(index).padStart(62, "0")}.json`),
+        JSON.stringify({ path: `stub/gone/${shard}-${index}`, attributes: {} }),
+      );
+    }
+  };
+
+  test("pauses after every batch of 50 entries across the pass", async () => {
+    orphansInShard("ab", 120);
+    const started = performance.now();
+    await xattr.sweepSidecars({ force: true, pauseMs: 50 });
+    expect(performance.now() - started).toBeGreaterThanOrEqual(95);
+    expect(sidecarFiles()).toEqual([]);
+  });
+
+  test("resumes an interrupted pass from its cursor, even within the interval", async () => {
+    orphansInShard("10", 1);
+    orphansInShard("f5", 1);
+    writeFileSync(join(sidecarDir, ".last-sweep"), "");
+    writeFileSync(join(sidecarDir, ".sweep-cursor"), "f0");
+
+    await sweep({ force: false });
+    expect(sidecarFiles().map((file) => file.split("/").at(-2))).toEqual(["10"]);
+    expect(existsSync(join(sidecarDir, ".sweep-cursor"))).toBe(false);
+  });
+
+  test("skips while another sweeper holds a fresh lock, not a stale one", async () => {
+    orphansInShard("20", 1);
+    const lock = join(sidecarDir, ".sweep-lock");
+    writeFileSync(lock, "");
+    await sweep();
+    expect(sidecarFiles()).toHaveLength(1);
+
+    const old = new Date(Date.now() - 5 * 60_000);
+    utimesSync(lock, old, old);
+    await sweep();
+    expect(sidecarFiles()).toEqual([]);
+    expect(existsSync(lock)).toBe(false);
+  });
+
+  test("does nothing without a sidecar directory", async () => {
+    await sweep();
+    expect(existsSync(sidecarDir)).toBe(false);
   });
 });

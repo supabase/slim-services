@@ -4,10 +4,26 @@
 // ENOTSUP and native misses, so a directory keeps its metadata across engines.
 import crypto from 'node:crypto'
 import fs from 'node:fs'
+import fsp from 'node:fs/promises'
 import path from 'node:path'
+import { setTimeout as sleep } from 'node:timers/promises'
 import * as native from './native/index.js'
 
+// Storage only creates its internal bucket and multiparts/ at the root, so this
+// never collides with an object path.
 const SIDECAR_DIR = '.slim-xattr'
+const SWEEP_STAMP = '.last-sweep'
+const SWEEP_CURSOR = '.sweep-cursor'
+const SWEEP_LOCK = '.sweep-lock'
+const SWEEP_DELAY_MS = 30_000
+const SWEEP_INTERVAL_MS = 60 * 60_000
+const SWEEP_BATCH = 50
+const SWEEP_PAUSE_MS = 100
+// A stopped container never releases its lock; a live sweeper refreshes it
+// after every batch, so a short expiry lets the next wake resume quickly.
+const SWEEP_LOCK_STALE_MS = 2 * 60_000
+const STALE_TEMPORARY_MS = 60 * 60_000
+const SHARDS = Array.from({ length: 256 }, (_, index) => index.toString(16).padStart(2, '0'))
 
 function isUnsupported(error) {
   return error?.code === 'ENOTSUP'
@@ -39,20 +55,23 @@ function storageRoot() {
   return root ? path.resolve(root) : undefined
 }
 
-function sidecarPath(file) {
-  const root = storageRoot()
-  if (root === undefined) return undefined
-  const relative = path.relative(root, path.resolve(file))
-  if (
+function relativeInside(root, file) {
+  const relative = path.relative(root, path.resolve(root, file))
+  const outside =
     relative === '' ||
     relative === '..' ||
     relative.startsWith(`..${path.sep}`) ||
     path.isAbsolute(relative)
-  ) {
-    return undefined
-  }
+  return outside ? undefined : relative
+}
+
+function sidecarPath(file) {
+  const root = storageRoot()
+  if (root === undefined) return undefined
+  const relative = relativeInside(root, file)
+  if (relative === undefined) return undefined
   const digest = crypto.createHash('sha256').update(relative).digest('hex')
-  return { path: path.join(root, SIDECAR_DIR, `${digest}.json`), relative }
+  return { path: path.join(root, SIDECAR_DIR, digest.slice(0, 2), `${digest}.json`), relative }
 }
 
 // Returns the sidecar that can answer for `error`, or rethrows it.
@@ -73,8 +92,8 @@ function readValues(sidecar) {
   }
 }
 
-// The relative path is recorded so orphans (deleted objects, superseded
-// versions, multipart parts) can be mapped back and swept.
+// The relative path is recorded so sweepSidecars can map an entry back to its
+// file: deletes never go through fs-xattr, so their sidecars are left behind.
 function writeValues(sidecar, values) {
   if (Object.keys(values).length === 0) {
     fs.rmSync(sidecar.path, { force: true })
@@ -146,3 +165,112 @@ export const getAttribute = async (file, attr) => getAttributeSync(file, attr)
 export const setAttribute = async (file, attr, value) => setAttributeSync(file, attr, value)
 export const removeAttribute = async (file, attr) => removeAttributeSync(file, attr)
 export const listAttributes = async (file) => listAttributesSync(file)
+
+const exists = (file) =>
+  fsp.stat(file).then(
+    () => true,
+    (error) => error?.code !== 'ENOENT'
+  )
+
+const modifiedAt = (file) =>
+  fsp.stat(file).then(
+    (stat) => stat.mtimeMs,
+    () => undefined
+  )
+
+// Every upload, copy and multipart part writes a fresh path, so a file that is
+// gone does not come back and its sidecar can go.
+async function sweepEntry(root, entry, now) {
+  if (entry.endsWith('.tmp')) {
+    const modified = await modifiedAt(entry)
+    if (modified !== undefined && now - modified > STALE_TEMPORARY_MS) {
+      await fsp.rm(entry, { force: true })
+    }
+    return
+  }
+  if (!entry.endsWith('.json')) return
+  let relative
+  try {
+    relative = JSON.parse(await fsp.readFile(entry, 'utf8')).path
+  } catch {
+    return
+  }
+  if (typeof relative !== 'string' || relativeInside(root, relative) === undefined) return
+  if (!(await exists(path.resolve(root, relative)))) await fsp.rm(entry, { force: true })
+}
+
+// Best-effort single sweeper per directory; a racing takeover of a stale lock
+// only duplicates idempotent removals.
+async function acquireLock(lock) {
+  try {
+    await (await fsp.open(lock, 'wx')).close()
+    return true
+  } catch (error) {
+    if (error?.code !== 'EEXIST') return false
+  }
+  const modified = await modifiedAt(lock)
+  if (modified !== undefined && Date.now() - modified < SWEEP_LOCK_STALE_MS) return false
+  await fsp.rm(lock, { force: true })
+  return acquireLock(lock)
+}
+
+// Removes sidecars whose file is gone, in the background: async I/O, one entry
+// at a time, pausing after every batch (longer when the filesystem is slow).
+// A pass interrupted by idle sleep resumes from its cursor on the next start;
+// a completed pass stamps the directory and is not repeated within the
+// interval. Not part of fs-xattr's API.
+export async function sweepSidecars({ force = false, pauseMs = SWEEP_PAUSE_MS } = {}) {
+  const root = storageRoot()
+  if (root === undefined) return
+  const dir = path.join(root, SIDECAR_DIR)
+  if (!(await exists(dir))) return
+  const cursorFile = path.join(dir, SWEEP_CURSOR)
+  const cursor = await fsp.readFile(cursorFile, 'utf8').catch(() => undefined)
+  const stamped = await modifiedAt(path.join(dir, SWEEP_STAMP))
+  // The slack absorbs clock skew between the container and a bind mount's host.
+  if (!force && cursor === undefined && stamped !== undefined) {
+    if (Date.now() - stamped < SWEEP_INTERVAL_MS - 60_000) return
+  }
+  const lock = path.join(dir, SWEEP_LOCK)
+  if (!(await acquireLock(lock))) return
+  try {
+    const now = Date.now()
+    let batchStarted = Date.now()
+    let processed = 0
+    const start = Math.max(0, SHARDS.indexOf(cursor?.trim()))
+    for (const shard of SHARDS.slice(start)) {
+      const names = await fsp.readdir(path.join(dir, shard)).catch(() => [])
+      for (const name of names) {
+        await sweepEntry(root, path.join(dir, shard, name), now).catch(() => {})
+        processed += 1
+        if (processed % SWEEP_BATCH === 0 && pauseMs > 0) {
+          const pause = Math.max(pauseMs, 2 * (Date.now() - batchStarted))
+          await fsp.utimes(lock, new Date(), new Date()).catch(() => {})
+          await sleep(pause, undefined, { ref: false })
+          batchStarted = Date.now()
+        }
+      }
+      const next = SHARDS[SHARDS.indexOf(shard) + 1]
+      if (next !== undefined) await fsp.writeFile(cursorFile, next)
+      await fsp.utimes(lock, new Date(), new Date()).catch(() => {})
+    }
+    await fsp.writeFile(path.join(dir, SWEEP_STAMP), '')
+    await fsp.rm(cursorFile, { force: true })
+  } finally {
+    await fsp.rm(lock, { force: true })
+  }
+}
+
+// Every wake from idle sleep is a fresh process, so the first pass waits out
+// the requests that woke it; later passes repeat while the process lives.
+// Test hook: SLIM_STORAGE_XATTR_SWEEP=immediate skips the delay and interval.
+const immediateSweep = process.env.SLIM_STORAGE_XATTR_SWEEP === 'immediate'
+function scheduleSweep(delay) {
+  setTimeout(async () => {
+    await sweepSidecars({ force: immediateSweep }).catch((error) => {
+      console.warn(`fs-xattr sidecar sweep failed: ${error?.message ?? error}`)
+    })
+    scheduleSweep(SWEEP_INTERVAL_MS)
+  }, delay).unref()
+}
+scheduleSweep(immediateSweep ? 0 : SWEEP_DELAY_MS)

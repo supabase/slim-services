@@ -274,6 +274,11 @@ assert_sidecar_metadata() {
 
 log "xattr sidecar: upload without extended attributes"
 sidecar_jwt="$(make_role_jwt "$jwt_secret" service_role)"
+# A fresh stamp keeps the forced container from sweeping before the checks.
+docker run --rm -v "$sidecar_volume:/mnt" --entrypoint /node/bin/node "$image" -e '
+require("node:fs").mkdirSync("/mnt/.slim-xattr", { recursive: true });
+require("node:fs").writeFileSync("/mnt/.slim-xattr/.last-sweep", "");
+' || fail "could not stamp the sidecar volume"
 sidecar_forced="storage-sidecar-forced-$RUN_ID"
 start_sidecar_storage "$sidecar_forced" -e SLIM_STORAGE_XATTR_SIDECAR=force
 sidecar_port="$(host_port "$sidecar_forced" 5000)"
@@ -291,16 +296,45 @@ curl -fsS -X POST \
   "http://127.0.0.1:$sidecar_port/object/sidecar-bucket/hello.txt" >/dev/null \
   || { container_logs "$sidecar_forced"; fail "sidecar object upload failed"; }
 assert_sidecar_metadata "$sidecar_forced"
-docker run --rm -v "$sidecar_volume:/mnt:ro" --entrypoint /node/bin/node "$image" -e '
+# Prints how many sidecars record a path containing $1.
+sidecars_matching() {
+  docker run --rm -v "$sidecar_volume:/mnt:ro" --entrypoint /node/bin/node "$image" -e '
 const fs = require("node:fs");
-const entries = fs.existsSync("/mnt/.slim-xattr") ? fs.readdirSync("/mnt/.slim-xattr") : [];
-process.exit(entries.some((name) => name.endsWith(".json")) ? 0 : 1);
-' || fail "forced sidecar mode wrote no metadata under /mnt/.slim-xattr"
+const dir = "/mnt/.slim-xattr";
+const names = fs.existsSync(dir) ? fs.readdirSync(dir, { recursive: true }) : [];
+const paths = names
+  .filter((name) => name.endsWith(".json"))
+  .map((name) => JSON.parse(fs.readFileSync(`${dir}/${name}`, "utf8")).path);
+console.log(paths.filter((path) => path.includes(process.argv[1])).length);
+' "$1"
+}
+[[ "$(sidecars_matching hello.txt)" -ge 1 ]] \
+  || fail "forced sidecar mode wrote no metadata under /mnt/.slim-xattr"
+
+# A deleted object leaves its sidecar behind until the sweep.
+curl -fsS -X POST \
+  -H "Authorization: Bearer $sidecar_jwt" \
+  -H 'Content-Type: text/plain' \
+  --data-binary 'doomed' \
+  "http://127.0.0.1:$sidecar_port/object/sidecar-bucket/doomed.txt" >/dev/null \
+  || { container_logs "$sidecar_forced"; fail "sidecar doomed upload failed"; }
+curl -fsS -X DELETE -H "Authorization: Bearer $sidecar_jwt" \
+  "http://127.0.0.1:$sidecar_port/object/sidecar-bucket/doomed.txt" >/dev/null \
+  || { container_logs "$sidecar_forced"; fail "sidecar doomed delete failed"; }
+[[ "$(sidecars_matching doomed.txt)" -ge 1 ]] || fail "deleted object left no sidecar to sweep"
+
 docker rm -f "$sidecar_forced" >/dev/null
 
-log "xattr sidecar: serve the same volume with extended attributes"
+log "xattr sidecar: serve the same volume with extended attributes and sweep orphans"
 sidecar_native="storage-sidecar-native-$RUN_ID"
-start_sidecar_storage "$sidecar_native"
+start_sidecar_storage "$sidecar_native" -e SLIM_STORAGE_XATTR_SWEEP=immediate
+assert_sidecar_metadata "$sidecar_native"
+for _ in $(seq 30); do
+  [[ "$(sidecars_matching doomed.txt)" == "0" ]] && break
+  sleep 1
+done
+[[ "$(sidecars_matching doomed.txt)" == "0" ]] \
+  || { container_logs "$sidecar_native"; fail "sweep left the deleted object's sidecar"; }
 assert_sidecar_metadata "$sidecar_native"
 docker rm -f "$sidecar_native" >/dev/null
 
