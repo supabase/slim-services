@@ -39,6 +39,16 @@ import sys
 standalone = pathlib.Path(sys.argv[1]).resolve()
 installed = pathlib.Path(sys.argv[2]).resolve()
 
+# Studio's self-hosted build excludes `sharp` and `@img/*` from Next's output
+# file tracing (see services/studio/backport-sharp-exclusion.py and upstream
+# supabase/supabase#50658), but Next still leaves a pnpm link to the excluded
+# package inside its own package directory, e.g.
+# `.pnpm/next@x/node_modules/sharp`. That link is dangling by design: the
+# target was intentionally left out of the standalone tree. Dropping it is
+# safe because nothing in the runtime image resolves it.
+EXCLUDED_DANGLING_LINK_NAMES = ("sharp",)
+EXCLUDED_DANGLING_LINK_NAMESPACE = "@img"
+
 
 def inside(path: pathlib.Path, root: pathlib.Path) -> bool:
     try:
@@ -62,7 +72,24 @@ def pnpm_store_root(link: pathlib.Path) -> pathlib.Path | None:
     return None
 
 
+def is_intentionally_excluded_dangling_link(link: pathlib.Path) -> bool:
+    parts = link.relative_to(standalone).parts
+    if len(parts) < 2:
+        return False
+    name, parent = parts[-1], parts[-2]
+    if parent == "node_modules" and name in EXCLUDED_DANGLING_LINK_NAMES:
+        return True
+    if (
+        len(parts) >= 3
+        and parent == EXCLUDED_DANGLING_LINK_NAMESPACE
+        and parts[-3] == "node_modules"
+    ):
+        return True
+    return False
+
+
 repairs: list[tuple[pathlib.Path, pathlib.Path, pathlib.Path]] = []
+removals: list[pathlib.Path] = []
 for directory, dirnames, filenames in os.walk(
     standalone, topdown=True, onerror=report_scan_error, followlinks=False
 ):
@@ -85,6 +112,9 @@ for directory, dirnames, filenames in os.walk(
         try:
             link.resolve(strict=True)
         except FileNotFoundError:
+            if is_intentionally_excluded_dangling_link(link):
+                removals.append(link)
+                continue
             store_root = pnpm_store_root(link)
             if store_root is None:
                 raise SystemExit(
@@ -129,4 +159,41 @@ for link, destination, source in repairs:
         shutil.copytree(source, destination, symlinks=True)
     else:
         shutil.copy2(source, destination, follow_symlinks=False)
+
+for link in removals:
+    relative = link.relative_to(standalone)
+    link.unlink()
+    print(f"[slim] removed dangling link to excluded package: {relative}")
+    # Drop now-empty scope directories the link left behind, e.g. an `@img`
+    # directory whose only entry was the removed link, without touching
+    # `node_modules` itself.
+    parent = link.parent
+    while parent != standalone and parent.name != "node_modules" and not any(parent.iterdir()):
+        parent.rmdir()
+        parent = parent.parent
+
+# Final scan: the exclusion above (and the tracing exclusion itself) must
+# leave no trace of the excluded packages anywhere in the standalone output,
+# not just at the dangling links we just dropped.
+leftovers: list[str] = []
+for directory, dirnames, filenames in os.walk(
+    standalone, topdown=True, onerror=report_scan_error, followlinks=False
+):
+    dirnames.sort()
+    filenames.sort()
+    dir_path = pathlib.Path(directory)
+    if dir_path.name == "node_modules":
+        for name in dirnames:
+            if name in EXCLUDED_DANGLING_LINK_NAMES or name == EXCLUDED_DANGLING_LINK_NAMESPACE:
+                leftovers.append(str(dir_path / name))
+    if EXCLUDED_DANGLING_LINK_NAMESPACE in dir_path.parts:
+        for name in filenames:
+            if name.endswith(".node"):
+                leftovers.append(str(dir_path / name))
+
+if leftovers:
+    joined = "\n".join(sorted(leftovers))
+    raise SystemExit(
+        "excluded sharp/@img packages remain in standalone output:\n" + joined
+    )
 PY

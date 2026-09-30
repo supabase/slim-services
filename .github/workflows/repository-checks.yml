@@ -75,6 +75,7 @@ jobs:
             --outdir="$RUNNER_TEMP/slim-ts-check"
           scripts/test-upstream-runtime.sh
           scripts/test-studio-artifact.sh
+          services/studio/test-backport-sharp-exclusion.sh
           services/analytics/test-seed-ezstd-zstd.sh
           scripts/test-nix-release.sh
           services/postgres/test-start-lifecycle.sh
