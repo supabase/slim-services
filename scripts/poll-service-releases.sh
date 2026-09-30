@@ -461,33 +461,37 @@ PY
     continue
   fi
 
-  # Drop tags that cannot be dispatched before interleaving lines. A published
-  # or cooling prefix must not push another line's oldest runnable tag past the cap.
+  eligible_versions=""
+  while IFS= read -r version; do
+    [[ -n "$version" ]] || continue
+    expected_run_title="Release $service $version"
+    case "$(release_candidate_state "$version")" in
+      published)
+        printf '%s is already published as a revision of %s\n' "$service" "$version"
+        ;;
+      active)
+        printf '%s is already being built by %s\n' "$service" "$expected_run_title"
+        ;;
+      cooling)
+        printf '%s is cooling down after a recent unsuccessful attempt by %s\n' \
+          "$service" "$expected_run_title"
+        ;;
+      settling)
+        printf '%s is waiting for release publication after successful run %s\n' \
+          "$service" "$expected_run_title"
+        ;;
+      *)
+        eligible_versions+="$version"$'\n'
+        ;;
+    esac
+  done <<< "$versions"
+  versions="$eligible_versions"
+
+  # Interleave only dispatchable tags so a line's published or cooling prefix
+  # does not cost it a turn under the cap.
   if [[ "$release_lines_json" != "[]" ]]; then
-    classified=""
-    while IFS= read -r version; do
-      [[ -n "$version" ]] || continue
-      run_state="$(release_candidate_state "$version")"
-      case "$run_state" in
-        published)
-          printf '%s is already published as a revision of %s\n' "$service" "$version"
-          ;;
-        active)
-          printf '%s is already being built by %s\n' "$service" "Release $service $version"
-          ;;
-        cooling)
-          printf '%s is cooling down after a recent unsuccessful attempt by %s\n' \
-            "$service" "Release $service $version"
-          ;;
-        settling)
-          printf '%s is waiting for release publication after successful run %s\n' \
-            "$service" "Release $service $version"
-          ;;
-      esac
-      classified+="$run_state"$'\t'"$version"$'\n'
-    done <<< "$versions"
     versions="$(
-      CLASSIFIED="$classified" python3 - "$release_lines_json" <<'PY'
+      VERSIONS="$versions" python3 - "$release_lines_json" <<'PY'
 import json
 import os
 import re
@@ -496,17 +500,8 @@ import sys
 release_lines = json.loads(sys.argv[1])
 patterns = [re.compile(line["tag_pattern"]) for line in release_lines]
 buckets = [[] for _ in patterns]
-for row in os.environ["CLASSIFIED"].splitlines():
-    if not row.strip():
-        continue
-    state, version = row.split("\t", 1)
-    if state != "eligible":
-        continue
+for version in os.environ["VERSIONS"].split():
     matched = [index for index, pattern in enumerate(patterns) if pattern.fullmatch(version)]
-    if len(matched) != 1:
-        raise SystemExit(
-            f"candidate {version} matched {len(matched)} release lines; expected exactly one"
-        )
     buckets[matched[0]].append(version)
 ordered = []
 while any(buckets):
@@ -520,28 +515,6 @@ PY
 
   while IFS= read -r version; do
     [[ -n "$version" ]] || continue
-    run_state="$(release_candidate_state "$version")"
-    if [[ "$run_state" == "published" ]]; then
-      printf '%s is already published as a revision of %s\n' "$service" "$version"
-      continue
-    fi
-
-    expected_run_title="Release $service $version"
-    if [[ "$run_state" == "active" ]]; then
-      printf '%s is already being built by %s\n' "$service" "$expected_run_title"
-      continue
-    fi
-    if [[ "$run_state" == "cooling" ]]; then
-      printf '%s is cooling down after a recent unsuccessful attempt by %s\n' \
-        "$service" "$expected_run_title"
-      continue
-    fi
-    if [[ "$run_state" == "settling" ]]; then
-      printf '%s is waiting for release publication after successful run %s\n' \
-        "$service" "$expected_run_title"
-      continue
-    fi
-
     if (( active_release_count >= POLL_MAX_ACTIVE_RELEASES )); then
       printf 'global active release limit %s reached; not dispatching more releases\n' \
         "$POLL_MAX_ACTIVE_RELEASES"

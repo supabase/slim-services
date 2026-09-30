@@ -19,10 +19,10 @@ upstream Dockerfile.
   PG17 uses the matching filtered set because those two extensions are not
   compatible with that major. OrioleDB 17 uses that filtered set plus
   `orioledb`, drops PostGIS and pgRouting from the supautils allowlist, preloads
-  `orioledb`, and sets `default_table_access_method = orioledb`. The preload
-  position and `output_plugin_libraries` follow the selected tag's
-  `Dockerfile-orioledb-17`. Extensions are installed; preload behavior follows
-  the matching upstream image configuration.
+  `orioledb`, and sets `default_table_access_method = orioledb`. Preload
+  behavior follows the matching upstream image configuration, including
+  OrioleDB's preload position and `output_plugin_libraries` from the selected
+  tag's `Dockerfile-orioledb-17`.
 - Hub tags `17.x.x.NNN-orioledb` are a separate release line from stock 15 and
   17. The derived image's UID/GID follow that tag's docker.io image. The
   recipe's default identity pin stays on stock PostgreSQL 17 for local builds.

@@ -26,23 +26,13 @@ assert_pg_prove_output() {
 }
 
 # OrioleDB's Nix version is NN_M (for example 17_20), not a dotted PostgreSQL major.
-classify_postgres_receipt_version() {
-  python3 - "$1" <<'PY'
-import re
-import sys
-
-version = sys.argv[1]
-if re.fullmatch(r"[0-9][0-9]_.*", version):
-    print("orioledb")
-else:
-    print(version.split(".", 1)[0])
-PY
+postgres_major_of() {
+  if [[ "$1" =~ ^[0-9]{2}_ ]]; then
+    printf 'orioledb\n'
+  else
+    printf '%s\n' "${1%%.*}"
+  fi
 }
-
-if [[ "${1:-}" == "--classify-receipt" ]]; then
-  classify_postgres_receipt_version "${2:-}"
-  exit 0
-fi
 
 image="${IMAGE:-}"
 artifact_rootfs="${ARTIFACT_ROOTFS:-}"
@@ -69,7 +59,7 @@ with open(sys.argv[1], encoding="utf-8") as stream:
     print(json.load(stream)["psql-version"])
 PY
 )"
-  postgres_major="$(classify_postgres_receipt_version "$psql_version")"
+  postgres_major="$(postgres_major_of "$psql_version")"
   case "$postgres_major" in
     15|17|orioledb) ;;
     *) fail "unsupported PostgreSQL major in portable receipt: $postgres_major" ;;
@@ -768,32 +758,21 @@ extensions=(
   pg_partman
   pg_repack
   plpgsql_check
-  postgis
-  postgis_topology
-  address_standardizer
-  pgrouting
   pgroonga
   wrappers
 )
 postgres_version="$(psql_admin "SHOW server_version")"
 preload="$(psql_admin "SHOW shared_preload_libraries")"
-if [[ "$preload" == *orioledb* || "$postgres_version" =~ ^[0-9][0-9]_ ]]; then
+if [[ "$preload" == *orioledb* ]]; then
   postgres_major="orioledb"
 else
-  postgres_major="$(printf '%s\n' "$postgres_version" | cut -d. -f1)"
+  postgres_major="$(postgres_major_of "$postgres_version")"
 fi
 case "$postgres_major" in
-  15) extensions+=(timescaledb plv8) ;;
-  17) ;;
+  15) extensions+=(timescaledb plv8 postgis postgis_topology address_standardizer pgrouting) ;;
+  17) extensions+=(postgis postgis_topology address_standardizer pgrouting) ;;
   orioledb)
-    filtered=()
-    for ext in "${extensions[@]}"; do
-      case "$ext" in
-        postgis|postgis_*|address_standardizer|pgrouting) ;;
-        *) filtered+=("$ext") ;;
-      esac
-    done
-    extensions=("${filtered[@]}" orioledb)
+    extensions+=(orioledb)
     tam="$(psql_admin "SHOW default_table_access_method")"
     [[ "$tam" == "orioledb" ]] || fail "default_table_access_method is $tam, expected orioledb"
     ;;

@@ -103,9 +103,11 @@ def manifest_entry(path):
     return manifest.get("upstream_version"), manifest.get("revision", 0), version_dir
 
 def platform_manifests(service, platform):
-    """Revision manifests only; legacy manifests without upstream_version are frozen history."""
+    """Revision manifest entries, oldest mtime first. Legacy manifests without
+    upstream_version are frozen history."""
     paths = glob.glob(os.path.join(artifacts_dir, service, "*", platform, "manifest.json"))
-    return [path for path in paths if manifest_entry(path)[0]]
+    entries = [manifest_entry(path) for path in sorted(paths, key=os.path.getmtime)]
+    return [entry for entry in entries if entry[0]]
 
 def newest_in_line(entries, pattern):
     matched = [entry for entry in entries if pattern.fullmatch(entry[0])]
@@ -126,18 +128,14 @@ for service, display in zip(services, displays):
     darwin = platform_manifests(service, "darwin-arm64")
     lines = release_config.get(service, {}).get("release_lines")
     if not lines:
-        linux_entry = manifest_entry(max(linux, key=os.path.getmtime)) if linux else None
-        darwin_entry = manifest_entry(max(darwin, key=os.path.getmtime)) if darwin else None
-        selected = [(display, linux_entry, darwin_entry)]
+        selected = [(display, linux[-1] if linux else None, darwin[-1] if darwin else None)]
     else:
-        linux_entries = [manifest_entry(path) for path in linux]
-        darwin_entries = [manifest_entry(path) for path in darwin]
         selected = []
         for line in lines:
             pattern = re.compile(line["tag_pattern"])
             label = postgres_line_label(line["tag_pattern"]) if service == "postgres" else display
             selected.append(
-                (label, newest_in_line(linux_entries, pattern), newest_in_line(darwin_entries, pattern))
+                (label, newest_in_line(linux, pattern), newest_in_line(darwin, pattern))
             )
     for label, linux_entry, darwin_entry in selected:
         upstream = (linux_entry or darwin_entry or ("",))[0]
@@ -195,9 +193,6 @@ def existing_rows(path, marker):
         m = re.match(r"^\| ([^|]+?) \| `", line)
         if m:
             rows[m.group(1)] = line
-    # The single Postgres row was stock 17. Keep it until a Postgres 17 refresh.
-    if "Postgres 17" not in rows and "Postgres" in rows:
-        rows["Postgres 17"] = rows["Postgres"]
     return rows
 
 kept = existing_rows(os.path.join(root, "README.md"), "host-native") if merge else {}
@@ -206,12 +201,11 @@ rows = []
 for line in os.environ["ROWS_TSV"].splitlines():
     if not line.strip():
         continue
-    service, display = line.split("\t")[:2]
-    version = (line.split("\t") + [""] * 7)[6]
+    service, display, _, _, _, _, darwin_dir = (line.split("\t") + [""] * 7)[:7]
 
     manifest_path = (
-        os.path.join(artifacts_dir, service, version, "darwin-arm64", "manifest.json")
-        if version
+        os.path.join(artifacts_dir, service, darwin_dir, "darwin-arm64", "manifest.json")
+        if darwin_dir
         else ""
     )
     if not manifest_path or not os.path.isfile(manifest_path):
@@ -309,9 +303,6 @@ def existing_rows(path, marker):
         m = re.match(r"^\| ([^|]+?) \| `", line)
         if m:
             rows[m.group(1)] = line
-    # The single Postgres row was stock 17. Keep it until a Postgres 17 refresh.
-    if "Postgres 17" not in rows and "Postgres" in rows:
-        rows["Postgres 17"] = rows["Postgres"]
     return rows
 
 kept = existing_rows(os.path.join(root, "README.md"), "results") if merge else {}
@@ -353,11 +344,11 @@ directional = False
 for line in os.environ["ROWS_TSV"].splitlines():
     if not line.strip():
         continue
-    service, display, upstream_image, compare_image, note, version = (line.split("\t") + [""] * 6)[:6]
+    service, display, upstream_image, compare_image, note, linux_dir, _ = (line.split("\t") + [""] * 7)[:7]
 
     manifest_path = (
-        os.path.join(artifacts_dir, service, version, "linux-arm64", "manifest.json")
-        if version
+        os.path.join(artifacts_dir, service, linux_dir, "linux-arm64", "manifest.json")
+        if linux_dir
         else ""
     )
     if not manifest_path or not os.path.isfile(manifest_path):

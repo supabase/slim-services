@@ -28,10 +28,20 @@ let
       "${upstream}/Dockerfile-supabase"
     else
       "${upstream}/Dockerfile-${postgres_major}";
-  usesIcu = lib.hasInfix "--locale-provider=icu" (builtins.readFile dockerfile);
-  # OrioleDB's preload position and logical-decoding allow-list follow the
-  # selected tag's Dockerfile-orioledb-17, which changed across releases.
-  orioledbPreloadFirst = lib.hasInfix "s|'|'orioledb,|" (builtins.readFile dockerfile);
+  dockerfileText = builtins.readFile dockerfile;
+  usesIcu = lib.hasInfix "--locale-provider=icu" dockerfileText;
+  # Preload position and output_plugin_libraries vary by tag; read them from Dockerfile-orioledb-17.
+  orioledbPreloadFirst =
+    let
+      prepend = lib.hasInfix "s|'|'orioledb,|" dockerfileText;
+      append = lib.hasInfix "\\1, orioledb'" dockerfileText;
+    in
+    if postgres_major != "orioledb-17" then
+      false
+    else if prepend != append then
+      prepend
+    else
+      throw "Dockerfile-orioledb-17 must add orioledb to shared_preload_libraries in exactly one known form";
   outputPluginPattern = ".*(output_plugin_libraries = '[^']*').*";
   outputPluginSettings = lib.concatMap (
     line:
@@ -39,8 +49,16 @@ let
       matched = builtins.match outputPluginPattern line;
     in
     if matched == null then [ ] else matched
-  ) (lib.splitString "\n" (builtins.readFile dockerfile));
-  outputPluginSetting = if outputPluginSettings == [ ] then "" else builtins.head outputPluginSettings;
+  ) (lib.splitString "\n" dockerfileText);
+  outputPluginSetting =
+    if postgres_major != "orioledb-17" then
+      ""
+    else if outputPluginSettings != [ ] then
+      builtins.head outputPluginSettings
+    else if lib.hasInfix "output_plugin_libraries" dockerfileText then
+      throw "Dockerfile-orioledb-17 sets output_plugin_libraries in an unrecognized form"
+    else
+      "";
   initdbArgs =
     if usesIcu then
       [ "--encoding=UTF-8" "--locale-provider=icu" "--icu-locale=en_US.UTF-8" "--allow-group-access" ]
@@ -204,7 +222,12 @@ let
         exit 1
       fi
       if [ "${postgres_major}" = "orioledb-17" ]; then
-        grep "^shared_preload_libraries" $conf | grep -q "orioledb" || {
+        grep -q "${
+          if orioledbPreloadFirst then
+            "^shared_preload_libraries = 'orioledb,"
+          else
+            "^shared_preload_libraries.*orioledb"
+        }" $conf || {
           echo "OrioleDB shared_preload_libraries is missing orioledb" >&2
           exit 1
         }
@@ -227,8 +250,8 @@ let
       install -m 0644 ${ansibleConfig}/custom_walg.conf $cfg/wal-g.conf
       install -m 0644 ${ansibleConfig}/custom_read_replica.conf $cfg/read-replica.conf
       install -m 0644 ${ansibleConfig}/conf.d/*.conf $cfg/conf.d/
-      # Dockerfile-17 strips TimescaleDB/plv8 from supautils.conf; PG15 keeps
-      # the exact source-tree values.
+      # Dockerfile-17 strips TimescaleDB/plv8; Dockerfile-orioledb-17 also strips
+      # PostGIS/pgRouting. PG15 keeps source-tree values.
       if [ "${postgres_major}" = "orioledb-17" ]; then
         sed 's/ timescaledb,//g; s/ plv8,//g; s/ postgis,//g; s/ pgrouting,//g' ${supautilsConf} > $cfg/supautils.conf
       elif [ "${postgres_major}" = "17" ]; then
