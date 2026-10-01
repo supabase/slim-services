@@ -435,6 +435,50 @@ let
           postgrestSet.probeOrder
         else
           [ ];
+      # Pinnable probes are flat downloads of a file whose bytes upstream
+      # alone decides (an archive fetched by exact URL/version), so a
+      # published release's hash can be trusted verbatim on a later rebuild
+      # or hotfix. Tooling-dependent derived hashes (cargo/mix/npm/pnpm/Go
+      # vendor hashes, etc.) are excluded: a legitimate hotfix after a
+      # nixpkgs or fetcher change can legitimately change those, so they must
+      # keep re-resolving on every build.
+      #
+      # An attrset of key -> URL, not just a list of keys: the invariant a
+      # pin relies on is "same URL => same bytes", not "same key => same
+      # bytes". A future recipe change can legitimately move a key to a
+      # different URL (for example Analytics' rustlerNifVersion changing
+      # which NIF asset a hotfix of an old version downloads); the build
+      # path only pins when the published release's recorded URL for a key
+      # still matches the URL this evaluation produced.
+      pinnedProbes =
+        if releaseService == "realtime" then
+          { }
+        else if releaseService == "analytics" then
+          {
+            explorer_nif_hash = analyticsSet.explorer-nif.url;
+            sql_fmt_nif_hash = analyticsSet.sql-fmt-nif.url;
+          }
+        else if releaseService == "pooler" then
+          { }
+        else if releaseService == "edge-runtime" then
+          {
+            v8_archive_hash = edgeRuntime.passthru.fixedOutputs.v8Archive.url;
+            v8_binding_hash = edgeRuntime.passthru.fixedOutputs.v8Binding.url;
+          }
+        else if releaseService == "imgproxy" then
+          { }
+        else if releaseService == "auth" then
+          authSet.pinnedProbes
+        else if releaseService == "pgmeta" then
+          pgmetaSet.pinnedProbes
+        else if releaseService == "storage" then
+          storageSet.pinnedProbes
+        else if releaseService == "studio" then
+          studioSet.pinnedProbes
+        else if releaseService == "postgrest" then
+          postgrestSet.pinnedProbes
+        else
+          { };
     in
     {
       inherit runtime;
@@ -447,6 +491,7 @@ let
       # service so it remains available in the default flake evaluation.
       postgresql_16 = pkgs.postgresql_16;
       probeOrder = if hasReleaseRootfs then [ ] else probeOrder;
+      pinnedProbes = if hasReleaseRootfs then { } else pinnedProbes;
     }
     // (if hasReleaseRootfs then { inherit archive; } else { })
     // (

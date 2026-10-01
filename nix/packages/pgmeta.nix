@@ -37,4 +37,8 @@ in
   inherit runtime;
   probeOrder = [ "npm_deps_hash" ];
   dependencyProbes.npm_deps_hash = runtime.npmDeps;
+  # npm_deps_hash is npm's own dependency-store hash (buildNpmPackage
+  # npmDepsHash), derived by local npm tooling rather than fixed by a single
+  # upstream artifact; it is not pinnable.
+  pinnedProbes = { };
 }

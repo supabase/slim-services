@@ -180,4 +180,14 @@ in
     turbo_tool_hash = turboArchive;
     pnpm_deps_hash = pnpmDeps;
   };
+  # pnpm_tool_hash and turbo_tool_hash are flat downloads of fixed-version
+  # tarballs from the npm registry, so both are pinnable (by URL, so a
+  # recipe change that moves either to a different URL is never wrongly
+  # blocked). pnpm_deps_hash is pnpm's own dependency-store hash
+  # (fetchPnpmDeps), derived by local pnpm tooling rather than fixed by a
+  # single upstream artifact; it is not pinnable.
+  pinnedProbes = {
+    pnpm_tool_hash = pnpm.archive.url;
+    turbo_tool_hash = turboArchive.url;
+  };
 }
