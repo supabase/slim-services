@@ -82,4 +82,13 @@ in
     tools_deps_hash = tools.npmDeps;
     npm_deps_hash = runtime.npmDeps;
   };
+  # npm_tool_hash is a flat download of the npm CLI tarball from the npm
+  # registry for a fixed version, so it is pinnable (by URL, so a recipe
+  # change that moves it to a different URL is never wrongly blocked).
+  # tools_deps_hash and npm_deps_hash are npm's own dependency-store hashes
+  # (buildNpmPackage npmDepsHash), derived by local npm tooling rather than
+  # fixed by a single upstream artifact; neither is pinnable.
+  pinnedProbes = {
+    npm_tool_hash = npm.archive.url;
+  };
 }
