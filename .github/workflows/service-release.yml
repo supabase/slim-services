@@ -479,6 +479,7 @@ jobs:
         shell: bash
         env:
           ARCH: ${{ matrix.arch }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           IMAGE_TAG: local/${{ inputs.service }}:${{ needs.plan.outputs.release_version }}-${{ matrix.platform_dir }}
           OCI_REVISION: ${{ github.sha }}
           OCI_SOURCE: https://github.com/${{ github.repository }}

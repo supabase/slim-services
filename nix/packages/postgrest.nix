@@ -41,4 +41,8 @@ assert pkgs.stdenv.hostPlatform.isDarwin;
   inherit runtime;
   probeOrder = [ ];
   dependencyProbes = { };
+  # PostgREST has no probed hashes: its one upstream artifact (assetUrl /
+  # assetHash) is already resolved and pinned directly by the release
+  # workflow before this flake ever evaluates.
+  pinnedProbes = { };
 }

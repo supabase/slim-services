@@ -139,6 +139,139 @@ with open(path, "w", encoding="utf-8") as stream:
 PYASSET
 fi
 
+# A published revision's manifest already records the exact upstream bytes
+# it was built from. Pinned keys (declared in Nix as pinnedProbes, next to
+# probeOrder/dependencyProbes, as key -> upstream URL) are flat downloads
+# whose bytes upstream alone decides; seed them from that manifest so a
+# rebuild or hotfix of the same service+version only ever accepts the exact
+# artifact it originally shipped with, instead of silently re-probing a byte
+# upstream swapped under the same URL. Non-pinned keys are untouched here
+# and still probed below. The invariant is "same URL => same bytes", not
+# "same key => same bytes": a recipe change can legitimately move a key to a
+# different URL, so a pin only applies when the published release's
+# recorded URL for that key still matches the URL this evaluation produced.
+pinned_probe_urls="$(nix_release eval "$release_dir" "legacyPackages.$NIX_SYSTEM.pinnedProbes" --json)"
+if [[ "$(python3 -c 'import json,sys; print(len(json.loads(sys.argv[1])))' "$pinned_probe_urls")" != "0" ]]; then
+  platform_dir="$(artifact_platform_dir "$TARGET_OS" "$ARCH")"
+  if [[ -n "${GH_REPO:-}" ]]; then
+    manifest_dir="$work_dir/pinned-manifest"
+    mkdir -p "$manifest_dir"
+    if ! python3 - "$service" "$VERSION" "$GH_REPO" "$platform_dir" "$manifest_dir" "$release_dir/release.json" "$pinned_probe_urls" <<'PY'
+import json
+import os
+import re
+import subprocess
+import sys
+
+service, version, repo, platform_dir, manifest_dir, release_path, pinned_urls_json = sys.argv[1:]
+pinned_urls = json.loads(pinned_urls_json)
+
+
+def run(args):
+    return subprocess.run(args, capture_output=True, text=True)
+
+
+def info(message):
+    print(f"[slim] {message}")
+
+
+def error(message):
+    print(f"[slim] ERROR: {message}", file=sys.stderr)
+
+
+# A hash we deliberately pinned must never be silently skipped because we
+# could not confirm it: an API error here must fail the build, not fall
+# back to probing (which would defeat the point of pinning).
+listing = run([
+    "gh", "api", "--paginate", f"repos/{repo}/releases?per_page=100",
+    "--jq", ".[] | select(.draft | not) | .tag_name",
+])
+if listing.returncode != 0:
+    error(
+        f"could not list published releases of {repo} to confirm pinned hashes for "
+        f"{service} {version}: {(listing.stderr or '').strip()}"
+    )
+    sys.exit(1)
+
+# Legacy un-revisioned tags are frozen history and never match -rN.
+pattern = re.compile(rf"^{re.escape(service)}-{re.escape(version)}-r(0|[1-9][0-9]*)$")
+taken = sorted(
+    int(match.group(1))
+    for match in (pattern.match(tag) for tag in listing.stdout.splitlines())
+    if match
+)
+if not taken:
+    info(f"no published revision of {service} {version}; probing pinned hashes normally")
+    sys.exit(0)
+
+release_tag = f"{service}-{version}-r{taken[-1]}"
+
+assets = run(["gh", "api", f"repos/{repo}/releases/tags/{release_tag}", "--jq", ".assets[].name"])
+if assets.returncode != 0:
+    error(
+        f"could not list assets of published release {release_tag} to confirm pinned "
+        f"hashes: {(assets.stderr or '').strip()}"
+    )
+    sys.exit(1)
+
+suffix = f"-{platform_dir}.manifest.json"
+asset_name = next((name for name in assets.stdout.splitlines() if name.endswith(suffix)), None)
+if asset_name is None:
+    info(f"published release {release_tag} has no manifest for {platform_dir}; probing pinned hashes normally")
+    sys.exit(0)
+
+download = run([
+    "gh", "release", "download", release_tag, "--repo", repo,
+    "--pattern", asset_name, "--dir", manifest_dir, "--clobber",
+])
+if download.returncode != 0:
+    error(
+        f"could not download {asset_name} from published release {release_tag} to confirm "
+        f"pinned hashes: {(download.stderr or '').strip()}"
+    )
+    sys.exit(1)
+
+with open(os.path.join(manifest_dir, asset_name), encoding="utf-8") as stream:
+    manifest = json.load(stream)
+derived = manifest.get("nix_derived_hashes", {})
+recorded_urls = manifest.get("nix_pinned_urls", {})
+
+with open(release_path, encoding="utf-8") as stream:
+    release = json.load(stream)
+pins = release.setdefault("pinned_hashes", {})
+
+for key, current_url in pinned_urls.items():
+    if key in release["hashes"]:
+        continue
+    if key not in derived:
+        info(f"published release {release_tag} has no {key}; probing normally")
+        continue
+    recorded_url = recorded_urls.get(key)
+    if recorded_url is not None and recorded_url != current_url:
+        info(
+            f"{key}'s upstream URL changed since {release_tag} "
+            f"({recorded_url} -> {current_url}); probing normally"
+        )
+        continue
+    release["hashes"][key] = derived[key]
+    pins[key] = {"release_tag": release_tag, "url": current_url}
+    if recorded_url is None:
+        info(f"pinning {key} to {release_tag} (URL unrecorded by that release; pinning by key)")
+    else:
+        info(f"pinning {key} to {release_tag} ({current_url})")
+
+with open(release_path, "w", encoding="utf-8") as stream:
+    json.dump(release, stream, indent=2)
+    stream.write("\n")
+PY
+    then
+      exit 1
+    fi
+  else
+    log "GH_REPO not set; skipping published-release pin lookup for $service $VERSION"
+  fi
+fi
+
 # Discovery belongs to release resolution: each probe fixes one dependency
 # input for this exact source and target. The final build consumes those
 # explicit hashes with pure evaluation, including on a future automated release.
@@ -168,7 +301,58 @@ PYHASH
 done < <(python3 -c 'import json,sys; print("\n".join(json.loads(sys.argv[1])))' "$probe_keys")
 
 log "building $service $VERSION runtime with locked release inputs for $NIX_SYSTEM"
-runtime="$(nix_release build "$release_dir" "packages.$NIX_SYSTEM.runtime" --no-link --print-build-logs --print-out-paths)"
+build_log="$(mktemp "${TMPDIR:-/tmp}/slim-nix-build.XXXXXX")"
+# Tee stderr instead of buffering it: long builds (edge-runtime's Rust
+# compile, Postgres, etc.) must keep streaming live to the CI log, not go
+# silent until the whole build finishes. `wait` on the tee's own PID (set by
+# $! right after the process substitution starts) before reading the file,
+# so a failure below never inspects a partially flushed log.
+exec 9> >(tee "$build_log" >&2)
+build_log_tee_pid=$!
+if runtime="$(nix_release build "$release_dir" "packages.$NIX_SYSTEM.runtime" --no-link --print-build-logs --print-out-paths 2>&9)"; then
+  build_succeeded=1
+else
+  build_succeeded=0
+fi
+exec 9>&-
+wait "$build_log_tee_pid" 2>/dev/null || true
+if [[ "$build_succeeded" == "1" ]]; then
+  rm -f "$build_log"
+else
+  # A pinned hash is only ever seeded for an upstream-fixed artifact
+  # (declared in pinnedProbes); if its fixed-output build no longer matches,
+  # the upstream artifact changed under the same URL. Name that distinctly
+  # and stop — never fall back to re-probing a hash we deliberately pinned.
+  if python3 - "$release_dir/release.json" "$build_log" <<'PY'
+import json
+import sys
+
+release_path, log_path = sys.argv[1:]
+with open(release_path, encoding="utf-8") as stream:
+    release = json.load(stream)
+pins = release.get("pinned_hashes", {})
+with open(log_path, encoding="utf-8") as stream:
+    log_text = stream.read()
+for key, pin in pins.items():
+    pinned_hash = release["hashes"].get(key)
+    if pinned_hash and f"specified: {pinned_hash}" in log_text:
+        print(
+            f"[slim] ERROR: pinned hash for {key} ({pinned_hash}, from {pin['release_tag']}, "
+            f"url {pin['url']}) no longer matches upstream bytes; the upstream artifact "
+            "changed under the same URL",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+sys.exit(0)
+PY
+  then
+    rm -f "$build_log"
+    fail "Nix build failed for $service $VERSION on $NIX_SYSTEM"
+  else
+    rm -f "$build_log"
+    exit 1
+  fi
+fi
 [[ -d "$runtime" ]] || fail "Nix did not return a runtime directory: $runtime"
 if [[ -d "$rootfs" ]]; then chmod -R u+w "$rootfs"; fi
 rm -rf "$rootfs"
@@ -195,11 +379,11 @@ python3 - "$manifest" "$release_dir/release.json" "$PLATFORM" "$(artifact_platfo
   "${SOURCE_DIR:-}" "${SOURCE_REF:-}" "${UPSTREAM_IMAGE:-${SOURCE_IMAGE:-}}" \
   "${ENTRYPOINT_JSON:-[]}" "${CMD_JSON:-[]}" "$(portable_flag)" "$(portable_host_libs_json)" \
   "$sbom" "$NIX_SYSTEM" "$runtime" "$(du -sk "$rootfs" | awk '{print $1}')" \
-  "$(release_version)" "$REVISION" <<'PY'
+  "$(release_version)" "$REVISION" "$pinned_probe_urls" <<'PY'
 import json, os, sys
 (path, release_path, platform, target, source_dir, source_ref, upstream_image,
  entrypoint, cmd, portable, host_libs, sbom, system, runtime, rootfs_kib,
- release_version, revision) = sys.argv[1:]
+ release_version, revision, pinned_probe_urls) = sys.argv[1:]
 with open(release_path, encoding="utf-8") as stream:
     release = json.load(stream)
 rootfs_bytes = int(rootfs_kib) * 1024
@@ -215,6 +399,11 @@ manifest = {
     "base_image": "scratch", "entrypoint": json.loads(entrypoint), "cmd": json.loads(cmd),
     "build_backend": "nix", "nix_flake": ".", "nix_attr": "runtime",
     "nix_system": system, "nix_derived_hashes": release["hashes"],
+    # The upstream URL behind each pinned key at this exact build, so a
+    # future rebuild/hotfix of this release can tell "same URL" (safe to
+    # pin) from "a recipe change moved this key to a different URL" (must
+    # not pin; see build-artifact-from-nix.sh's pin-seeding step).
+    "nix_pinned_urls": json.loads(pinned_probe_urls),
     "nix_release": release, "nix_runtime": runtime,
     "portable": portable == "true", "assumed_host_libs": json.loads(host_libs),
     "archive": None, "archive_on_build": False,

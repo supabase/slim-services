@@ -73,4 +73,13 @@ in
     go_toolchain_hash = goArchive;
     vendor_hash = package.goModules;
   };
+  # go_toolchain_hash is a flat download of the official Go release archive:
+  # its bytes are fixed by go.dev for the exact version/OS/arch, so it can be
+  # pinned to a published release (by URL, so a recipe change that moves it
+  # to a different URL is never wrongly blocked). vendor_hash is Go's
+  # vendorHash, derived by the Go toolchain from go.sum through the module
+  # proxy; it is tooling-dependent and must keep re-resolving on every build.
+  pinnedProbes = {
+    go_toolchain_hash = goArchive.url;
+  };
 }
