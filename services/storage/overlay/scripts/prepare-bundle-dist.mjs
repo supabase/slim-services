@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 import {
   bundlePackageJson,
   runtimeExternalPackages,
@@ -52,6 +53,45 @@ await fs.rm(outputScriptsMigrationsDir, { recursive: true, force: true })
 
 for (const packageName of runtimeExternalPackages) {
   await copyPackage(packageName)
+}
+
+// Replace fs-xattr with the sidecar-fallback wrapper; the real package moves
+// to fs-xattr/native, which the wrapper imports by its entry file.
+const fsXattrDir = path.join(outputNodeModules, 'fs-xattr')
+const fsXattrPackage = JSON.parse(await fs.readFile(path.join(fsXattrDir, 'package.json'), 'utf8'))
+if (fsXattrPackage.type !== 'module' || fsXattrPackage.exports !== './index.js') {
+  throw new Error(
+    `fs-xattr ${fsXattrPackage.version} changed its entry point; update the sidecar wrapper`
+  )
+}
+const fsXattrStaging = path.join(outputNodeModules, '.fs-xattr-native')
+await fs.rename(fsXattrDir, fsXattrStaging)
+await fs.mkdir(fsXattrDir)
+await fs.rename(fsXattrStaging, path.join(fsXattrDir, 'native'))
+await fs.copyFile(
+  path.resolve('scripts/slim-fs-xattr/index.js'),
+  path.join(fsXattrDir, 'index.js')
+)
+await fs.writeFile(
+  path.join(fsXattrDir, 'package.json'),
+  `${JSON.stringify(
+    {
+      name: 'fs-xattr',
+      version: fsXattrPackage.version,
+      type: 'module',
+      exports: './index.js',
+    },
+    null,
+    2
+  )}\n`
+)
+const importPackage = (entry) => import(pathToFileURL(path.join(fsXattrDir, entry)).href)
+const wrapperExports = new Set(Object.keys(await importPackage('index.js')))
+const unwrapped = Object.keys(await importPackage('native/index.js')).filter(
+  (name) => !wrapperExports.has(name)
+)
+if (unwrapped.length > 0) {
+  throw new Error(`fs-xattr wrapper is missing exports: ${unwrapped.join(', ')}`)
 }
 
 // postgres-migrations reads 0_create-migrations-table.sql from

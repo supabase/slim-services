@@ -97,6 +97,17 @@ let
       pkgs.git
     ];
     inherit pnpmDeps;
+    # Studio's self-hosted build must not ship Next's optional `sharp`
+    # dependency in `.next/standalone` (see normalize-next-standalone.sh and
+    # services/studio/REPORT.md). Sources built before upstream
+    # supabase/supabase#50658 lack that exclusion in their own
+    # `next.config.ts`; backport it here so every source in the release
+    # window builds. The script feature-detects sources that already carry
+    # the exclusion and leaves them byte-identical.
+    postPatch = lib.optionalString (studioFramework == "next") ''
+      ${pkgs.python3}/bin/python3 ${../../services/studio/backport-sharp-exclusion.py} \
+        apps/studio/next.config.ts
+    '';
     env = {
       NEXT_TELEMETRY_DISABLED = "1";
       TURBO_TELEMETRY_DISABLED = "1";

@@ -51,25 +51,30 @@ tag. The release planner verifies the tag, reads its SLSA provenance, validates
 the referenced GitHub commit, then runs the standard linux/amd64, linux/arm64,
 and darwin/arm64 artifact-and-image matrix.
 
-## Unreleasable Studio versions (sharp in standalone)
+## Keeping sharp out of the standalone output
 
-Next 15.5.25+ / 16.3.5 traces optional `sharp` into `.next/standalone`. Slim
+Next 15.5.25+ / 16.3.5 traces the optional `sharp` package (and its native
+`@img/*` binaries) into `.next/standalone` unless the self-hosted build both
+marks images `unoptimized` and excludes `sharp`/`@img` from output file
+tracing. Studio's self-hosted build must not ship `sharp`: the slim
 floor-check `require()` of `sharp-linux-x64-*.node` segfaults on linux/amd64
-without matching `sharp-libvips`. This repository does **not** vendor that
+without a matching `sharp-libvips`, and this repository does not vendor that
 native stack.
 
-- Last slim-buildable tag without that trace: `2026.09.14-sha-4dd8a95`.
-- `2026.09.21-sha-512201d` and any later Docker Hub tag whose standalone tree
-  still contains `@img/sharp-*.node` **cannot be built** here. Do not force
-  rebuild them.
-- Slim packaging resumes on the first Studio tag whose self-hosted Next config
-  keeps sharp out of the standalone output (`images.unoptimized` plus
-  `outputFileTracingExcludes` for `sharp` / `@img`, as in
-  [supabase/supabase#50658](https://github.com/supabase/supabase/pull/50658)).
-  Until then, only keep the latest *buildable* Studio release; do not carry a
-  recipe for the broken window.
+- Upstream added the required `next.config.ts` exclusion in
+  [supabase/supabase#50658](https://github.com/supabase/supabase/pull/50658).
+  Sources built before that PR lack it in their own config.
+- `services/studio/backport-sharp-exclusion.py`, invoked from
+  `nix/packages/studio.nix`, backports the same edit at build time when the
+  source's `next.config.ts` doesn't already exclude `sharp`. Sources that
+  already carry the exclusion are left byte-identical.
+- `services/studio/normalize-next-standalone.sh` drops the dangling pnpm
+  links the exclusion leaves behind inside Next's own package directory
+  (e.g. `.pnpm/next@x/node_modules/sharp`), and fails the build if any
+  `sharp`/`@img` package trace remains in the standalone output.
 
-This is an explicit unreleasable-window decision, not a `release_floor` bump.
+The self-hosted artifact ships no native addons; `services/studio/recipe.env`'s
+`FLOOR_CHECK_CMD` asserts that instead of requiring one.
 
 Measurements will enter the generated README tables from the first published
 native Studio release manifest.
