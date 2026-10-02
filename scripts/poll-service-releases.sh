@@ -215,6 +215,60 @@ PY
 )"
 [[ -n "$poll_configs" ]] || exit 0
 
+release_candidate_state() {
+  local version="$1"
+  RUNS_JSON="$runs_json" PUBLISHED_RELEASE_TAGS="$published_release_tags" python3 - \
+    "$service" \
+    "$version" \
+    "$POLL_RETRY_COOLDOWN_SECONDS" \
+    "$POLL_SUCCESS_GRACE_SECONDS" <<'PY'
+import datetime
+import json
+import os
+import re
+import sys
+
+svc, upstream_version, cooldown_raw, success_grace_raw = sys.argv[1:]
+published = re.compile(rf"^{re.escape(svc)}-{re.escape(upstream_version)}-r(0|[1-9][0-9]*)$")
+if any(published.match(tag) for tag in os.environ["PUBLISHED_RELEASE_TAGS"].splitlines()):
+    print("published")
+    raise SystemExit(0)
+expected_title = f"Release {svc} {upstream_version}"
+runs_raw = os.environ["RUNS_JSON"]
+cooldown = int(cooldown_raw)
+success_grace = int(success_grace_raw)
+active_statuses = {"in_progress", "pending", "queued", "requested", "waiting"}
+runs = json.loads(runs_raw)
+matching = [run for run in runs if run.get("displayTitle") == expected_title]
+if any(run.get("status") in active_statuses for run in matching):
+    print("active")
+    raise SystemExit(0)
+
+def timestamp(run):
+    raw = run.get("updatedAt") or run.get("createdAt")
+    return datetime.datetime.fromisoformat(raw.replace("Z", "+00:00"))
+
+completed = [
+    run
+    for run in matching
+    if run.get("status") == "completed" and (run.get("updatedAt") or run.get("createdAt"))
+]
+if completed:
+    latest = max(completed, key=timestamp)
+    completed_at = timestamp(latest)
+    now = datetime.datetime.now(datetime.timezone.utc)
+    age = (now - completed_at).total_seconds()
+    if latest.get("conclusion") == "success" and age < success_grace:
+        print("settling")
+        raise SystemExit(0)
+    if latest.get("conclusion") != "success" and age < cooldown:
+        print("cooling")
+        raise SystemExit(0)
+
+print("eligible")
+PY
+}
+
 published_release_tags="$(
   gh api --paginate "repos/$TARGET_REPOSITORY/releases?per_page=100" \
     --jq '.[] | select(.draft | not) | .tag_name'
@@ -345,13 +399,7 @@ else:
         raise SystemExit(1)
     floor_key = version_key(release_floor)
     eligible = {candidate for candidate in candidates if version_key(candidate) >= floor_key}
-print(
-    *sorted(
-        eligible,
-        key=version_key,
-    ),
-    sep="\n",
-)
+print(*sorted(eligible, key=version_key), sep="\n")
 PY
     )"; then
       printf 'could not reconcile Docker Hub tags for %s from floor %s (%s); continuing\n' \
@@ -413,82 +461,60 @@ PY
     continue
   fi
 
+  eligible_versions=""
   while IFS= read -r version; do
-    if PUBLISHED_RELEASE_TAGS="$published_release_tags" python3 - "$service" "$version" <<'PY'
+    [[ -n "$version" ]] || continue
+    expected_run_title="Release $service $version"
+    case "$(release_candidate_state "$version")" in
+      published)
+        printf '%s is already published as a revision of %s\n' "$service" "$version"
+        ;;
+      active)
+        printf '%s is already being built by %s\n' "$service" "$expected_run_title"
+        ;;
+      cooling)
+        printf '%s is cooling down after a recent unsuccessful attempt by %s\n' \
+          "$service" "$expected_run_title"
+        ;;
+      settling)
+        printf '%s is waiting for release publication after successful run %s\n' \
+          "$service" "$expected_run_title"
+        ;;
+      *)
+        eligible_versions+="$version"$'\n'
+        ;;
+    esac
+  done <<< "$versions"
+  versions="$eligible_versions"
+
+  # Interleave only dispatchable tags so a line's published or cooling prefix
+  # does not cost it a turn under the cap.
+  if [[ "$release_lines_json" != "[]" ]]; then
+    versions="$(
+      VERSIONS="$versions" python3 - "$release_lines_json" <<'PY'
+import json
 import os
 import re
 import sys
 
-svc, upstream_version = sys.argv[1:]
-pattern = re.compile(rf"^{re.escape(svc)}-{re.escape(upstream_version)}-r(0|[1-9][0-9]*)$")
-tags = os.environ["PUBLISHED_RELEASE_TAGS"].splitlines()
-raise SystemExit(0 if any(pattern.match(tag) for tag in tags) else 1)
-PY
-    then
-      printf '%s is already published as a revision of %s\n' "$service" "$version"
-      continue
-    fi
-
-    expected_run_title="Release $service $version"
-    run_state="$(RUNS_JSON="$runs_json" python3 - \
-      "$expected_run_title" \
-      "$POLL_RETRY_COOLDOWN_SECONDS" \
-      "$POLL_SUCCESS_GRACE_SECONDS" <<'PY'
-import datetime
-import json
-import os
-import sys
-
-expected_title, cooldown_raw, success_grace_raw = sys.argv[1:]
-runs_raw = os.environ["RUNS_JSON"]
-cooldown = int(cooldown_raw)
-success_grace = int(success_grace_raw)
-active_statuses = {"in_progress", "pending", "queued", "requested", "waiting"}
-runs = json.loads(runs_raw)
-matching = [run for run in runs if run.get("displayTitle") == expected_title]
-if any(run.get("status") in active_statuses for run in matching):
-    print("active")
-    raise SystemExit(0)
-
-def timestamp(run):
-    raw = run.get("updatedAt") or run.get("createdAt")
-    return datetime.datetime.fromisoformat(raw.replace("Z", "+00:00"))
-
-completed = [
-    run
-    for run in matching
-    if run.get("status") == "completed" and (run.get("updatedAt") or run.get("createdAt"))
-]
-if completed:
-    latest = max(completed, key=timestamp)
-    completed_at = timestamp(latest)
-    now = datetime.datetime.now(datetime.timezone.utc)
-    age = (now - completed_at).total_seconds()
-    if latest.get("conclusion") == "success" and age < success_grace:
-        print("settling")
-        raise SystemExit(0)
-    if latest.get("conclusion") != "success" and age < cooldown:
-        print("cooling")
-        raise SystemExit(0)
-
-print("eligible")
+release_lines = json.loads(sys.argv[1])
+patterns = [re.compile(line["tag_pattern"]) for line in release_lines]
+buckets = [[] for _ in patterns]
+for version in os.environ["VERSIONS"].split():
+    matched = [index for index, pattern in enumerate(patterns) if pattern.fullmatch(version)]
+    buckets[matched[0]].append(version)
+ordered = []
+while any(buckets):
+    for bucket in buckets:
+        if bucket:
+            ordered.append(bucket.pop(0))
+print(*ordered, sep="\n")
 PY
     )"
-    if [[ "$run_state" == "active" ]]; then
-      printf '%s is already being built by %s\n' "$service" "$expected_run_title"
-      continue
-    fi
-    if [[ "$run_state" == "cooling" ]]; then
-      printf '%s is cooling down after a recent unsuccessful attempt by %s\n' \
-        "$service" "$expected_run_title"
-      continue
-    fi
-    if [[ "$run_state" == "settling" ]]; then
-      printf '%s is waiting for release publication after successful run %s\n' \
-        "$service" "$expected_run_title"
-      continue
-    fi
+  fi
 
+  while IFS= read -r version; do
+    [[ -n "$version" ]] || continue
     if (( active_release_count >= POLL_MAX_ACTIVE_RELEASES )); then
       printf 'global active release limit %s reached; not dispatching more releases\n' \
         "$POLL_MAX_ACTIVE_RELEASES"

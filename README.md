@@ -72,7 +72,7 @@ unavailable on Docker Hub.
 <!-- generated:results:begin -->
 | Service | Version | Upstream ARM64 | Published slim | Reduction | Idle RSS | Idle CPU | Sources |
 |---|---:|---:|---:|---:|---:|---:|---|
-| Postgres | `17.6.1.175` (all PostgreSQL extensions for the selected major, matching upstream preload configuration) | `348.9 MiB` | `115.6 MiB` | `66.9%` | `79.6 MiB` | `0.00%` | [release](https://github.com/supabase/slim-services/releases/tag/postgres-17.6.1.175) · [report](services/postgres/REPORT.md) |
+| Postgres 17 | `17.6.1.175` (all PostgreSQL extensions for the selected major, matching upstream preload configuration) | `348.9 MiB` | `115.6 MiB` | `66.9%` | `79.6 MiB` | `0.00%` | [release](https://github.com/supabase/slim-services/releases/tag/postgres-17.6.1.175) · [report](services/postgres/REPORT.md) |
 | PostgREST | `v16.4` | `6.2 MiB` | `6.8 MiB` | `-10.4%` | `8.4 MiB` | `0.09%` | [release](https://github.com/supabase/slim-services/releases/tag/postgrest-v16.4) · [report](services/postgrest/REPORT.md) |
 | Auth | `v2.197.0` | `27.4 MiB` | `12.5 MiB` | `54.3%` | `9.7 MiB` | `0.40%` | [release](https://github.com/supabase/slim-services/releases/tag/auth-v2.197.0) · [report](services/auth/REPORT.md) |
 | Realtime | `v2.138.1` | `117.0 MiB` | `24.2 MiB` | `79.3%` | `179.0 MiB` | `0.22%` | [release](https://github.com/supabase/slim-services/releases/tag/realtime-v2.138.1) · [report](services/realtime/REPORT.md) |
@@ -121,7 +121,7 @@ define the runtime floor.
 <!-- generated:host-native:begin -->
 | Service | Version | Archive | rootfs | Idle RSS | Idle CPU | Portable | Sources |
 |---|---:|---:|---:|---:|---:|---|---|
-| Postgres | `17.6.1.175` | `102.4 MiB` | `482.7 MiB` | `97.6 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/postgres-17.6.1.175) · [report](services/postgres/REPORT.md) |
+| Postgres 17 | `17.6.1.175` | `102.4 MiB` | `482.7 MiB` | `97.6 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/postgres-17.6.1.175) · [report](services/postgres/REPORT.md) |
 | PostgREST | `v16.4` | `12.6 MiB` | `77.9 MiB` | `56.0 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/postgrest-v16.4) · [report](services/postgrest/REPORT.md) |
 | Auth | `v2.197.0` | `9.6 MiB` | `33.9 MiB` | `29.9 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/auth-v2.197.0) · [report](services/auth/REPORT.md) |
 | Realtime | `v2.138.1` | `12.1 MiB` | `49.1 MiB` | `211.2 MiB` | `0.13%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/realtime-v2.138.1) · [report](services/realtime/REPORT.md) |
@@ -401,10 +401,13 @@ visible gets a ten-minute publication grace instead. Failures therefore remain
 retryable without creating gaps or unbounded hourly fan-out. All configured
 polled services are enabled. PostgreSQL release eligibility comes from
 published `supabase/postgres` Docker Hub tags, and each native source checkout
-is pinned to the one Git commit recorded by that image's provenance. Its policy
-accepts only plain `15.x.x.NNN` and `17.x.x.NNN` releases, with independent
-floors of `15.14.1.177` and `17.6.1.177`; OrioleDB, architecture-specific, and
-other suffixed release tags are ignored.
+is pinned to the one Git commit recorded by that image's provenance. Three
+lines are eligible, each with its own floor: stock `15.x.x.NNN` from
+`15.14.1.177`, stock `17.x.x.NNN` from `17.6.1.177`, and `17.x.x.NNN-orioledb`
+from `17.9.0.028-orioledb`. PG15 OrioleDB tags, architecture-specific tags, and
+other suffixes stay ignored. Each poll gives every line a turn before filling
+the remaining per-service dispatch slots, and the results tables keep one
+latest row per line.
 
 Mailpit and Vector are the non-polled upstream-archive services. Imgproxy is a
 source-built Nix/external-source service whose hourly poll follows the imgproxy
@@ -426,9 +429,9 @@ publication checklists.
 ### Backfilling mirrors
 
 `.github/workflows/ecr-mirror-check.yml` audits, daily, the latest published
-release of each service release line (postgres keeps one per major) against
-ECR Public (images and native tags) and the public S3 bucket (native
-triplets). Older releases are only audited with `all_releases: true`. Run it
+release of each service release line against ECR Public (images and native
+tags) and the public S3 bucket (native triplets). Older releases are only
+audited with `all_releases: true`. Run it
 with `request: true` to re-dispatch the mirror for releases that are out of
 sync. Mirrors are copies of the immutable GHCR bytes; a backfill reconciles
 them against the committed GHCR digests and is safe to re-run. The `services`
@@ -439,9 +442,9 @@ input narrows the run to whole services or selects single releases written
 # one release, even an older one
 gh workflow run ecr-mirror-check.yml -f request=true -f services=postgrest:v16.2-r0
 
-# two postgres releases and the latest realtime release
+# one release from each postgres line, plus the latest realtime release
 gh workflow run ecr-mirror-check.yml -f request=true \
-  -f services="postgres:15.14.1.177-r0 postgres:17.6.1.177-r0 realtime"
+  -f services="postgres:15.14.1.177-r0 postgres:17.6.1.177-r0 postgres:17.9.0.028-orioledb-r0 realtime"
 ```
 
 The same filters work locally with `bun scripts/ecr-mirror.ts sync [--request]

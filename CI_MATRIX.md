@@ -65,6 +65,7 @@ publishing a release or image.
 Use the repository's release policy and workflow as the source of truth for
 which service versions are eligible. This document does not assert that the
 latest upstream version has been built or released.
+Postgres release lines are the `release_lines` in `.github/service-release-sources.json`.
 
 `.github/workflows/service-artifacts.yml` is the manual diagnostic workflow.
 Its `workflow_dispatch` inputs select services, targets, explicitly selected

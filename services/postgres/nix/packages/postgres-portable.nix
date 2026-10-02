@@ -19,11 +19,46 @@ assert psql_cli != null || psql_17_cli != null;
 let
   configDir = "${upstream}/nix/packages/cli-config";
   dockerfile =
-    if builtins.pathExists "${upstream}/Dockerfile-supabase" then
+    if postgres_major == "orioledb-17" then
+      if builtins.pathExists "${upstream}/Dockerfile-orioledb-17" then
+        "${upstream}/Dockerfile-orioledb-17"
+      else
+        throw "Dockerfile-orioledb-17 is required for the orioledb-17 postgres line"
+    else if builtins.pathExists "${upstream}/Dockerfile-supabase" then
       "${upstream}/Dockerfile-supabase"
     else
       "${upstream}/Dockerfile-${postgres_major}";
-  usesIcu = lib.hasInfix "--locale-provider=icu" (builtins.readFile dockerfile);
+  dockerfileText = builtins.readFile dockerfile;
+  usesIcu = lib.hasInfix "--locale-provider=icu" dockerfileText;
+  # Preload position and output_plugin_libraries vary by tag; read them from Dockerfile-orioledb-17.
+  orioledbPreloadFirst =
+    let
+      prepend = lib.hasInfix "s|'|'orioledb,|" dockerfileText;
+      append = lib.hasInfix "\\1, orioledb'" dockerfileText;
+    in
+    if postgres_major != "orioledb-17" then
+      false
+    else if prepend != append then
+      prepend
+    else
+      throw "Dockerfile-orioledb-17 must add orioledb to shared_preload_libraries in exactly one known form";
+  outputPluginPattern = ".*(output_plugin_libraries = '[^']*').*";
+  outputPluginSettings = lib.concatMap (
+    line:
+    let
+      matched = builtins.match outputPluginPattern line;
+    in
+    if matched == null then [ ] else matched
+  ) (lib.splitString "\n" dockerfileText);
+  outputPluginSetting =
+    if postgres_major != "orioledb-17" then
+      ""
+    else if outputPluginSettings != [ ] then
+      builtins.head outputPluginSettings
+    else if lib.hasInfix "output_plugin_libraries" dockerfileText then
+      throw "Dockerfile-orioledb-17 sets output_plugin_libraries in an unrecognized form"
+    else
+      "";
   initdbArgs =
     if usesIcu then
       [ "--encoding=UTF-8" "--locale-provider=icu" "--icu-locale=en_US.UTF-8" "--allow-group-access" ]
@@ -94,6 +129,10 @@ let
       # Add pg_stat_statements extension (same as Docker build does)
       cp ${upstream}/ansible/files/stat_extension.sql \
          $out/share/supabase-cli/migrations/migrations/00-extension.sql
+      if [ "${postgres_major}" = "orioledb-17" ]; then
+        printf '%s\n' "CREATE EXTENSION orioledb;" \
+          > $out/share/supabase-cli/migrations/init-scripts/00-pre-init.sql
+      fi
     '';
   };
 
@@ -140,10 +179,22 @@ let
         -e "s|^ident_file = |#ident_file = |" \
         -e "s/db_user_namespace = off/#db_user_namespace = off/g" \
         $conf
-      # Dockerfile-17 removes extensions incompatible with that major. PG15
-      # retains the source tree's TimescaleDB/plv8 preload values.
-      if [ "${postgres_major}" = "17" ]; then
+      # Dockerfile-17 and Dockerfile-orioledb-17 remove extensions incompatible
+      # with that engine. PG15 retains the source tree's TimescaleDB/plv8 preload values.
+      if [ "${postgres_major}" = "17" ] || [ "${postgres_major}" = "orioledb-17" ]; then
         sed -i -e "s/ timescaledb,//g" -e "s/ plv8,//g" $conf
+      fi
+      if [ "${postgres_major}" = "orioledb-17" ]; then
+        ${
+          if orioledbPreloadFirst then
+            ''sed -i -E "s/(shared_preload_libraries = ')/\\1orioledb,/" $conf''
+          else
+            ''sed -i -E "s/(shared_preload_libraries = '[^']*)'/\\1, orioledb'/" $conf''
+        }
+        printf '\n%s\n' "default_table_access_method = 'orioledb'" >> $conf
+        ${lib.optionalString (outputPluginSetting != "") ''
+          printf '%s\n' "${outputPluginSetting}" >> $conf
+        ''}
       fi
       for want in \
         "^session_preload_libraries = 'supautils'" \
@@ -170,6 +221,21 @@ let
         echo "PG17-incompatible extension left in shared_preload_libraries" >&2
         exit 1
       fi
+      if [ "${postgres_major}" = "orioledb-17" ]; then
+        grep -q "${
+          if orioledbPreloadFirst then
+            "^shared_preload_libraries = 'orioledb,"
+          else
+            "^shared_preload_libraries.*orioledb"
+        }" $conf || {
+          echo "OrioleDB shared_preload_libraries is missing orioledb" >&2
+          exit 1
+        }
+        grep -q "^default_table_access_method = 'orioledb'" $conf || {
+          echo "OrioleDB default_table_access_method is missing" >&2
+          exit 1
+        }
+      fi
       grep "^shared_preload_libraries" $conf | grep -q "pgaudit" || {
         echo "expected the full docker.io shared_preload_libraries set" >&2
         exit 1
@@ -184,9 +250,11 @@ let
       install -m 0644 ${ansibleConfig}/custom_walg.conf $cfg/wal-g.conf
       install -m 0644 ${ansibleConfig}/custom_read_replica.conf $cfg/read-replica.conf
       install -m 0644 ${ansibleConfig}/conf.d/*.conf $cfg/conf.d/
-      # Dockerfile-17 strips TimescaleDB/plv8 from supautils.conf; PG15 keeps
-      # the exact source-tree values.
-      if [ "${postgres_major}" = "17" ]; then
+      # Dockerfile-17 strips TimescaleDB/plv8; Dockerfile-orioledb-17 also strips
+      # PostGIS/pgRouting. PG15 keeps source-tree values.
+      if [ "${postgres_major}" = "orioledb-17" ]; then
+        sed 's/ timescaledb,//g; s/ plv8,//g; s/ postgis,//g; s/ pgrouting,//g' ${supautilsConf} > $cfg/supautils.conf
+      elif [ "${postgres_major}" = "17" ]; then
         sed 's/ timescaledb,//g; s/ plv8,//g' ${supautilsConf} > $cfg/supautils.conf
       else
         cp ${supautilsConf} $cfg/supautils.conf
@@ -195,6 +263,12 @@ let
         echo "supautils.conf lost its allowlist" >&2
         exit 1
       }
+      if [ "${postgres_major}" = "orioledb-17" ]; then
+        if grep "^supautils.privileged_extensions" $cfg/supautils.conf | grep -Eq '(^|, )(timescaledb|plv8|postgis|pgrouting),'; then
+          echo "OrioleDB supautils allowlist still contains a stripped extension" >&2
+          exit 1
+        fi
+      fi
 
       # pg_hba/pg_ident: docker.io's files; the ONE divergence is
       # `peer map=supabase_map` -> `trust`, because the map assumes the

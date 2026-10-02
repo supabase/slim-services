@@ -606,7 +606,7 @@ exit 1
       "gh",
       `#!/usr/bin/env bash
 cat <<'EOF'
-[[{"tag_name":"postgrest-v16.1-r0","draft":false,"prerelease":false,"published_at":"2026-09-20T00:00:00Z"},{"tag_name":"postgrest-v16.2-r0","draft":false,"prerelease":false,"published_at":"2026-09-01T00:00:00Z"},{"tag_name":"postgres-15.14.1.159-r0","draft":false,"prerelease":false},{"tag_name":"postgres-15.14.1.160-r0","draft":false,"prerelease":false},{"tag_name":"postgres-17.6.1.173-r0","draft":false,"prerelease":false},{"tag_name":"postgres-16.0.0.001-r0","draft":false,"prerelease":false}]]
+[[{"tag_name":"postgrest-v16.1-r0","draft":false,"prerelease":false,"published_at":"2026-09-20T00:00:00Z"},{"tag_name":"postgrest-v16.2-r0","draft":false,"prerelease":false,"published_at":"2026-09-01T00:00:00Z"},{"tag_name":"postgres-15.14.1.159-r0","draft":false,"prerelease":false},{"tag_name":"postgres-15.14.1.160-r0","draft":false,"prerelease":false},{"tag_name":"postgres-17.6.1.173-r0","draft":false,"prerelease":false},{"tag_name":"postgres-17.9.0.012-orioledb-r0","draft":false,"prerelease":false},{"tag_name":"postgres-17.9.0.028-orioledb-r0","draft":false,"prerelease":false},{"tag_name":"postgres-17.9.0.029-orioledb","draft":false,"prerelease":false},{"tag_name":"postgres-16.0.0.001-r0","draft":false,"prerelease":false}]]
 EOF
 `,
     );
@@ -629,7 +629,12 @@ exit 1
       .split("\n")
       .filter((line) => line.startsWith("[slim] in sync: "))
       .map((line) => line.slice("[slim] in sync: ".length).split(" (")[0]);
-    expect(audited.sort()).toEqual(["postgres 15.14.1.160-r0", "postgres 17.6.1.173-r0", "postgrest v16.2-r0"]);
+    expect(audited.sort()).toEqual([
+      "postgres 15.14.1.160-r0",
+      "postgres 17.6.1.173-r0",
+      "postgres 17.9.0.028-orioledb-r0",
+      "postgrest v16.2-r0",
+    ]);
 
     const result = run(["sync", "postgrest"], { PATH: `${stub}:/usr/bin:/bin` });
     expect(result.exitCode, result.stderr.toString()).toBe(0);

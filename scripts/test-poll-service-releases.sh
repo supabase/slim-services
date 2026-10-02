@@ -650,7 +650,11 @@ class ReleasePollerTest(unittest.TestCase):
             "17.10.1.001\n17.6.1.15799999\n17.6.1.159\n",
             encoding="utf-8",
         )
-        self.published.write_text(published_jsonl_from_lines("postgres-15.14.1.177-r0\npostgres-17.6.1.177-r0\n"), encoding="utf-8"
+        self.published.write_text(
+            published_jsonl_from_lines(
+                "postgres-15.14.1.177-r0\npostgres-17.6.1.177-r0\npostgres-17.9.0.028-orioledb-r0\n"
+            ),
+            encoding="utf-8",
         )
 
         class DockerHubHandler(http.server.BaseHTTPRequestHandler):
@@ -664,6 +668,7 @@ class ReleasePollerTest(unittest.TestCase):
                             {"name": "15.14.1.177"},
                             {"name": "17.6.1.177"},
                             {"name": "17.6.1.900"},
+                            {"name": "17.9.0.028-orioledb"},
                         ],
                     }
                 ).encode()
@@ -735,6 +740,7 @@ class ReleasePollerTest(unittest.TestCase):
                             {"name": "15.14.1.178"},
                             {"name": "15.14.1.177"},
                             {"name": "17.6.1.179"},
+                            {"name": "17.9.0.028-orioledb"},
                         ],
                     }
                 ).encode()
@@ -747,7 +753,11 @@ class ReleasePollerTest(unittest.TestCase):
             def log_message(self, *_args):
                 pass
 
-        self.published.write_text(published_jsonl_from_lines("postgres-15.14.1.177-r0\npostgres-17.6.1.177-r0\n"), encoding="utf-8"
+        self.published.write_text(
+            published_jsonl_from_lines(
+                "postgres-15.14.1.177-r0\npostgres-17.6.1.177-r0\npostgres-17.9.0.028-orioledb-r0\n"
+            ),
+            encoding="utf-8",
         )
         server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), DockerHubHandler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -770,9 +780,180 @@ class ReleasePollerTest(unittest.TestCase):
                 "workflow run service-release.yml --repo supabase/slim-services "
                 "--ref main -f service=postgres -f version=15.14.1.178",
                 "workflow run service-release.yml --repo supabase/slim-services "
+                "--ref main -f service=postgres -f version=17.6.1.178",
+                "workflow run service-release.yml --repo supabase/slim-services "
                 "--ref main -f service=postgres -f version=15.14.1.179",
+            ],
+        )
+
+    def test_postgres_orioledb_line_shares_the_dispatch_budget(self):
+        production_config = json.loads(
+            (ROOT / ".github" / "service-release-sources.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.config.write_text(
+            json.dumps(
+                {
+                    "services": {
+                        "postgres": production_config["services"]["postgres"]
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        class DockerHubHandler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                body = json.dumps(
+                    {
+                        "count": 12,
+                        "next": None,
+                        "previous": None,
+                        "results": [
+                            {"name": "15.14.1.177"},
+                            {"name": "15.14.1.178"},
+                            {"name": "15.14.1.179"},
+                            {"name": "15.1.0.150-orioledb"},
+                            {"name": "17.6.1.177"},
+                            {"name": "17.6.1.178"},
+                            {"name": "17.6.1.179"},
+                            {"name": "17.9.0.028-orioledb"},
+                            {"name": "17.9.0.029-orioledb"},
+                            {"name": "17.9.0.028-orioledb_arm64"},
+                            {"name": "17.9.0.028-orioledb-multigres"},
+                        ],
+                    }
+                ).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *_args):
+                pass
+
+        self.published.write_text(
+            published_jsonl_from_lines(
+                "postgres-15.14.1.177-r0\npostgres-17.6.1.177-r0\npostgres-17.9.0.028-orioledb-r0\n"
+            ),
+            encoding="utf-8",
+        )
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), DockerHubHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            result = self.run_poller(
+                service="postgres",
+                max_dispatches_per_service="3",
+                docker_hub_api_base=f"http://127.0.0.1:{server.server_port}/v2",
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join()
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            self.trace.read_text(encoding="utf-8").splitlines(),
+            [
+                "workflow run service-release.yml --repo supabase/slim-services "
+                "--ref main -f service=postgres -f version=15.14.1.178",
                 "workflow run service-release.yml --repo supabase/slim-services "
                 "--ref main -f service=postgres -f version=17.6.1.178",
+                "workflow run service-release.yml --repo supabase/slim-services "
+                "--ref main -f service=postgres -f version=17.9.0.029-orioledb",
+            ],
+        )
+
+    def test_postgres_dispatch_cap_skips_published_and_cooling_prefixes(self):
+        production_config = json.loads(
+            (ROOT / ".github" / "service-release-sources.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.config.write_text(
+            json.dumps(
+                {
+                    "services": {
+                        "postgres": production_config["services"]["postgres"]
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        self.published.write_text(
+            published_jsonl_from_lines("postgres-15.14.1.177-r0\n"), encoding="utf-8"
+        )
+        self.runs.write_text(
+            json.dumps(
+                [
+                    {
+                        "displayTitle": "Release postgres 15.14.1.178",
+                        "status": "completed",
+                        "conclusion": "failure",
+                        "createdAt": "2000-01-01T00:00:00Z",
+                        "updatedAt": "2999-01-01T00:00:00Z",
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        class DockerHubHandler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                body = json.dumps(
+                    {
+                        "count": 8,
+                        "next": None,
+                        "previous": None,
+                        "results": [
+                            {"name": "15.14.1.177"},
+                            {"name": "15.14.1.178"},
+                            {"name": "15.14.1.179"},
+                            {"name": "17.6.1.177"},
+                            {"name": "17.6.1.178"},
+                            {"name": "17.6.1.179"},
+                            {"name": "17.9.0.028-orioledb"},
+                        ],
+                    }
+                ).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *_args):
+                pass
+
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), DockerHubHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            result = self.run_poller(
+                service="postgres",
+                max_dispatches_per_service="3",
+                docker_hub_api_base=f"http://127.0.0.1:{server.server_port}/v2",
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join()
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("already published as a revision of 15.14.1.177", result.stdout)
+        self.assertIn("cooling down", result.stdout)
+        self.assertEqual(
+            self.trace.read_text(encoding="utf-8").splitlines(),
+            [
+                "workflow run service-release.yml --repo supabase/slim-services "
+                "--ref main -f service=postgres -f version=15.14.1.179",
+                "workflow run service-release.yml --repo supabase/slim-services "
+                "--ref main -f service=postgres -f version=17.6.1.177",
+                "workflow run service-release.yml --repo supabase/slim-services "
+                "--ref main -f service=postgres -f version=17.9.0.028-orioledb",
             ],
         )
 

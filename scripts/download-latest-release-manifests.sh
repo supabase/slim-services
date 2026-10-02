@@ -104,8 +104,20 @@ for service, config in services.items():
         continue
 
     candidates.sort(key=functools.cmp_to_key(newer))
-    latest = candidates[-1]
-    print(service, latest["tag"], latest["version"], sep="\t")
+    release_lines = config.get("release_lines") or [config]
+    for line in release_lines:
+        line_pattern = re.compile(line["tag_pattern"])
+        line_candidates = [
+            candidate for candidate in candidates if line_pattern.fullmatch(candidate["upstream"])
+        ]
+        if not line_candidates:
+            print(
+                f"no published release found for {service} line {line['tag_pattern']}",
+                file=sys.stderr,
+            )
+            continue
+        latest = line_candidates[-1]
+        print(service, latest["tag"], latest["version"], sep="\t")
 PY
 
 while IFS=$'\t' read -r service release_tag version; do
@@ -113,7 +125,7 @@ while IFS=$'\t' read -r service release_tag version; do
   printf 'downloading manifests for %s (%s)\n' "$service" "$release_tag"
   download_dir=""
   for attempt in 1 2 3 4; do
-    attempt_dir="$temp_dir/manifests/$service/$attempt"
+    attempt_dir="$temp_dir/manifests/$service/$version/$attempt"
     mkdir -p "$attempt_dir"
     if gh release download "$release_tag" \
       --repo "$TARGET_REPOSITORY" \
