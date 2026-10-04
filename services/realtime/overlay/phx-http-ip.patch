@@ -1,0 +1,56 @@
+diff --git a/config/runtime.exs b/config/runtime.exs
+index 8192fc9d..95de7263 100644
+--- a/config/runtime.exs
++++ b/config/runtime.exs
+@@ -123,6 +123,7 @@ metrics_token_blocklist = Env.get_list("METRICS_TOKEN_BLOCKLIST", [])
+ migration_partition_slots = Env.get_integer("MIGRATION_PARTITION_SLOTS", System.schedulers_online() * 2)
+ no_channel_timeout_in_ms = Env.get_integer("NO_CHANNEL_TIMEOUT_IN_MS", to_timeout(minute: 10))
+ node_balance_uptime_threshold_in_ms = Env.get_integer("NODE_BALANCE_UPTIME_THRESHOLD_IN_MS", to_timeout(minute: 5))
++phx_http_ip = System.get_env("PHX_HTTP_IP")
+ platform = if System.get_env("AWS_EXECUTION_ENV") == "AWS_ECS_FARGATE", do: :aws, else: :fly
+ postgres_cdc_scope_shards = Env.get_integer("POSTGRES_CDC_SCOPE_SHARDS", 5)
+ presence_broadcast_period_in_ms = Env.get_integer("PRESENCE_BROADCAST_PERIOD_IN_MS", 1_500)
+@@ -458,6 +459,34 @@ if config_env() == :prod do
+         end
+     end
+ 
++  # Defaults to the upstream wildcard bind (all interfaces) when unset, same as before
++  # PHX_HTTP_IP existed; set it to restrict the HTTP listener to one interface.
++  http_bind_ip =
++    case phx_http_ip do
++      nil ->
++        nil
++
++      value ->
++        case :inet.parse_address(String.to_charlist(value)) do
++          {:ok, address} ->
++            address
++
++          _ ->
++            raise """
++            Environment variable PHX_HTTP_IP is not a valid IP Address
++            """
++        end
++    end
++
++  # An explicit PHX_HTTP_IP pins the socket family to match the address; otherwise
++  # :ranch_tcp raises :badarg when it conflicts with the auto-detected realtime_ip_version.
++  realtime_ip_version =
++    case http_bind_ip do
++      nil -> realtime_ip_version
++      {_, _, _, _} -> :inet
++      _ -> :inet6
++    end
++
+   http_dynamic_buffer =
+     case {http_dynamic_buffer_min, http_dynamic_buffer_max} do
+       {nil, nil} -> []
+@@ -478,7 +507,7 @@ if config_env() == :prod do
+       transport_options: [
+         max_connections: Env.get_integer("MAX_CONNECTIONS", 1000),
+         num_acceptors: Env.get_integer("NUM_ACCEPTORS", 100),
+-        socket_opts: [realtime_ip_version]
++        socket_opts: [realtime_ip_version] ++ if(http_bind_ip, do: [ip: http_bind_ip], else: [])
+       ]
+     ],
+     check_origin: false,

@@ -227,6 +227,13 @@ let
       rustToolchain
     ];
 
+    # Teaches Logflare.Application to read LOGFLARE_GRPC_IP for the gRPC server (the HTTP
+    # endpoint already honours PHX_HTTP_IP); falls back to the upstream wildcard bind when
+    # unset.
+    postPatch = ''
+      patch -p1 < ${./grpc-bind-ip.patch}
+    '';
+
     preConfigure = ''
       # rustler_precompiled checks its cache before hitting the network;
       # seed it with the pinned NIF tarballs for this target (both basedir

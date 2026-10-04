@@ -140,8 +140,13 @@ let
     # Start the internal shard listeners before public listeners and the HTTP
     # endpoint. Tenant activation can query these listeners immediately after
     # the endpoint reports healthy.
+    #
+    # Teaches config/runtime.exs and Supavisor.Application to read SUPAVISOR_BIND_IP for the
+    # admin HTTP endpoint and every ranch proxy listener; falls back to the upstream wildcard
+    # bind when unset.
     postPatch = ''
       patch -p1 < ${../nix/startup-order.patch}
+      patch -p1 < ${../nix/bind-ip.patch}
     '';
 
     # bindgenHook wires libclang + the C standard header search paths that

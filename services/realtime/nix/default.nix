@@ -161,6 +161,11 @@ let
         echo "unsupported Realtime tenant migration implementation" >&2
         exit 1
       fi
+      # Teaches config/runtime.exs to read PHX_HTTP_IP for the main HTTP endpoint (the RPC
+      # listener already honours GEN_RPC_SOCKET_IP); falls back to the upstream wildcard bind
+      # when unset.
+      patch -p1 < ${../overlay/phx-http-ip.patch}
+
       helper=lib/realtime/one_shot_prepare.ex
       cp ${../overlay/one_shot_prepare.ex} "$helper"
       if ! grep -Fq 'gcm_encryption_backfill' priv/repo/seeds.exs; then
