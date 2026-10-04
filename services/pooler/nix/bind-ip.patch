@@ -1,0 +1,67 @@
+--- a/config/runtime.exs
++++ b/config/runtime.exs
+@@ -12,6 +12,21 @@
+   if System.get_env("SUPAVISOR_DB_IP_VERSION") == "ipv6",
+     do: [:inet6],
+     else: [:inet]
++
++# Defaults to the upstream wildcard bind (all interfaces) when unset; applied below to the admin
++# HTTP endpoint and, via the :proxy_bind_ip config key, to the proxy listeners in
++# Supavisor.Application.
++bind_ip =
++  case System.get_env("SUPAVISOR_BIND_IP") do
++    nil ->
++      nil
++
++    value ->
++      case :inet.parse_address(String.to_charlist(value)) do
++        {:ok, address} -> address
++        _ -> raise "SUPAVISOR_BIND_IP env var is invalid: #{inspect(value)}"
++      end
++  end
+ 
+ secret_key_base =
+   if config_env() in [:dev, :test] do
+@@ -40,7 +55,7 @@
+           end
+         end)
+         |> String.to_atom()
+-      ]
++      ] ++ if(bind_ip, do: [ip: bind_ip], else: [])
+     ]
+   ],
+   secret_key_base: secret_key_base
+@@ -230,6 +245,7 @@
+     proxy_port_session: System.get_env("PROXY_PORT_SESSION", "5432") |> String.to_integer(),
+     proxy_port: System.get_env("PROXY_PORT", "5412") |> String.to_integer(),
+     prom_poll_rate: System.get_env("PROM_POLL_RATE", "15000") |> String.to_integer(),
++    proxy_bind_ip: bind_ip,
+     global_upstream_ca: upstream_ca,
+     global_downstream_cert: downstream_cert,
+     global_downstream_key: downstream_key,
+--- a/lib/supavisor/application.ex
++++ b/lib/supavisor/application.ex
+@@ -68,6 +68,14 @@
+          Supavisor.ClientHandler}
+       ]
+ 
++    # Defaults to the upstream wildcard bind (all interfaces) when unset; see the
++    # :proxy_bind_ip config key set from SUPAVISOR_BIND_IP in config/runtime.exs.
++    proxy_bind_ip_opts =
++      case Application.get_env(:supavisor, :proxy_bind_ip) do
++        nil -> []
++        address -> [ip: address]
++      end
++
+     ranch_listeners =
+       for {key, port, opts, handler} <- proxy_ports do
+         :ranch.child_spec(
+@@ -80,7 +88,7 @@
+                 value -> String.to_integer(value)
+               end,
+             num_acceptors: String.to_integer(System.get_env("NUM_ACCEPTORS") || "100"),
+-            socket_opts: [port: port, keepalive: true]
++            socket_opts: [port: port, keepalive: true] ++ proxy_bind_ip_opts
+           },
+           handler,
+           opts

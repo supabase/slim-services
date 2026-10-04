@@ -1,0 +1,54 @@
+diff --git a/config/runtime.exs b/config/runtime.exs
+index d0b8ce8f0..c456e3635 100644
+--- a/config/runtime.exs
++++ b/config/runtime.exs
+@@ -339,8 +339,23 @@ if config_env() != :test do
+   config :logflare, :stripe_webhook_secret, System.get_env("STRIPE_WEBHOOK_SECRET")
+ end
+ 
++# Defaults to the upstream wildcard bind (all interfaces) when unset; applied to the gRPC
++# server's adapter_opts in Logflare.Application.
++logflare_grpc_ip =
++  case System.get_env("LOGFLARE_GRPC_IP") do
++    nil ->
++      nil
++
++    value ->
++      case :inet.parse_address(to_charlist(value)) do
++        {:ok, ip} -> ip
++        {:error, _} -> raise "Failed to parse IP address: #{value}"
++      end
++  end
++
+ if config_env() != :test do
+   config :grpc, port: System.get_env("LOGFLARE_GRPC_PORT", "50051") |> String.to_integer()
++  config :grpc, ip: logflare_grpc_ip
+ end
+ 
+ socket_options_for_url = fn
+diff --git a/lib/logflare/application.ex b/lib/logflare/application.ex
+index f69444eaf..6e5929860 100644
+--- a/lib/logflare/application.ex
++++ b/lib/logflare/application.ex
+@@ -92,6 +92,12 @@ defmodule Logflare.Application do
+     grpc_port = Application.get_env(:grpc, :port)
+     ssl = Application.get_env(:logflare, :ssl)
+     grpc_creds = if ssl, do: GRPC.Credential.new(ssl: ssl)
++    # Defaults to the upstream wildcard bind (all interfaces) when unset; see LOGFLARE_GRPC_IP.
++    grpc_adapter_opts =
++      case Application.get_env(:grpc, :ip) do
++        nil -> [cred: grpc_creds]
++        ip -> [cred: grpc_creds, ip: ip]
++      end
+     pool_size = Application.get_env(:logflare, Logflare.PubSub)[:pool_size]
+     read_replicas = Application.get_env(:logflare, :read_replicas, [])
+ 
+@@ -126,7 +132,7 @@ defmodule Logflare.Application do
+          endpoint: LogflareGrpc.Endpoint,
+          port: grpc_port,
+          start_server: true,
+-         adapter_opts: [cred: grpc_creds],
++         adapter_opts: grpc_adapter_opts,
+          exception_log_filter: {LogflareGrpc.ExceptionLogFilter, :emit_log?}},
+         # Monitor system level metrics
+         SystemMetricsSup,
