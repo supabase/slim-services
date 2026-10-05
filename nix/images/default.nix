@@ -369,6 +369,7 @@ let
               printf '%s\n' "unix_socket_directories = '/run/postgresql,/tmp'"
               printf '%s\n' "pgsodium.getkey_script = '/opt/postgres/share/supabase-cli/config/pgsodium_getkey.sh'"
               printf '%s\n' "vault.getkey_script = '/opt/postgres/share/supabase-cli/config/pgsodium_getkey.sh'"
+              printf '%s\n' "supautils.extension_custom_scripts_path = '/opt/postgres/share/supabase-cli/extension-custom-scripts'"
             } > "$out/etc/postgresql/postgresql.conf"
             ;;
           beam)
