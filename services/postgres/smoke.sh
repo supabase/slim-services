@@ -148,7 +148,7 @@ PY
   # build with Dockerfile-supabase's own edits; the image smoke exercises it
   # live, and here the server runs without the templates, so assert the
   # shipped files: the supautils allowlist, the docker.io preload set, the
-  # extension custom scripts, and the patched init script.
+  # extension custom scripts, and the patched init and getkey scripts.
   log "checking the bundled config is the shared docker.io recipe"
   cfg_dir="$artifact_rootfs/share/supabase-cli/config"
   template="$cfg_dir/postgresql.conf.template"
@@ -171,6 +171,10 @@ PY
     || fail "init script is missing the shared-config staging hook"
   grep -q -- "--pwfile=" "$init_script" \
     || fail "init script is missing the temporary bootstrap password file"
+  [[ "$(head -n 1 "$init_script")" == "#!/usr/bin/env bash" ]] \
+    || fail "init script is missing the #!/usr/bin/env bash shebang"
+  [[ "$(head -n 1 "$cfg_dir/pgsodium_getkey.sh")" == "#!/usr/bin/env bash" ]] \
+    || fail "getkey script is missing the #!/usr/bin/env bash shebang"
   preload_line="$(grep '^shared_preload_libraries' "$template" || true)"
   if [[ "$postgres_major" == "15" ]]; then
     [[ "$preload_line" == *timescaledb* ]] \

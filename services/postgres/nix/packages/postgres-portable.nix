@@ -295,6 +295,11 @@ let
       chmod +x $cfg/pgsodium_getkey.sh
       chmod +x $out/share/supabase-cli/bin/supabase-postgres-init.sh
 
+      # NixOS hosts have no /bin/bash; resolve bash from PATH instead.
+      substituteInPlace $cfg/pgsodium_getkey.sh \
+        $out/share/supabase-cli/bin/supabase-postgres-init.sh \
+        --replace-fail '#!/bin/bash' '#!/usr/bin/env bash'
+
       # Patch the init script (the pwfile replacement is anchored to the
       # pinned upstream script; locale arguments follow the selected
       # Dockerfile's feature-detected initdb contract):
