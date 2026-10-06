@@ -146,14 +146,12 @@ let
           ''
         else
           ''
-            pnpm --filter studio deploy --prod --legacy --ignore-scripts $TMPDIR/deploy
-            find $TMPDIR/deploy -mindepth 1 -maxdepth 1 \
-              ! -name node_modules ! -name package.json ! -name scripts \
-              ! -name instrument.server.mjs ! -name .env -exec rm -rf {} +
-            cp -R $TMPDIR/deploy/. $out/app/apps/studio/
-            cp -R apps/studio/dist $out/app/apps/studio/
-            printf "import('./scripts/serve.js')\n" > $out/app/apps/studio/server.js
-            (cd $out/app/apps/studio; node scripts/smoke-server.mjs)
+            # Mirror upstream's build-tanstack stage: Nitro's node-server
+            # output is self-contained, so no node_modules install ships.
+            cp -R apps/studio/.output $out/app/apps/studio/
+            cp apps/studio/package.json apps/studio/.env $out/app/apps/studio/
+            printf "process.loadEnvFile(new URL('.env', import.meta.url))\nawait import('./.output/server/index.mjs')\n" \
+              > $out/app/apps/studio/server.js
           ''
       }
       cp ${../../services/studio/overlay/docker-entrypoint.mjs} $out/app/apps/studio/docker-entrypoint.mjs
