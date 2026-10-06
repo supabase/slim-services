@@ -104,10 +104,19 @@ let
     # `next.config.ts`; backport it here so every source in the release
     # window builds. The script feature-detects sources that already carry
     # the exclusion and leaves them byte-identical.
-    postPatch = lib.optionalString (studioFramework == "next") ''
-      ${pkgs.python3}/bin/python3 ${../../services/studio/backport-sharp-exclusion.py} \
-        apps/studio/next.config.ts
-    '';
+    postPatch =
+      lib.optionalString (studioFramework == "next") ''
+        ${pkgs.python3}/bin/python3 ${../../services/studio/backport-sharp-exclusion.py} \
+          apps/studio/next.config.ts
+      ''
+      # TanStack: answer /api/* without loading the router chunk, every API
+      # module, Sentry or OTel, and serve documents from the prerendered SPA
+      # shell. The script generates the server entry from the source tree and
+      # exits non-zero if upstream's shape no longer matches.
+      + lib.optionalString (studioFramework == "tanstack") ''
+        ${pkgs.python3}/bin/python3 ${../../services/studio/tanstack-api-first.py} \
+          apps/studio
+      '';
     env = {
       NEXT_TELEMETRY_DISABLED = "1";
       TURBO_TELEMETRY_DISABLED = "1";
@@ -150,8 +159,11 @@ let
             # output is self-contained, so no node_modules install ships.
             cp -R apps/studio/.output $out/app/apps/studio/
             cp apps/studio/package.json apps/studio/.env $out/app/apps/studio/
-            printf "process.loadEnvFile(new URL('.env', import.meta.url))\nawait import('./.output/server/index.mjs')\n" \
-              > $out/app/apps/studio/server.js
+            # The patched server entry serves documents from this shell, so a
+            # build that did not prerender it must fail here, not at runtime.
+            test -f apps/studio/.output/public/_shell.html \
+              || { echo "Studio TanStack build produced no .output/public/_shell.html" >&2; exit 1; }
+            cp ${../../services/studio/tanstack-server.js} $out/app/apps/studio/server.js
           ''
       }
       cp ${../../services/studio/overlay/docker-entrypoint.mjs} $out/app/apps/studio/docker-entrypoint.mjs
