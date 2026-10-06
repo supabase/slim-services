@@ -94,7 +94,7 @@ case "$service" in
       manager_version="$(upstream_package_manager_version "$release_dir/source" npm)"
     elif [[ "$service" == studio ]]; then
       manager_version="$(upstream_package_manager_version "$release_dir/source" pnpm)"
-      framework="$(upstream_docker_arg "$node_source" STUDIO_FRAMEWORK)"
+      framework=tanstack # EXPERIMENT: force TanStack Start build
     fi
     python3 - "$release_dir/release.json" "$node_major" "$manager_version" "$framework" <<'PYMETA'
 import json, sys
