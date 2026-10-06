@@ -704,14 +704,15 @@ psql_admin "SELECT pg_drop_replication_slot('smoke_slot')" >/dev/null
 docker exec "$container" psql -h 127.0.0.1 -U postgres -d postgres -qAt -c "SELECT 1" >/dev/null \
   || fail "expected passwordless loopback (docker.io pg_hba parity)"
 
-# The extension custom scripts only run through supautils' non-superuser
-# escalation, so create these as postgres (exactly how the CLI does) and
-# assert the after-create grants the docker.io image applies.
+# supautils runs the extension custom scripts on every CREATE EXTENSION.
+# Create these as postgres (exactly how the CLI does) and assert the
+# after-create grants the docker.io image applies. postgres holds cron
+# schema USAGE without them, so check cron.alter_job.
 log "checking extension custom scripts run on CREATE EXTENSION (as postgres)"
 psql_postgres "CREATE EXTENSION pg_cron" >/dev/null \
   || { container_logs "$container"; fail "CREATE EXTENSION pg_cron as postgres failed"; }
-[[ "$(psql_admin "SELECT has_schema_privilege('postgres', 'cron', 'USAGE')")" == "t" ]] \
-  || fail "pg_cron after-create script did not grant cron schema usage to postgres"
+[[ "$(psql_admin "SELECT has_function_privilege('postgres', 'cron.alter_job(bigint,text,text,text,text,boolean)', 'EXECUTE')")" == "t" ]] \
+  || fail "pg_cron after-create script did not grant cron.alter_job to postgres"
 # supabase_vault (with pgsodium) is created BY the bundled migrations — as
 # superuser, identically on the docker.io image, so its post-create state is
 # parity-by-construction and the escalation path cannot be exercised with
