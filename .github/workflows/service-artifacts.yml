@@ -199,7 +199,7 @@ jobs:
 
       - name: Download planned external release snapshots
         if: needs.plan.outputs.external == 'true'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ${{ needs.plan.outputs.external_snapshot_artifact }}
           path: external-release
@@ -399,7 +399,7 @@ jobs:
           fetch-depth: 1
 
       - name: Download run manifests
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: ci-artifacts
 
