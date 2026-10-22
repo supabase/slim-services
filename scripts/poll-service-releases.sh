@@ -574,7 +574,7 @@ PY
           continue
           ;;
         *)
-          printf 'could not check upstream image %s for %s %s (%s); skipping this poll\n' \
+          printf '::warning::could not check upstream image %s for %s %s (%s); skipping this poll\n' \
             "$image_ref" "$service" "$version" "$image_error" >&2
           continue
           ;;

@@ -1108,7 +1108,7 @@ class ReleasePollerTest(unittest.TestCase):
         result = self.run_poller(service="storage", max_dispatches_per_service="1")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(
-            "could not check upstream image supabase/storage-api:v1.84.15 "
+            "::warning::could not check upstream image supabase/storage-api:v1.84.15 "
             "for storage v1.84.15",
             result.stderr,
         )
