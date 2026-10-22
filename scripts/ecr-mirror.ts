@@ -410,8 +410,22 @@ const checksumLayerDigest = (ctx: Context, service: string, digest: string): str
 };
 
 const objectDigest = (ctx: Context, url: string): string => {
-  const result = ctx.run(["curl", "-fsSL", "--retry", "2", url]);
-  if (!result.ok) return "";
+  const result = ctx.run([
+    "curl",
+    "-fsSL",
+    "--connect-timeout",
+    "10",
+    "--max-time",
+    "30",
+    "--retry",
+    "3",
+    "--retry-connrefused",
+    url,
+  ]);
+  if (!result.ok) {
+    log(`curl failed for ${url}: ${result.stderr.trim().split("\n").pop() ?? ""}`);
+    return "";
+  }
   return `sha256:${new Bun.CryptoHasher("sha256").update(result.stdout).digest("hex")}`;
 };
 
@@ -448,11 +462,13 @@ const releaseChecks = (
   return checks;
 };
 
+const logInSync = (check: MirrorCheck): void => log(`in sync${KIND_LABEL[check.kind]}: ${check.name} (${check.expected})`);
+
 const inSync = (check: MirrorCheck): boolean => {
   const live = check.live();
   const label = KIND_LABEL[check.kind];
   if (check.expected !== "" && live === check.expected) {
-    log(`in sync${label}: ${check.name} (${check.expected})`);
+    logInSync(check);
     return true;
   }
   log(`out of sync${label}: ${check.name} (expected ${check.expected || "unknown"}, got ${live || "none"})`);
@@ -470,14 +486,26 @@ const required = (ctx: Context, check: MirrorCheck): boolean => check.kind !== "
  */
 const settle = async (ctx: Context, checks: ReadonlyArray<MirrorCheck>): Promise<ReadonlyArray<MirrorCheck>> => {
   const deadline = Date.now() + ctx.timeoutSec * 1000;
+  const converged = new Set<MirrorCheck>();
   let waiting = checks.filter((check) => required(ctx, check));
   for (;;) {
-    waiting = waiting.filter((check) => check.expected !== "" && check.live() !== check.expected);
+    waiting = waiting.filter((check) => {
+      if (check.expected === "") return false;
+      if (check.live() !== check.expected) return true;
+      converged.add(check);
+      return false;
+    });
     if (waiting.length === 0 || Date.now() >= deadline) break;
     log(`waiting for ${waiting.map((check) => `${check.name}${KIND_LABEL[check.kind]}`).join(", ")}`);
     await Bun.sleep(ctx.pollSec * 1000);
   }
-  return checks.filter((check) => !inSync(check));
+  // A check already seen in sync is not read again: a transient failure on the
+  // confirmation read must not turn a converged release into a missing one.
+  return checks.filter((check) => {
+    if (!converged.has(check)) return !inSync(check);
+    logInSync(check);
+    return false;
+  });
 };
 
 const dispatch = (

@@ -69,7 +69,17 @@ let
       }
     else
       throw "runtime definitions do not provide OTP ${otpGeneration} required by Realtime's upstream Dockerfile";
-  beamPackages = pkgs.beam.packagesWith erlang;
+  baseBeamPackages = pkgs.beam.packagesWith erlang;
+  beamPackages = baseBeamPackages.extend (
+    _final: previous: {
+      # Rebar's package-level Common Test suite is unrelated to the service
+      # artifact and has a known temp-directory collision when CI builds several
+      # BEAM targets concurrently. Service compilation and smoke tests stay on.
+      rebar3 = previous.rebar3.overrideAttrs (_: {
+        doCheck = false;
+      });
+    }
+  );
   elixir =
     if builtins.pathExists elixirDefinition then
       beamPackages.callPackage elixirDefinition {
