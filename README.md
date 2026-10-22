@@ -391,8 +391,15 @@ reconciles every matching stable upstream release from that adoption boundary
 onward. It dispatches at most three versions per service per poll while keeping
 no more than twelve release workflows active across the repository. Active
 versions and versions attempted unsuccessfully within the previous six hours
-are skipped without blocking later missing versions. Studio's recipe backports
-upstream's self-hosted `sharp` exclusion
+are skipped without blocking later missing versions. Services whose build
+needs the upstream image (Storage, PostgreSQL, Edge Runtime) also wait for it:
+the poller resolves the recipe's `UPSTREAM_IMAGE` index digest the way the build
+does, logs `<service> <version>: waiting for upstream image <ref>` when the
+registry reports it missing (upstream never published some tags), and
+dispatches the version on a later poll once the image exists. A waiting tag
+uses no dispatch or active-release slot, and a registry error other than
+not-found skips that tag for the poll with a logged message. Studio's recipe
+backports upstream's self-hosted `sharp` exclusion
 ([supabase/supabase#50658](https://github.com/supabase/supabase/pull/50658))
 into sources that lack it, so every tag in the release window builds; see
 [Studio report](services/studio/REPORT.md). The cooldown starts from

@@ -269,6 +269,41 @@ print("eligible")
 PY
 }
 
+# Identity services build against their upstream image, so a tag whose image
+# is not published yet cannot build. Resolve the image reference and its index
+# digest exactly as the build does (the recipe's UPSTREAM_IMAGE for VERSION,
+# then resolve_image_index_digest), and print "present", "missing", or
+# "unknown" (a registry error that is not a definitive not-found) followed by
+# the image and any error text.
+upstream_image_state() {
+  local svc="$1"
+  local version="$2"
+  local image error
+  if ! image="$(
+    VERSION="$version" bash -c \
+      'source "$1/scripts/lib.sh" && load_recipe "$2" && printf "%s" "${UPSTREAM_IMAGE%%@*}"' \
+      _ "$ROOT_DIR" "$svc" 2>&1
+  )"; then
+    printf 'unknown\t-\t%s\n' "$image"
+    return 0
+  fi
+  if error="$(
+    bash -c 'source "$1/scripts/lib.sh" && resolve_image_index_digest "$2"' \
+      _ "$ROOT_DIR" "$image" 2>&1 >/dev/null
+  )"; then
+    printf 'present\t%s\t\n' "$image"
+  elif [[ "$error" == *": not found"* ]]; then
+    printf 'missing\t%s\t\n' "$image"
+  else
+    printf 'unknown\t%s\t%s\n' "$image" "${error//$'\n'/ }"
+  fi
+}
+
+# Same set as identity_service in scripts/lib.sh.
+is_identity_service() {
+  bash -c 'source "$1/scripts/lib.sh" && identity_service "$2"' _ "$ROOT_DIR" "$1"
+}
+
 published_release_tags="$(
   gh api --paginate "repos/$TARGET_REPOSITORY/releases?per_page=100" \
     --jq '.[] | select(.draft | not) | .tag_name'
@@ -519,6 +554,31 @@ PY
       printf 'global active release limit %s reached; not dispatching more releases\n' \
         "$POLL_MAX_ACTIVE_RELEASES"
       break
+    fi
+
+    # A tag without its upstream image is waiting, not failing: it costs
+    # neither a dispatch slot nor an active-release slot and is picked up by
+    # a later poll once the image exists.
+    if is_identity_service "$service"; then
+      command -v docker >/dev/null 2>&1 || {
+        printf 'required command not found: docker\n' >&2
+        exit 1
+      }
+      IFS=$'\t' read -r image_state image_ref image_error \
+        <<< "$(upstream_image_state "$service" "$version")"
+      case "$image_state" in
+        present) ;;
+        missing)
+          printf '%s %s: waiting for upstream image %s\n' \
+            "$service" "$version" "$image_ref"
+          continue
+          ;;
+        *)
+          printf 'could not check upstream image %s for %s %s (%s); skipping this poll\n' \
+            "$image_ref" "$service" "$version" "$image_error" >&2
+          continue
+          ;;
+      esac
     fi
 
     if [[ "$POLL_DRY_RUN" == "1" ]]; then

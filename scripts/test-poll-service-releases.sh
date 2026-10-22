@@ -119,6 +119,27 @@ class ReleasePollerTest(unittest.TestCase):
             encoding="utf-8",
         )
         fake_gh.chmod(0o755)
+        # Fake registry: `docker buildx imagetools inspect <ref>` is what
+        # resolve_image_index_digest runs. Refs listed in `missing-images`
+        # report the registry's definitive not-found; refs in
+        # `transient-images` fail like a network or rate-limit error.
+        self.docker_trace = self.directory / "docker-trace"
+        self.missing_images = self.directory / "missing-images"
+        self.missing_images.write_text("", encoding="utf-8")
+        self.transient_images = self.directory / "transient-images"
+        self.transient_images.write_text("", encoding="utf-8")
+        fake_docker = self.fake_bin / "docker"
+        fake_docker.write_text(
+            "#!/bin/sh\n"
+            "set -eu\n"
+            "[ \"$1 $2 $3\" = 'buildx imagetools inspect' ] || { printf 'unexpected docker invocation: %s\\n' \"$*\" >&2; exit 2; }\n"
+            "printf '%s\\n' \"$4\" >> \"$FAKE_DOCKER_TRACE\"\n"
+            "if grep -Fqx \"$4\" \"$FAKE_MISSING_IMAGES\"; then printf 'ERROR: docker.io/%s: not found\\n' \"$4\" >&2; exit 1; fi\n"
+            "if grep -Fqx \"$4\" \"$FAKE_TRANSIENT_IMAGES\"; then printf 'ERROR: failed to do request: Head https://registry-1.docker.io/v2/: 429 Too Many Requests\\n' >&2; exit 1; fi\n"
+            "printf '{\"digest\":\"sha256:%064d\"}\\n' 1\n",
+            encoding="utf-8",
+        )
+        fake_docker.chmod(0o755)
         compose = (
             "services:\n"
             "  imgproxy:\n"
@@ -151,6 +172,9 @@ class ReleasePollerTest(unittest.TestCase):
             "FAKE_COMPOSE_CONTENT": self.compose_content,
             "FAKE_COMPOSE_FAILURE": "1" if compose_failure else "0",
             "FAKE_API_TRACE": str(self.api_trace),
+            "FAKE_DOCKER_TRACE": str(self.docker_trace),
+            "FAKE_MISSING_IMAGES": str(self.missing_images),
+            "FAKE_TRANSIENT_IMAGES": str(self.transient_images),
         }
         if max_dispatches_per_service is not None:
             environment["POLL_MAX_DISPATCHES_PER_SERVICE"] = str(
@@ -1010,6 +1034,177 @@ class ReleasePollerTest(unittest.TestCase):
         self.assertFalse(self.trace.exists())
         self.assertIn("matched 2 release lines", result.stderr)
 
+
+    def configure_storage(self):
+        self.config.write_text(
+            json.dumps(
+                {
+                    "services": {
+                        "storage": {
+                            "repository": "supabase/storage",
+                            "tag_pattern": r"^v[0-9]+\.[0-9]+\.[0-9]+$",
+                            "release_floor": "v1.84.15",
+                            "poll": True,
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        self.upstream_releases.write_text(
+            "v1.84.18\nv1.84.17\nv1.84.16\nv1.84.15\n", encoding="utf-8"
+        )
+
+    def test_identity_service_waits_for_missing_upstream_image(self):
+        self.configure_storage()
+        self.missing_images.write_text(
+            "supabase/storage-api:v1.84.16\nsupabase/storage-api:v1.84.18\n",
+            encoding="utf-8",
+        )
+        result = self.run_poller(service="storage", max_dispatches_per_service="2")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(
+            "storage v1.84.16: waiting for upstream image supabase/storage-api:v1.84.16",
+            result.stdout,
+        )
+        # The cap is reached before v1.84.18, so it is not even checked.
+        self.assertNotIn(
+            "supabase/storage-api:v1.84.18",
+            self.docker_trace.read_text(encoding="utf-8"),
+        )
+        # Waiting tags cost no dispatch slot: both slots go to present images.
+        self.assertEqual(
+            self.trace.read_text(encoding="utf-8").splitlines(),
+            [
+                "workflow run service-release.yml --repo supabase/slim-services "
+                "--ref main -f service=storage -f version=v1.84.15",
+                "workflow run service-release.yml --repo supabase/slim-services "
+                "--ref main -f service=storage -f version=v1.84.17",
+            ],
+        )
+
+    def test_identity_service_dispatches_when_upstream_image_exists(self):
+        self.configure_storage()
+        result = self.run_poller(service="storage", max_dispatches_per_service="1")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("waiting for upstream image", result.stdout)
+        self.assertEqual(
+            self.trace.read_text(encoding="utf-8").splitlines(),
+            [
+                "workflow run service-release.yml --repo supabase/slim-services "
+                "--ref main -f service=storage -f version=v1.84.15"
+            ],
+        )
+        self.assertEqual(
+            self.docker_trace.read_text(encoding="utf-8").splitlines(),
+            ["supabase/storage-api:v1.84.15"],
+        )
+
+    def test_identity_service_skips_the_poll_on_transient_registry_error(self):
+        self.configure_storage()
+        self.transient_images.write_text(
+            "supabase/storage-api:v1.84.15\n", encoding="utf-8"
+        )
+        result = self.run_poller(service="storage", max_dispatches_per_service="1")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(
+            "could not check upstream image supabase/storage-api:v1.84.15 "
+            "for storage v1.84.15",
+            result.stderr,
+        )
+        self.assertIn("429 Too Many Requests", result.stderr)
+        self.assertNotIn("waiting for upstream image", result.stdout)
+        # The failed check is not a dispatch: the next tag still goes out.
+        self.assertEqual(
+            self.trace.read_text(encoding="utf-8").splitlines(),
+            [
+                "workflow run service-release.yml --repo supabase/slim-services "
+                "--ref main -f service=storage -f version=v1.84.16"
+            ],
+        )
+
+    def test_identity_image_check_skips_filtered_tags_and_non_identity_services(self):
+        self.configure_storage()
+        self.published.write_text(
+            published_jsonl_from_lines("storage-v1.84.15-r0\n"), encoding="utf-8"
+        )
+        result = self.run_poller(service="storage", max_dispatches_per_service="1")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            self.docker_trace.read_text(encoding="utf-8").splitlines(),
+            ["supabase/storage-api:v1.84.16"],
+        )
+
+        self.docker_trace.unlink()
+        result = self.run_poller(service="realtime", max_dispatches_per_service="1")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(self.docker_trace.exists())
+
+    def test_postgres_waits_for_missing_orioledb_image(self):
+        production_config = json.loads(
+            (ROOT / ".github" / "service-release-sources.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.config.write_text(
+            json.dumps(
+                {"services": {"postgres": production_config["services"]["postgres"]}}
+            ),
+            encoding="utf-8",
+        )
+        self.published.write_text(
+            published_jsonl_from_lines(
+                "postgres-15.14.1.177-r0\npostgres-17.6.1.177-r0\n"
+            ),
+            encoding="utf-8",
+        )
+        self.missing_images.write_text(
+            "supabase/postgres:17.9.0.028-orioledb\n", encoding="utf-8"
+        )
+
+        class DockerHubHandler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                body = json.dumps(
+                    {
+                        "count": 3,
+                        "next": None,
+                        "previous": None,
+                        "results": [
+                            {"name": "15.14.1.177"},
+                            {"name": "17.6.1.177"},
+                            {"name": "17.9.0.028-orioledb"},
+                        ],
+                    }
+                ).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *_args):
+                pass
+
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), DockerHubHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            result = self.run_poller(
+                service="postgres",
+                docker_hub_api_base=f"http://127.0.0.1:{server.server_port}/v2",
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join()
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(
+            "postgres 17.9.0.028-orioledb: waiting for upstream image "
+            "supabase/postgres:17.9.0.028-orioledb",
+            result.stdout,
+        )
+        self.assertFalse(self.trace.exists())
 
 if __name__ == "__main__":
     unittest.main()
