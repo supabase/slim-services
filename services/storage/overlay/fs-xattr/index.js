@@ -201,7 +201,11 @@ async function rename(from, to) {
     writeValues(target, replaced)
     throw error
   }
-  fs.rmSync(source.path, { force: true })
+  // The object is already published; sweepSidecars removes a leftover source
+  // sidecar once its file is gone, so this failure must not fail the rename.
+  try {
+    fs.rmSync(source.path, { force: true })
+  } catch {}
 }
 
 // Storage reaches rename through the shared node:fs/promises module object, which
