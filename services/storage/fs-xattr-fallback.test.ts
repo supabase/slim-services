@@ -9,6 +9,7 @@ import {
   utimesSync,
   writeFileSync,
 } from "node:fs";
+import fsp from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
@@ -179,6 +180,89 @@ describe("fs-xattr sidecar fallback", () => {
     expect(await xattr.listAttributes(object)).toEqual([ATTR]);
     await xattr.removeAttribute(object, ATTR);
     await expect(xattr.getAttribute(object, ATTR)).rejects.toMatchObject({ code: MISSING_CODE });
+  });
+});
+
+describe("rename", () => {
+  // Storage stages an upload at a temporary path, then renames it into place
+  // through node:fs/promises, which the wrapper patches on load.
+  const staged = join(object, "..", ".0f3c.tmp");
+  const attr = (file: string, name = ATTR) => xattr.getAttributeSync(file, name).toString();
+
+  beforeEach(() => {
+    writeFileSync(staged, "staged");
+  });
+
+  test("moves the sidecar with its file on ENOTSUP", async () => {
+    fake.supported = false;
+    rmSync(object);
+    xattr.setAttributeSync(staged, ATTR, "text/plain");
+    xattr.setAttributeSync(staged, "user.supabase.cache-control", "max-age=60");
+
+    await fsp.rename(staged, object);
+
+    expect(attr(object)).toBe("text/plain");
+    expect(xattr.listAttributesSync(object).sort()).toEqual([
+      "user.supabase.cache-control",
+      ATTR,
+    ]);
+    expect(codeOf(() => xattr.getAttributeSync(staged, ATTR))).toBe("ENOENT");
+    expect(sidecarFiles()).toHaveLength(1);
+    expect(JSON.parse(readFileSync(sidecarFiles()[0]!, "utf8")).path).toBe("stub/bucket/key/version");
+  });
+
+  test("replaces the target's attributes with the source's", async () => {
+    fake.supported = false;
+    xattr.setAttributeSync(object, ATTR, "image/png");
+    xattr.setAttributeSync(object, "user.supabase.etag", "old");
+    xattr.setAttributeSync(staged, ATTR, "text/plain");
+
+    await fsp.rename(staged, object);
+
+    expect(attr(object)).toBe("text/plain");
+    expect(xattr.listAttributesSync(object)).toEqual([ATTR]);
+    expect(sidecarFiles()).toHaveLength(1);
+  });
+
+  test("drops the target's sidecar when the source has none", async () => {
+    fake.supported = false;
+    xattr.setAttributeSync(object, ATTR, "image/png");
+
+    await fsp.rename(staged, object);
+
+    expect(xattr.listAttributesSync(object)).toEqual([]);
+    expect(sidecarFiles()).toEqual([]);
+  });
+
+  test("keeps the target's attributes when the rename fails", async () => {
+    fake.supported = false;
+    xattr.setAttributeSync(object, ATTR, "image/png");
+    rmSync(staged);
+
+    await expect(fsp.rename(staged, object)).rejects.toMatchObject({ code: "ENOENT" });
+
+    expect(attr(object)).toBe("image/png");
+    expect(sidecarFiles()).toHaveLength(1);
+  });
+
+  test("renaming a file onto itself keeps its sidecar", async () => {
+    fake.supported = false;
+    xattr.setAttributeSync(object, ATTR, "text/plain");
+
+    await fsp.rename(object, object);
+
+    expect(attr(object)).toBe("text/plain");
+  });
+
+  test("leaves renames without sidecars to the filesystem", async () => {
+    xattr.setAttributeSync(staged, ATTR, "text/plain");
+    const outside = join(temp, "outside-target");
+
+    await fsp.rename(staged, object);
+    await fsp.rename(object, outside);
+
+    expect(readFileSync(outside, "utf8")).toBe("staged");
+    expect(existsSync(sidecarDir)).toBe(false);
   });
 });
 
