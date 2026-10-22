@@ -5,6 +5,7 @@
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import fsp from 'node:fs/promises'
+import { syncBuiltinESMExports } from 'node:module'
 import path from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import * as native from './native/index.js'
@@ -173,6 +174,44 @@ export const getAttribute = async (file, attr) => getAttributeSync(file, attr)
 export const setAttribute = async (file, attr, value) => setAttributeSync(file, attr, value)
 export const removeAttribute = async (file, attr) => removeAttributeSync(file, attr)
 export const listAttributes = async (file) => listAttributesSync(file)
+
+// Native attributes travel with the inode on rename; a sidecar is keyed by path,
+// so it must be moved explicitly. Storage stages an upload at `.<uuid>.tmp`,
+// sets its metadata, then renames it into place. The target sidecar is written
+// before the rename, so readers never see the published object without it.
+const nativeRename = fsp.rename
+
+async function rename(from, to) {
+  // The hook is process-wide; Storage passes string paths, other callers may not.
+  if (typeof from !== 'string' || typeof to !== 'string') return nativeRename(from, to)
+  const source = sidecarPath(from)
+  const target = sidecarPath(to)
+  const tracked =
+    source !== undefined &&
+    target !== undefined &&
+    source.path !== target.path &&
+    (fs.existsSync(source.path) || fs.existsSync(target.path))
+  if (!tracked) return nativeRename(from, to)
+  // The rename replaces the destination along with its attributes.
+  const replaced = readValues(target)
+  writeValues(target, readValues(source))
+  try {
+    await nativeRename(from, to)
+  } catch (error) {
+    writeValues(target, replaced)
+    throw error
+  }
+  // The object is already published; sweepSidecars removes a leftover source
+  // sidecar once its file is gone, so this failure must not fail the rename.
+  try {
+    fs.rmSync(source.path, { force: true })
+  } catch {}
+}
+
+// Storage reaches rename through the shared node:fs/promises module object, which
+// CommonJS and ESM importers both see once the builtin exports are synced.
+fsp.rename = rename
+syncBuiltinESMExports()
 
 const exists = (file) =>
   fsp.stat(file).then(
