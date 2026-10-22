@@ -556,6 +556,52 @@ exit 1
     expect(result.stderr.toString()).not.toContain("release image(s)");
   });
 
+  test("does not re-read a check that was already seen in sync", () => {
+    const stub = mkdtempSync(join(tmpdir(), "ecr-converged-"));
+    const calls = join(stub, "curl.count");
+    writeStub(
+      stub,
+      "gh",
+      `#!/bin/sh
+case "$*" in *dispatches*) cat >/dev/null; exit 0 ;; esac
+cat <<'EOF'
+[[{"tag_name":"postgres-15.14.1.159-r0","draft":false,"prerelease":false}]]
+EOF
+`,
+    );
+    writeStub(
+      stub,
+      "regctl",
+      `#!/bin/sh
+if [ "$1" = manifest ] && [ "$2" = head ]; then printf "%s\\n" "${DIGEST}"; exit 0; fi
+${NATIVE_MANIFEST_GET}
+if [ "$1" = image ] && [ "$2" = digest ]; then printf "%s\\n" "${DIGEST}"; exit 0; fi
+exit 1
+`,
+    );
+    // Each S3 object is served exactly once; any further read stalls out and fails.
+    writeStub(
+      stub,
+      "curl",
+      `#!/bin/sh
+n=0; [ -f '${calls}' ] && n=$(cat '${calls}')
+n=$((n + 1)); printf "%s\\n" "$n" > '${calls}'
+if [ "$n" -le ${NATIVE_TARGETS.length} ]; then printf "%s" "${SUMS}"; exit 0; fi
+echo "curl: (28) Operation timed out" >&2; exit 28
+`,
+    );
+    const result = run(["sync", "--request"], {
+      PATH: `${stub}:/usr/bin:/bin`,
+      S3_MIRROR_BASE_URL: "https://s3.example.invalid",
+      MIRROR_DISPATCH_TOKEN: "token",
+      ECR_MIRROR_POLL_INTERVAL: "0",
+      ECR_MIRROR_TIMEOUT: "5",
+    });
+    expect(result.exitCode, result.stderr.toString() + result.stdout.toString()).toBe(0);
+    expect(result.stderr.toString()).not.toContain("missing");
+    expect(readFileSync(calls, "utf8").trim()).toBe(String(NATIVE_TARGETS.length));
+  });
+
   test("--request dispatches every release before waiting when ECR Public never converges", () => {
     const stub = mkdtempSync(join(tmpdir(), "ecr-outage-"));
     const dispatches = join(stub, "dispatches");

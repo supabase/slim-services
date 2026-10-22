@@ -436,6 +436,13 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Every fetch ends by detaching `git maintenance run --auto`, which can
+          # rewrite the shallow submodule's .git/shallow while the tag fetch below
+          # runs ("shallow file has changed since we read it"). Global config also
+          # reaches the submodule's own clone and fetch on this ephemeral runner.
+          git config --global maintenance.auto false
+          git config --global gc.auto 0
+
           source_dir="$(bash -c '
             source scripts/lib.sh
             load_recipe "$SERVICE" >/dev/null
