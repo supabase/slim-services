@@ -3,6 +3,7 @@
   lib ? pkgs.lib,
   upstream,
   postgresqlPackages ? pkgs,
+  rustBin ? throw "postgres package set requires rust-bin",
   portablePostgres ? throw "postgres package set requires portable-postgres helpers",
   nixpkgsRevision ? null,
 }:
@@ -188,6 +189,12 @@ let
         in
         pkgs
         // {
+          # Tags before 15.19.0.007/17.11.0.007 put these into pkgs through
+          # upstream's nixpkgs overlay; later tags pass them to extensions
+          # explicitly.
+          rust-bin = pkgs.rust-bin or rustBin;
+          supabase-groonga = pkgs.supabase-groonga or postgresqlPackages.supabase-groonga;
+          mecab-naist-jdic = pkgs.mecab-naist-jdic or postgresqlPackages.mecab-naist-jdic;
           inherit fetchCrate makeRustPlatform;
           callPackage = lib.callPackageWith packageScope;
           callPackages = lib.callPackagesWith packageScope;

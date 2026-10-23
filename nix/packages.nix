@@ -231,6 +231,7 @@ let
         pkgs = postgresPkgs;
         upstream = requireReleaseSource;
         postgresqlPackages = upstream.packages.${system};
+        rustBin = upstream.inputs.rust-overlay.lib.mkRustBin { } postgresPkgs;
         portablePostgres = ./portable-postgres;
         nixpkgsRevision = if hasPostgresNixpkgs then upstream.inputs.nixpkgs.rev else nixpkgs.rev or null;
       };
