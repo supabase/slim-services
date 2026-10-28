@@ -180,9 +180,15 @@ let
         -e "s/db_user_namespace = off/#db_user_namespace = off/g" \
         $conf
       # Dockerfile-17 and Dockerfile-orioledb-17 remove extensions incompatible
-      # with that engine. PG15 retains the source tree's TimescaleDB/plv8 preload values.
+      # with that engine and enable summarize_wal (a no-op for sources whose
+      # config predates the commented-out summarize_wal line). PG15 retains the
+      # source tree's TimescaleDB/plv8 preload values.
       if [ "${postgres_major}" = "17" ] || [ "${postgres_major}" = "orioledb-17" ]; then
-        sed -i -e "s/ timescaledb,//g" -e "s/ plv8,//g" $conf
+        sed -i \
+          -e "s/ timescaledb,//g" \
+          -e "s/ plv8,//g" \
+          -e "s/^#summarize_wal = off/summarize_wal = on/" \
+          $conf
       fi
       if [ "${postgres_major}" = "orioledb-17" ]; then
         ${

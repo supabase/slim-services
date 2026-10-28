@@ -1,31 +1,29 @@
 diff --git a/config/runtime.exs b/config/runtime.exs
-index d0b8ce8f0..c456e3635 100644
 --- a/config/runtime.exs
 +++ b/config/runtime.exs
-@@ -339,8 +339,23 @@ if config_env() != :test do
-   config :logflare, :stripe_webhook_secret, System.get_env("STRIPE_WEBHOOK_SECRET")
- end
- 
+@@ -369,6 +369,22 @@
+          api_key: System.get_env("STRIPE_API_KEY"),
+          publishable_key: System.get_env("STRIPE_PUBLISHABLE_KEY")
+        )
++
 +# Defaults to the upstream wildcard bind (all interfaces) when unset; applied to the gRPC
-+# server's adapter_opts in Logflare.Application.
-+logflare_grpc_ip =
++# server's adapter_opts in Logflare.Application. Kept apart from the upstream
++# `config :grpc, port: ...` block so the hunk survives changes to that line.
++if config_env() != :test do
 +  case System.get_env("LOGFLARE_GRPC_IP") do
 +    nil ->
-+      nil
++      :ok
 +
 +    value ->
 +      case :inet.parse_address(to_charlist(value)) do
-+        {:ok, ip} -> ip
++        {:ok, ip} -> config :grpc, ip: ip
 +        {:error, _} -> raise "Failed to parse IP address: #{value}"
 +      end
 +  end
-+
- if config_env() != :test do
-   config :grpc, port: System.get_env("LOGFLARE_GRPC_PORT", "50051") |> String.to_integer()
-+  config :grpc, ip: logflare_grpc_ip
- end
++end
  
- socket_options_for_url = fn
+ if config_env() != :test do
+   config :logflare, :stripe_webhook_secret, System.get_env("STRIPE_WEBHOOK_SECRET")
 diff --git a/lib/logflare/application.ex b/lib/logflare/application.ex
 index f69444eaf..6e5929860 100644
 --- a/lib/logflare/application.ex
