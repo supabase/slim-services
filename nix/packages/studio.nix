@@ -6,16 +6,13 @@
   nodeMajor,
   pnpmVersion,
   studioFramework,
-  runtimeNixpkgsSrc,
+  # The pinned runtime package set owns the pnpm 11 store helper; the service
+  # build toolchain stays on `pkgs`, the set that owns the selected Node major.
+  runtimePkgs,
 }:
 let
   inherit (pkgs) lib;
   nodejs = pkgs."nodejs_${toString nodeMajor}";
-  # The pinned runtime package set owns the pnpm 11 store helper; keep the
-  # service build toolchain on the shared package set and its Node floor.
-  runtimePkgs = import runtimeNixpkgsSrc {
-    system = pkgs.stdenv.hostPlatform.system;
-  };
   pnpm = import ./npm-tool.nix {
     inherit pkgs nodejs;
     name = "pnpm";
