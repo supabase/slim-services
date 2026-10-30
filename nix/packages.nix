@@ -58,6 +58,9 @@ let
         overlays = [ (import rust-overlay) ];
       };
       inherit (pkgs) lib;
+      runtimePkgs = import runtime-nixpkgs { inherit system; };
+      nodeMajor = releaseData.nodeMajor or 24;
+      nodePkgs = import ./portable-node/package-set.nix { inherit pkgs runtimePkgs nodeMajor; };
       runtimeEnvFile = "${toString ../services}/${releaseService}/runtime.env";
       useRuntimeProfile = lib.elem releaseService runtimeProfileServices;
       runtimeEnvAssignments =
@@ -130,29 +133,29 @@ let
         hashes = releaseHashes;
       };
       pgmetaSet = import ./packages/pgmeta.nix {
-        inherit pkgs;
+        pkgs = nodePkgs;
+        inherit nodeMajor;
         src = requireReleaseSource;
         version = releaseVersion;
         hashes = releaseHashes;
-        nodeMajor = releaseData.nodeMajor or 24;
       };
       storageSet = import ./packages/storage.nix {
-        inherit pkgs;
+        pkgs = nodePkgs;
+        inherit nodeMajor;
         src = requireReleaseSource;
         version = releaseVersion;
         hashes = releaseHashes;
-        nodeMajor = releaseData.nodeMajor or 24;
         npmVersion = releaseData.npmVersion or (throw "storage release requires npmVersion");
       };
       studioSet = import ./packages/studio.nix {
-        inherit pkgs;
+        pkgs = nodePkgs;
+        inherit nodeMajor;
         src = requireReleaseSource;
         version = releaseVersion;
         hashes = releaseHashes;
-        nodeMajor = releaseData.nodeMajor or 24;
         pnpmVersion = releaseData.pnpmVersion or (throw "studio release requires pnpmVersion");
         studioFramework = releaseData.studioFramework or (throw "studio release requires studioFramework");
-        runtimeNixpkgsSrc = runtime-nixpkgs;
+        inherit runtimePkgs;
       };
       postgrestSet = import ./packages/postgrest.nix {
         inherit pkgs;
@@ -250,8 +253,10 @@ let
             psql_17_cli = if postgresMajor == "17" then postgresPackages.legacyPackages.psql_17_cli else null;
             postgres_major = postgresMajor;
           };
-      nodeMajor = releaseData.nodeMajor or 24;
-      portableNode = import ./portable-node/default.nix { inherit pkgs nodeMajor; };
+      portableNode = import ./portable-node/default.nix {
+        pkgs = nodePkgs;
+        inherit nodeMajor;
+      };
       archive =
         if hasReleaseRootfs then
           import ./archive.nix {
