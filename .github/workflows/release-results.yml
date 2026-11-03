@@ -87,17 +87,12 @@ jobs:
           if [ -n "$pr_number" ]; then
             echo "updating existing refresh PR #$pr_number"
             gh pr edit "$pr_number" --body "$body"
-            pr_url="$(gh pr view "$pr_number" --json url --jq '.url')"
           else
-            pr_url="$(gh pr create \
+            # bot-pr-auto-merge.yml approves this PR and queues it to merge
+            # once its repository checks pass.
+            gh pr create \
               --base "$base" \
               --head "$branch" \
               --title "docs: refresh published release results" \
-              --body "$body")"
-          fi
-
-          # Auto-merge requires the repository setting "Allow auto-merge";
-          # when it is off, keep the run green and leave the PR open.
-          if ! gh pr merge "$pr_url" --auto --squash --delete-branch; then
-            echo "::notice::auto-merge is not enabled for this repository; leaving $pr_url open for manual merge"
+              --body "$body"
           fi

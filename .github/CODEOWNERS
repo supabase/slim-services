@@ -1,1 +1,5 @@
 * @supabase/cli
+
+# Bot-refreshed release tables. Either owner satisfies code-owner review;
+# `supabase-oss` approves only the refresh PR, through bot-pr-auto-merge.yml.
+/README.md @supabase/cli @supabase-oss

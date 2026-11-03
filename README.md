@@ -468,13 +468,17 @@ existed has nothing to copy: since revisions are immutable, dispatch a hotfix
 natives, rather than rebuilding the old one. See
 `docs/design/ecr-mirror-dispatch.md`.
 
-After a successful release run, `.github/workflows/release-results.yml`
-downloads the newest published manifest set for every service, regenerates the
-two README tables, and merges the result through a short-lived docs pull
-request. The shared concurrency group coalesces simultaneous service releases,
-and the hourly reconciliation schedule repairs any missed or failed refresh.
-It uses the repository's GitHub App credentials because the organization does
-not allow the built-in Actions token to create pull requests.
+Every hour, and after a manually dispatched release run,
+`.github/workflows/release-results.yml` downloads the newest published manifest
+set for every service, regenerates the two README tables, and force-pushes the
+result to a single docs pull request. Releases dispatched by the poller do not
+trigger it directly (runs started by the built-in Actions token emit no
+`workflow_run`), so the hourly schedule picks them up. It uses the repository's
+GitHub App credentials because the organization does not allow the built-in
+Actions token to create pull requests. `.github/workflows/bot-pr-auto-merge.yml`
+approves that pull request as `supabase-oss` (a `README.md` code owner) and
+enables auto-merge; the merge queue lands it once the required repository
+checks pass.
 
 The release workflow rechecks the upstream release policy independently, so a
 manual dispatch cannot publish `main`, another branch, a draft/prerelease, or
