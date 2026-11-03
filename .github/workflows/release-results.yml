@@ -88,8 +88,8 @@ jobs:
             echo "updating existing refresh PR #$pr_number"
             gh pr edit "$pr_number" --body "$body"
           else
-            # release-results-merge.yml approves and merges this PR once its
-            # repository checks pass.
+            # bot-pr-auto-merge.yml approves this PR and queues it to merge
+            # once its repository checks pass.
             gh pr create \
               --base "$base" \
               --head "$branch" \

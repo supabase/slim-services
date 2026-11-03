@@ -475,9 +475,10 @@ result to a single docs pull request. Releases dispatched by the poller do not
 trigger it directly (runs started by the built-in Actions token emit no
 `workflow_run`), so the hourly schedule picks them up. It uses the repository's
 GitHub App credentials because the organization does not allow the built-in
-Actions token to create pull requests. Once that pull request's repository
-checks pass, `.github/workflows/release-results-merge.yml` approves it as
-`supabase-oss` (a `README.md` code owner) and squash-merges that exact head.
+Actions token to create pull requests. `.github/workflows/bot-pr-auto-merge.yml`
+approves that pull request as `supabase-oss` (a `README.md` code owner) and
+enables auto-merge; the merge queue lands it once the required repository
+checks pass.
 
 The release workflow rechecks the upstream release policy independently, so a
 manual dispatch cannot publish `main`, another branch, a draft/prerelease, or
