@@ -1,1 +1,6 @@
 * @supabase/cli
+
+# Bot-refreshed release tables. Either owner satisfies code-owner review;
+# `supabase-oss` approves only the green refresh PR, through
+# release-results-merge.yml.
+/README.md @supabase/cli @supabase-oss

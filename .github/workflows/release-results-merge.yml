@@ -1,0 +1,90 @@
+name: Merge release results refresh
+
+"on":
+  # Runs the default-branch definition after the refresh PR's checks finish.
+  # The job never checks out or runs code from the pull request.
+  workflow_run:
+    workflows:
+      - Repository checks
+    types:
+      - completed
+
+permissions: {}
+
+concurrency:
+  group: merge-release-results-refresh
+  cancel-in-progress: false
+
+jobs:
+  approve-and-merge:
+    name: approve and merge green refresh PR
+    # `main` has no required status checks, so `gh pr merge --auto` would
+    # merge on approval alone; approving only after a green check run keeps
+    # CI in front of the merge. The actor check skips heads that someone
+    # other than the refresh workflow pushed.
+    if: >-
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'gha/refresh-release-results' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.actor.login == 'supabase-cli-releaser[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    # Holds `AUTO_APPROVE_PR_PAT` (supabase-oss); the environment only deploys
+    # from the default branch.
+    environment: auto-approve
+    steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.GH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Approve and merge
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          APPROVE_TOKEN: ${{ secrets.AUTO_APPROVE_PR_PAT }}
+          BASE: ${{ github.event.repository.default_branch }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          pr="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$HEAD_BRANCH" \
+            --base "$BASE" --state open --json number --jq '.[0].number // empty')"
+          if [ -z "$pr" ]; then
+            echo "no open refresh PR"
+            exit 0
+          fi
+
+          # A later refresh may have force-pushed since these checks started;
+          # its own check run will come back here.
+          pr_info="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$pr" \
+            --jq '"\(.user.login) \(.head.sha)"')"
+          read -r author head <<<"$pr_info"
+          if [ "$head" != "$HEAD_SHA" ]; then
+            echo "PR #$pr head moved to $head; skipping checks for $HEAD_SHA"
+            exit 0
+          fi
+          if [ "$author" != "supabase-cli-releaser[bot]" ]; then
+            echo "::error::PR #$pr was opened by $author, not the refresh workflow"
+            exit 1
+          fi
+          files="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$pr/files" --jq '[.[].filename] | join(",")')"
+          if [ "$files" != "README.md" ]; then
+            echo "::error::PR #$pr changes $files; the refresh only changes README.md"
+            exit 1
+          fi
+
+          # Pushes do not dismiss approvals, so an earlier approval still
+          # counts; skipping it avoids stacking a review per refresh.
+          decision="$(gh pr view --repo "$GITHUB_REPOSITORY" "$pr" --json reviewDecision --jq .reviewDecision)"
+          if [ "$decision" != "APPROVED" ]; then
+            GH_TOKEN="$APPROVE_TOKEN" gh api --method POST \
+              "repos/$GITHUB_REPOSITORY/pulls/$pr/reviews" \
+              -f commit_id="$HEAD_SHA" -f event=APPROVE >/dev/null
+          fi
+
+          gh pr merge --repo "$GITHUB_REPOSITORY" "$pr" --squash --match-head-commit "$HEAD_SHA"
