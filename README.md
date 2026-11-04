@@ -10,7 +10,7 @@ This repo asks a simple question, on three axes:
 
 <!-- generated:release-summary:begin -->
 For the latest published Linux ARM64 release set (12 rows), upstream images
-total **2548.8 MiB** compressed; the slim set totals **771.6 MiB** (**69.7%**
+total **2549.0 MiB** compressed; the slim set totals **771.6 MiB** (**69.7%**
 smaller — exact numbers below). Every published service also has measured
 steady-state RSS and idle-CPU numbers. These isolated service smoke
 measurements do not establish complete Dockerless CLI-stack behavior or a
@@ -81,7 +81,7 @@ unavailable on Docker Hub.
 | Storage | `v1.89.11` | `240.7 MiB` | `58.3 MiB` | `75.8%` | `203.7 MiB` | `3.03%` | [release](https://github.com/supabase/slim-services/releases/tag/storage-v1.89.11-r0) · [report](services/storage/REPORT.md) |
 | Edge Runtime | `v1.77.9` (no-AI) | `352.4 MiB` | `46.2 MiB` | `86.9%` | `18.5 MiB` | `0.01%` | [release](https://github.com/supabase/slim-services/releases/tag/edge-runtime-v1.77.9-r0) · [report](services/edge-runtime/REPORT.md) |
 | Studio | `2026.11.02-sha-a05e7ec` | `306.5 MiB` | `107.4 MiB` | `65.0%` | `231.6 MiB` | `0.01%` | [release](https://github.com/supabase/slim-services/releases/tag/studio-2026.11.02-sha-a05e7ec-r0) · [report](services/studio/REPORT.md) |
-| Analytics | `v1.54.4` | `139.7 MiB` | `57.6 MiB` | `58.8%` | `515.9 MiB` | `0.28%` | [release](https://github.com/supabase/slim-services/releases/tag/analytics-v1.54.4-r0) · [report](services/analytics/REPORT.md) |
+| Analytics | `v1.54.5` | `139.9 MiB` | `57.6 MiB` | `58.8%` | `531.7 MiB` | `0.28%` | [release](https://github.com/supabase/slim-services/releases/tag/analytics-v1.54.5-r0) · [report](services/analytics/REPORT.md) |
 | PgMeta | `v0.100.0` | `108.7 MiB` | `58.8 MiB` | `45.9%` | `118.3 MiB` | `4.58%` | [release](https://github.com/supabase/slim-services/releases/tag/pgmeta-v0.100.0-r0) · [report](services/pgmeta/REPORT.md) |
 | Pooler | `v2.9.13` | `289.4 MiB`* | `35.5 MiB` | `87.7%`* | `161.0 MiB` | `0.04%` | [release](https://github.com/supabase/slim-services/releases/tag/pooler-v2.9.13-r1) · [report](services/pooler/REPORT.md) |
 
@@ -132,7 +132,7 @@ define the runtime floor.
 | Storage | `v1.89.11` | `40.2 MiB` | `167.8 MiB` | `258.5 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/storage-v1.89.11-r0) · [report](services/storage/REPORT.md) |
 | Edge Runtime | `v1.77.9` | `40.0 MiB` | `161.6 MiB` | `57.7 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/edge-runtime-v1.77.9-r0) · [report](services/edge-runtime/REPORT.md) |
 | Studio | `2026.11.02-sha-a05e7ec` | `67.6 MiB` | `415.7 MiB` | `344.9 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/studio-2026.11.02-sha-a05e7ec-r0) · [report](services/studio/REPORT.md) |
-| Analytics | `v1.54.4` | `34.8 MiB` | `146.4 MiB` | `519.7 MiB` | `0.73%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/analytics-v1.54.4-r0) · [report](services/analytics/REPORT.md) |
+| Analytics | `v1.54.5` | `34.8 MiB` | `146.5 MiB` | `526.5 MiB` | `0.70%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/analytics-v1.54.5-r0) · [report](services/analytics/REPORT.md) |
 | PgMeta | `v0.100.0` | `40.4 MiB` | `186.1 MiB` | `160.7 MiB` | `0.10%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/pgmeta-v0.100.0-r0) · [report](services/pgmeta/REPORT.md) |
 | Pooler | `v2.9.13` | `23.5 MiB` | `52.5 MiB` | `216.8 MiB` | `0.03%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/pooler-v2.9.13-r1) · [report](services/pooler/REPORT.md) |
 <!-- generated:host-native:end -->
