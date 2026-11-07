@@ -145,8 +145,15 @@ let
     # admin HTTP endpoint and every ranch proxy listener; falls back to the upstream wildcard
     # bind when unset.
     postPatch = ''
-      patch -p1 < ${../nix/startup-order.patch}
-      patch -p1 < ${../nix/bind-ip.patch}
+      # Releases that start Supavisor.Drainer (v2.10+) restructured
+      # application.ex and runtime.exs; pick the patch pair by source feature.
+      if grep -q 'Supavisor.Drainer' lib/supavisor/application.ex; then
+        patch -p1 < ${../nix/startup-order-drainer.patch}
+        patch -p1 < ${../nix/bind-ip-drainer.patch}
+      else
+        patch -p1 < ${../nix/startup-order.patch}
+        patch -p1 < ${../nix/bind-ip.patch}
+      fi
     '';
 
     # bindgenHook wires libclang + the C standard header search paths that
