@@ -127,7 +127,7 @@ jobs:
           runners = {
               "linux-arm64": "large-linux-arm",
               "linux-amd64": "large-linux-x86",
-              "darwin-arm64": "macos-14-xlarge",
+              "darwin-arm64": "blacksmith-6vcpu-macos-15",
           }
 
           external_versions = json.loads(os.environ["EXTERNAL_MAP"])
