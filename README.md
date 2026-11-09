@@ -10,7 +10,7 @@ This repo asks a simple question, on three axes:
 
 <!-- generated:release-summary:begin -->
 For the latest published Linux ARM64 release set (12 rows), upstream images
-total **2549.1 MiB** compressed; the slim set totals **771.6 MiB** (**69.7%**
+total **2549.1 MiB** compressed; the slim set totals **773.0 MiB** (**69.7%**
 smaller — exact numbers below). Every published service also has measured
 steady-state RSS and idle-CPU numbers. These isolated service smoke
 measurements do not establish complete Dockerless CLI-stack behavior or a
@@ -78,7 +78,7 @@ unavailable on Docker Hub.
 | PostgREST | `v16.5` | `19.5 MiB` | `6.8 MiB` | `65.2%` | `8.8 MiB` | `0.09%` | [release](https://github.com/supabase/slim-services/releases/tag/postgrest-v16.5-r0) · [report](services/postgrest/REPORT.md) |
 | Auth | `v2.197.0` | `27.4 MiB` | `12.5 MiB` | `54.3%` | `9.7 MiB` | `0.39%` | [release](https://github.com/supabase/slim-services/releases/tag/auth-v2.197.0-r0) · [report](services/auth/REPORT.md) |
 | Realtime | `v2.153.4` | `117.2 MiB` | `24.4 MiB` | `79.2%` | `183.9 MiB` | `0.20%` | [release](https://github.com/supabase/slim-services/releases/tag/realtime-v2.153.4-r0) · [report](services/realtime/REPORT.md) |
-| Storage | `v1.89.13` | `240.8 MiB` | `58.3 MiB` | `75.8%` | `215.1 MiB` | `2.05%` | [release](https://github.com/supabase/slim-services/releases/tag/storage-v1.89.13-r0) · [report](services/storage/REPORT.md) |
+| Storage | `v1.90.0` | `240.8 MiB` | `59.7 MiB` | `75.2%` | `215.9 MiB` | `3.50%` | [release](https://github.com/supabase/slim-services/releases/tag/storage-v1.90.0-r0) · [report](services/storage/REPORT.md) |
 | Edge Runtime | `v1.78.0` (no-AI) | `352.4 MiB` | `46.2 MiB` | `86.9%` | `19.1 MiB` | `0.01%` | [release](https://github.com/supabase/slim-services/releases/tag/edge-runtime-v1.78.0-r0) · [report](services/edge-runtime/REPORT.md) |
 | Studio | `2026.11.02-sha-a05e7ec` | `306.5 MiB` | `107.4 MiB` | `65.0%` | `231.6 MiB` | `0.01%` | [release](https://github.com/supabase/slim-services/releases/tag/studio-2026.11.02-sha-a05e7ec-r0) · [report](services/studio/REPORT.md) |
 | Analytics | `v1.54.5` | `139.9 MiB` | `57.6 MiB` | `58.8%` | `531.7 MiB` | `0.28%` | [release](https://github.com/supabase/slim-services/releases/tag/analytics-v1.54.5-r0) · [report](services/analytics/REPORT.md) |
@@ -129,7 +129,7 @@ define the runtime floor.
 | PostgREST | `v16.5` | `12.6 MiB` | `77.9 MiB` | `55.8 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/postgrest-v16.5-r0) · [report](services/postgrest/REPORT.md) |
 | Auth | `v2.197.0` | `9.6 MiB` | `33.9 MiB` | `29.8 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/auth-v2.197.0-r0) · [report](services/auth/REPORT.md) |
 | Realtime | `v2.153.4` | `12.2 MiB` | `49.6 MiB` | `217.3 MiB` | `0.10%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/realtime-v2.153.4-r0) · [report](services/realtime/REPORT.md) |
-| Storage | `v1.89.13` | `40.2 MiB` | `167.8 MiB` | `264.8 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/storage-v1.89.13-r0) · [report](services/storage/REPORT.md) |
+| Storage | `v1.90.0` | `40.4 MiB` | `171.8 MiB` | `269.3 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/storage-v1.90.0-r0) · [report](services/storage/REPORT.md) |
 | Edge Runtime | `v1.78.0` | `40.0 MiB` | `161.6 MiB` | `57.0 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/edge-runtime-v1.78.0-r0) · [report](services/edge-runtime/REPORT.md) |
 | Studio | `2026.11.02-sha-a05e7ec` | `67.6 MiB` | `415.7 MiB` | `344.9 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/studio-2026.11.02-sha-a05e7ec-r0) · [report](services/studio/REPORT.md) |
 | Analytics | `v1.54.5` | `34.8 MiB` | `146.5 MiB` | `526.5 MiB` | `0.70%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/analytics-v1.54.5-r0) · [report](services/analytics/REPORT.md) |
