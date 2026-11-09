@@ -1,0 +1,71 @@
+diff --git a/config/runtime.exs b/config/runtime.exs
+index 5a1499d..17218f9 100644
+--- a/config/runtime.exs
++++ b/config/runtime.exs
+@@ -30,6 +30,21 @@ db_socket_options =
+       end
+   end
+ 
++# Defaults to the upstream wildcard bind (all interfaces) when unset; applied below to the admin
++# HTTP endpoint and, via the :proxy_bind_ip config key, to the proxy listeners in
++# Supavisor.Application.
++bind_ip =
++  case System.get_env("SUPAVISOR_BIND_IP") do
++    nil ->
++      nil
++
++    value ->
++      case :inet.parse_address(String.to_charlist(value)) do
++        {:ok, address} -> address
++        _ -> raise "SUPAVISOR_BIND_IP env var is invalid: #{inspect(value)}"
++      end
++  end
++
+ secret_key_base =
+   if config_env() in [:dev, :test] do
+     "3S1V5RyqQcuPrMVuR4BjH9XBayridj56JA0EE6wYidTEc6H84KSFY6urVX7GfOhK"
+@@ -57,7 +72,7 @@ config :supavisor, SupavisorWeb.Endpoint,
+           end
+         end)
+         |> String.to_atom()
+-      ]
++      ] ++ if(bind_ip, do: [ip: bind_ip], else: [])
+     ]
+   ],
+   secret_key_base: secret_key_base
+@@ -243,6 +258,7 @@ if config_env() != :test do
+       System.get_env("PROXY_PORT_TRANSACTION", "6543") |> String.to_integer(),
+     proxy_port_session: System.get_env("PROXY_PORT_SESSION", "5432") |> String.to_integer(),
+     prom_poll_rate: System.get_env("PROM_POLL_RATE", "15000") |> String.to_integer(),
++    proxy_bind_ip: bind_ip,
+     ena_interface: System.get_env("ENA_INTERFACE"),
+     global_upstream_ca: upstream_ca,
+     global_downstream_cert: downstream_cert,
+diff --git a/lib/supavisor/application.ex b/lib/supavisor/application.ex
+index 3096974..c18b5fe 100644
+--- a/lib/supavisor/application.ex
++++ b/lib/supavisor/application.ex
+@@ -68,6 +68,14 @@ defmodule Supavisor.Application do
+            %{mode: :session, local: false}, Supavisor.ClientHandler}
+         ]
+ 
++    # Defaults to the upstream wildcard bind (all interfaces) when unset; see the
++    # :proxy_bind_ip config key set from SUPAVISOR_BIND_IP in config/runtime.exs.
++    proxy_bind_ip_opts =
++      case Application.get_env(:supavisor, :proxy_bind_ip) do
++        nil -> []
++        address -> [ip: address]
++      end
++
+     num_acceptors = String.to_integer(System.get_env("NUM_ACCEPTORS") || "100")
+ 
+     max_connections =
+@@ -93,7 +101,7 @@ defmodule Supavisor.Application do
+               # and times out just above this.
+               send_timeout: 30_000,
+               send_timeout_close: true
+-            ]
++            ] ++ proxy_bind_ip_opts
+           },
+           handler,
+           opts

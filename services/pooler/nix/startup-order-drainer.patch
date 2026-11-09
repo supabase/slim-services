@@ -1,0 +1,39 @@
+diff --git a/lib/supavisor/application.ex b/lib/supavisor/application.ex
+index 2866d24..3096974 100644
+--- a/lib/supavisor/application.ex
++++ b/lib/supavisor/application.ex
+@@ -59,12 +59,14 @@ defmodule Supavisor.Application do
+       |> build_shards(:transaction)
+ 
+     proxy_ports =
+-      [
+-        {:pg_proxy_transaction, Application.get_env(:supavisor, :proxy_port_transaction),
+-         %{mode: :transaction, local: false}, Supavisor.ClientHandler},
+-        {:pg_proxy_session, Application.get_env(:supavisor, :proxy_port_session),
+-         %{mode: :session, local: false}, Supavisor.ClientHandler}
+-      ] ++ session_shards ++ transaction_shards
++      session_shards ++
++        transaction_shards ++
++        [
++          {:pg_proxy_transaction, Application.get_env(:supavisor, :proxy_port_transaction),
++           %{mode: :transaction, local: false}, Supavisor.ClientHandler},
++          {:pg_proxy_session, Application.get_env(:supavisor, :proxy_port_session),
++           %{mode: :session, local: false}, Supavisor.ClientHandler}
++        ]
+ 
+     num_acceptors = String.to_integer(System.get_env("NUM_ACCEPTORS") || "100")
+ 
+@@ -140,11 +142,8 @@ defmodule Supavisor.Application do
+           PartitionSupervisor,
+           child_spec: DynamicSupervisor, strategy: :one_for_one, name: Supavisor.DynamicSupervisor
+         },
+-        Supavisor.Vault,
+-
+-        # Start the Endpoint (http/https)
+-        SupavisorWeb.Endpoint
+-      ] ++ ranch_listeners
++        Supavisor.Vault
++      ] ++ ranch_listeners ++ [SupavisorWeb.Endpoint]
+ 
+     Logger.warning("metrics_disabled is #{inspect(@metrics_disabled)}")
+ 
