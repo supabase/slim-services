@@ -12,17 +12,24 @@ permissions: {}
 jobs:
   approve-and-merge:
     name: approve and enable auto-merge
-    # Only the release-results refresh PR merges unattended. The first
-    # condition checks who opened the pull request; the second checks who
-    # caused this event, so a person pushing to the refresh branch does not
-    # get it approved. CODEOWNERS limits `supabase-oss` to README.md, so its
-    # approval cannot cover any other file.
+    # Two bot PRs merge unattended: the release-results refresh and Dependabot
+    # GitHub Actions bumps. The user and sender checks keep a person pushing to
+    # either branch from getting approved. CODEOWNERS limits `supabase-oss` to
+    # README.md and .github/workflows/, so its approval covers no other file.
     if: >-
-      github.event.pull_request.user.login == 'supabase-cli-releaser[bot]' &&
-      github.event.sender.login == 'supabase-cli-releaser[bot]' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
-      github.event.pull_request.head.ref == 'gha/refresh-release-results' &&
-      !github.event.pull_request.draft
+      !github.event.pull_request.draft &&
+      (
+        (
+          github.event.pull_request.user.login == 'supabase-cli-releaser[bot]' &&
+          github.event.sender.login == 'supabase-cli-releaser[bot]' &&
+          github.event.pull_request.head.ref == 'gha/refresh-release-results'
+        ) || (
+          github.event.pull_request.user.login == 'dependabot[bot]' &&
+          github.event.sender.login == 'dependabot[bot]' &&
+          startsWith(github.event.pull_request.head.ref, 'dependabot/github_actions/')
+        )
+      )
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     # Holds `AUTO_APPROVE_PR_PAT` (supabase-oss); the environment only deploys
