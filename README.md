@@ -10,7 +10,7 @@ This repo asks a simple question, on three axes:
 
 <!-- generated:release-summary:begin -->
 For the latest published Linux ARM64 release set (12 rows), upstream images
-total **2549.1 MiB** compressed; the slim set totals **773.0 MiB** (**69.7%**
+total **2548.8 MiB** compressed; the slim set totals **775.0 MiB** (**69.6%**
 smaller — exact numbers below). Every published service also has measured
 steady-state RSS and idle-CPU numbers. These isolated service smoke
 measurements do not establish complete Dockerless CLI-stack behavior or a
@@ -77,13 +77,13 @@ unavailable on Docker Hub.
 | Postgres OrioleDB | `17.11.0.018-orioledb` (OrioleDB 17: PG17 extensions plus orioledb; PostGIS and pgRouting are not allowlisted) | `316.9 MiB` | `117.3 MiB` | `63.0%` | `126.2 MiB` | `0.01%` | [release](https://github.com/supabase/slim-services/releases/tag/postgres-17.11.0.018-orioledb-r0) · [report](services/postgres/REPORT.md) |
 | PostgREST | `v16.5` | `19.5 MiB` | `6.8 MiB` | `65.2%` | `8.8 MiB` | `0.09%` | [release](https://github.com/supabase/slim-services/releases/tag/postgrest-v16.5-r0) · [report](services/postgrest/REPORT.md) |
 | Auth | `v2.197.0` | `27.4 MiB` | `12.5 MiB` | `54.3%` | `9.7 MiB` | `0.39%` | [release](https://github.com/supabase/slim-services/releases/tag/auth-v2.197.0-r0) · [report](services/auth/REPORT.md) |
-| Realtime | `v2.153.4` | `117.2 MiB` | `24.4 MiB` | `79.2%` | `183.9 MiB` | `0.20%` | [release](https://github.com/supabase/slim-services/releases/tag/realtime-v2.153.4-r0) · [report](services/realtime/REPORT.md) |
+| Realtime | `v2.153.6` | `117.2 MiB` | `24.4 MiB` | `79.2%` | `185.0 MiB` | `0.21%` | [release](https://github.com/supabase/slim-services/releases/tag/realtime-v2.153.6-r0) · [report](services/realtime/REPORT.md) |
 | Storage | `v1.90.0` | `240.8 MiB` | `59.7 MiB` | `75.2%` | `215.9 MiB` | `3.50%` | [release](https://github.com/supabase/slim-services/releases/tag/storage-v1.90.0-r0) · [report](services/storage/REPORT.md) |
-| Edge Runtime | `v1.78.0` (no-AI) | `352.4 MiB` | `46.2 MiB` | `86.9%` | `19.1 MiB` | `0.01%` | [release](https://github.com/supabase/slim-services/releases/tag/edge-runtime-v1.78.0-r0) · [report](services/edge-runtime/REPORT.md) |
-| Studio | `2026.11.02-sha-a05e7ec` | `306.5 MiB` | `107.4 MiB` | `65.0%` | `231.6 MiB` | `0.01%` | [release](https://github.com/supabase/slim-services/releases/tag/studio-2026.11.02-sha-a05e7ec-r0) · [report](services/studio/REPORT.md) |
+| Edge Runtime | `v1.78.1` (no-AI) | `352.1 MiB` | `46.2 MiB` | `86.9%` | `19.0 MiB` | `0.01%` | [release](https://github.com/supabase/slim-services/releases/tag/edge-runtime-v1.78.1-r0) · [report](services/edge-runtime/REPORT.md) |
+| Studio | `2026.11.09-sha-1567384` | `306.5 MiB` | `109.1 MiB` | `64.4%` | `251.7 MiB` | `0.01%` | [release](https://github.com/supabase/slim-services/releases/tag/studio-2026.11.09-sha-1567384-r0) · [report](services/studio/REPORT.md) |
 | Analytics | `v1.54.5` | `139.9 MiB` | `57.6 MiB` | `58.8%` | `531.7 MiB` | `0.28%` | [release](https://github.com/supabase/slim-services/releases/tag/analytics-v1.54.5-r0) · [report](services/analytics/REPORT.md) |
 | PgMeta | `v0.100.0` | `108.7 MiB` | `58.8 MiB` | `45.9%` | `118.3 MiB` | `4.58%` | [release](https://github.com/supabase/slim-services/releases/tag/pgmeta-v0.100.0-r0) · [report](services/pgmeta/REPORT.md) |
-| Pooler | `v2.9.13` | `289.4 MiB`* | `35.5 MiB` | `87.7%`* | `161.0 MiB` | `0.04%` | [release](https://github.com/supabase/slim-services/releases/tag/pooler-v2.9.13-r1) · [report](services/pooler/REPORT.md) |
+| Pooler | `v2.10.0` | `289.4 MiB`* | `35.8 MiB` | `87.6%`* | `160.6 MiB` | `0.05%` | [release](https://github.com/supabase/slim-services/releases/tag/pooler-v2.10.0-r0) · [report](services/pooler/REPORT.md) |
 
 `*` Upstream comparison uses `UPSTREAM_COMPARE_IMAGE` from the recipe (the exact tag is not published on Docker Hub), so the percentage is directional.
 <!-- generated:results:end -->
@@ -128,13 +128,13 @@ define the runtime floor.
 | Postgres OrioleDB | `17.11.0.018-orioledb` | `102.8 MiB` | `484.1 MiB` | `210.3 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/postgres-17.11.0.018-orioledb-r0) · [report](services/postgres/REPORT.md) |
 | PostgREST | `v16.5` | `12.6 MiB` | `77.9 MiB` | `55.8 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/postgrest-v16.5-r0) · [report](services/postgrest/REPORT.md) |
 | Auth | `v2.197.0` | `9.6 MiB` | `33.9 MiB` | `29.8 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/auth-v2.197.0-r0) · [report](services/auth/REPORT.md) |
-| Realtime | `v2.153.4` | `12.2 MiB` | `49.6 MiB` | `217.3 MiB` | `0.10%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/realtime-v2.153.4-r0) · [report](services/realtime/REPORT.md) |
+| Realtime | `v2.153.6` | `12.2 MiB` | `49.7 MiB` | `209.2 MiB` | `0.23%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/realtime-v2.153.6-r0) · [report](services/realtime/REPORT.md) |
 | Storage | `v1.90.0` | `40.4 MiB` | `171.8 MiB` | `269.3 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/storage-v1.90.0-r0) · [report](services/storage/REPORT.md) |
-| Edge Runtime | `v1.78.0` | `40.0 MiB` | `161.6 MiB` | `57.0 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/edge-runtime-v1.78.0-r0) · [report](services/edge-runtime/REPORT.md) |
-| Studio | `2026.11.02-sha-a05e7ec` | `67.6 MiB` | `415.7 MiB` | `344.9 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/studio-2026.11.02-sha-a05e7ec-r0) · [report](services/studio/REPORT.md) |
+| Edge Runtime | `v1.78.1` | `40.0 MiB` | `161.6 MiB` | `55.7 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/edge-runtime-v1.78.1-r0) · [report](services/edge-runtime/REPORT.md) |
+| Studio | `2026.11.09-sha-1567384` | `68.5 MiB` | `417.1 MiB` | `328.8 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/studio-2026.11.09-sha-1567384-r0) · [report](services/studio/REPORT.md) |
 | Analytics | `v1.54.5` | `34.8 MiB` | `146.5 MiB` | `526.5 MiB` | `0.70%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/analytics-v1.54.5-r0) · [report](services/analytics/REPORT.md) |
 | PgMeta | `v0.100.0` | `40.4 MiB` | `186.1 MiB` | `160.7 MiB` | `0.10%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/pgmeta-v0.100.0-r0) · [report](services/pgmeta/REPORT.md) |
-| Pooler | `v2.9.13` | `23.5 MiB` | `52.5 MiB` | `216.8 MiB` | `0.03%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/pooler-v2.9.13-r1) · [report](services/pooler/REPORT.md) |
+| Pooler | `v2.10.0` | `23.8 MiB` | `53.2 MiB` | `203.2 MiB` | `0.13%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/pooler-v2.10.0-r0) · [report](services/pooler/REPORT.md) |
 <!-- generated:host-native:end -->
 
 See [SLIM_IMAGES_REPORT.md](SLIM_IMAGES_REPORT.md) for the global summary.
