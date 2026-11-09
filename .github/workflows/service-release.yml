@@ -217,7 +217,7 @@ jobs:
             revision="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["revision"])' "$revision_json")"
             release_version="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["release_version"])' "$revision_json")"
             release_tag="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["release_tag"])' "$revision_json")"
-            matrix='{"include":[{"target_os":"linux","arch":"arm64","platform_dir":"linux-arm64","runner":"large-linux-arm"},{"target_os":"linux","arch":"amd64","platform_dir":"linux-amd64","runner":"large-linux-x86"},{"target_os":"darwin","arch":"arm64","platform_dir":"darwin-arm64","runner":"macos-14-xlarge"}]}'
+            matrix='{"include":[{"target_os":"linux","arch":"arm64","platform_dir":"linux-arm64","runner":"large-linux-arm"},{"target_os":"linux","arch":"amd64","platform_dir":"linux-amd64","runner":"large-linux-x86"},{"target_os":"darwin","arch":"arm64","platform_dir":"darwin-arm64","runner":"blacksmith-6vcpu-macos-15"}]}'
             {
               printf 'artifact_source=%s\n' "$artifact_source"
               printf 'build=%s\n' "$build"
@@ -347,7 +347,7 @@ jobs:
           release_version="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["release_version"])' "$revision_json")"
           release_tag="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["release_tag"])' "$revision_json")"
 
-          matrix='{"include":[{"target_os":"linux","arch":"arm64","platform_dir":"linux-arm64","runner":"large-linux-arm"},{"target_os":"linux","arch":"amd64","platform_dir":"linux-amd64","runner":"large-linux-x86"},{"target_os":"darwin","arch":"arm64","platform_dir":"darwin-arm64","runner":"macos-14-xlarge"}]}'
+          matrix='{"include":[{"target_os":"linux","arch":"arm64","platform_dir":"linux-arm64","runner":"large-linux-arm"},{"target_os":"linux","arch":"amd64","platform_dir":"linux-amd64","runner":"large-linux-x86"},{"target_os":"darwin","arch":"arm64","platform_dir":"darwin-arm64","runner":"blacksmith-6vcpu-macos-15"}]}'
           {
             printf 'artifact_source=%s\n' "$artifact_source"
             printf 'build=%s\n' "$build"
