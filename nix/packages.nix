@@ -60,7 +60,17 @@ let
       inherit (pkgs) lib;
       runtimePkgs = import runtime-nixpkgs { inherit system; };
       nodeMajor = releaseData.nodeMajor or 24;
-      nodePkgs = import ./portable-node/package-set.nix { inherit pkgs runtimePkgs nodeMajor; };
+      # Studio's pnpm enforces the root engines.node; honour its lower bound.
+      sourceEngines =
+        if releaseService == "studio" && releaseSource != null && builtins.pathExists (releaseSource + "/package.json") then
+          (builtins.fromJSON (builtins.readFile (releaseSource + "/package.json"))).engines.node or null
+        else
+          null;
+      engineMatch = if sourceEngines == null then null else builtins.match ".*>=([0-9][0-9.]*).*" sourceEngines;
+      minNodeVersion = if engineMatch == null then null else builtins.head engineMatch;
+      nodePkgs = import ./portable-node/package-set.nix {
+        inherit pkgs runtimePkgs nodeMajor minNodeVersion;
+      };
       runtimeEnvFile = "${toString ../services}/${releaseService}/runtime.env";
       useRuntimeProfile = lib.elem releaseService runtimeProfileServices;
       runtimeEnvAssignments =
