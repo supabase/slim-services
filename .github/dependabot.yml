@@ -7,7 +7,4 @@ updates:
       day: monday
       time: "06:00"
       timezone: Europe/Paris
-    labels:
-      - dependencies
-      - security
     open-pull-requests-limit: 10
