@@ -81,7 +81,7 @@ unavailable on Docker Hub.
 | Storage | `v1.92.0` | `240.9 MiB` | `59.7 MiB` | `75.2%` | `218.1 MiB` | `3.53%` | [release](https://github.com/supabase/slim-services/releases/tag/storage-v1.92.0-r0) · [report](services/storage/REPORT.md) |
 | Edge Runtime | `v1.78.1` (no-AI) | `352.1 MiB` | `46.2 MiB` | `86.9%` | `19.0 MiB` | `0.01%` | [release](https://github.com/supabase/slim-services/releases/tag/edge-runtime-v1.78.1-r0) · [report](services/edge-runtime/REPORT.md) |
 | Studio | `2026.11.09-sha-1567384` | `306.5 MiB` | `109.1 MiB` | `64.4%` | `251.7 MiB` | `0.01%` | [release](https://github.com/supabase/slim-services/releases/tag/studio-2026.11.09-sha-1567384-r0) · [report](services/studio/REPORT.md) |
-| Analytics | `v1.54.7` | `139.9 MiB` | `57.6 MiB` | `58.8%` | `536.0 MiB` | `0.34%` | [release](https://github.com/supabase/slim-services/releases/tag/analytics-v1.54.7-r0) · [report](services/analytics/REPORT.md) |
+| Analytics | `v1.54.8` | `139.9 MiB` | `57.6 MiB` | `58.8%` | `534.8 MiB` | `0.32%` | [release](https://github.com/supabase/slim-services/releases/tag/analytics-v1.54.8-r0) · [report](services/analytics/REPORT.md) |
 | PgMeta | `v0.100.0` | `108.7 MiB` | `58.8 MiB` | `45.9%` | `118.3 MiB` | `4.58%` | [release](https://github.com/supabase/slim-services/releases/tag/pgmeta-v0.100.0-r0) · [report](services/pgmeta/REPORT.md) |
 | Pooler | `v2.10.0` | `289.4 MiB`* | `35.8 MiB` | `87.6%`* | `160.6 MiB` | `0.05%` | [release](https://github.com/supabase/slim-services/releases/tag/pooler-v2.10.0-r0) · [report](services/pooler/REPORT.md) |
 
@@ -132,7 +132,7 @@ define the runtime floor.
 | Storage | `v1.92.0` | `40.4 MiB` | `171.8 MiB` | `279.2 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/storage-v1.92.0-r0) · [report](services/storage/REPORT.md) |
 | Edge Runtime | `v1.78.1` | `40.0 MiB` | `161.6 MiB` | `55.7 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/edge-runtime-v1.78.1-r0) · [report](services/edge-runtime/REPORT.md) |
 | Studio | `2026.11.09-sha-1567384` | `68.5 MiB` | `417.1 MiB` | `328.8 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/studio-2026.11.09-sha-1567384-r0) · [report](services/studio/REPORT.md) |
-| Analytics | `v1.54.7` | `34.8 MiB` | `146.6 MiB` | `516.6 MiB` | `0.03%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/analytics-v1.54.7-r0) · [report](services/analytics/REPORT.md) |
+| Analytics | `v1.54.8` | `34.8 MiB` | `146.4 MiB` | `509.0 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/analytics-v1.54.8-r0) · [report](services/analytics/REPORT.md) |
 | PgMeta | `v0.100.0` | `40.4 MiB` | `186.1 MiB` | `160.7 MiB` | `0.10%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/pgmeta-v0.100.0-r0) · [report](services/pgmeta/REPORT.md) |
 | Pooler | `v2.10.0` | `23.8 MiB` | `53.2 MiB` | `203.2 MiB` | `0.13%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/pooler-v2.10.0-r0) · [report](services/pooler/REPORT.md) |
 <!-- generated:host-native:end -->
