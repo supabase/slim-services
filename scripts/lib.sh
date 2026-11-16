@@ -101,17 +101,22 @@ print(major)
 PY
 }
 
+# Prints the value of the single `ARG <name>=<value>` the Dockerfile declares.
+# Declaring it zero or several times is an error, unless an optional third
+# argument supplies the value to print when the ARG is absent (declaring it
+# several times is still an error).
 upstream_docker_arg() {
   local source_dir="$1"
   local argument="$2"
   require_cmd python3
-  python3 - "$source_dir/Dockerfile" "$argument" <<'PY'
+  python3 - "$source_dir/Dockerfile" "$argument" "${3-}" "$#" <<'PY'
 import pathlib
 import re
 import sys
 
 dockerfile = pathlib.Path(sys.argv[1])
 argument = sys.argv[2]
+absent_value = sys.argv[3] if sys.argv[4] == "3" else None
 if not dockerfile.is_file():
     raise SystemExit(f"upstream Dockerfile not found: {dockerfile}")
 
@@ -124,6 +129,9 @@ for line in dockerfile.read_text(encoding="utf-8").splitlines():
     if match:
         values.append(next(value for value in match.groups() if value is not None))
 
+if not values and absent_value is not None:
+    print(absent_value)
+    raise SystemExit(0)
 if len(values) != 1:
     raise SystemExit(
         f"upstream Dockerfile must declare exactly one ARG {argument}=<value>; found {len(values)}"

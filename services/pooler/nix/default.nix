@@ -87,6 +87,9 @@ let
   pname = "supavisor";
   version = serviceVersion;
 
+  endpointBeforeListeners = "\n        # Start the Endpoint (http/https)\n        SupavisorWeb.Endpoint\n      ] ++ ranch_listeners\n";
+  endpointAfterListeners = "\n      ] ++ ranch_listeners ++ [SupavisorWeb.Endpoint]\n";
+
   cleanedSrc = lib.cleanSourceWith {
     src = sourceRoot;
     filter =
@@ -149,6 +152,13 @@ let
       # application.ex and runtime.exs; pick the patch pair by source feature.
       if grep -q 'Supavisor.Drainer' lib/supavisor/application.ex; then
         patch -p1 < ${../nix/startup-order-drainer.patch}
+        # Move the endpoint after the ranch listeners by matching only the
+        # endpoint block itself: the children listed before it vary across
+        # releases (v2.10.1 adds Supavisor.TLSHandshake), so diff context
+        # there breaks.
+        substituteInPlace lib/supavisor/application.ex --replace-fail \
+          ${lib.escapeShellArg endpointBeforeListeners} \
+          ${lib.escapeShellArg endpointAfterListeners}
         patch -p1 < ${../nix/bind-ip-drainer.patch}
       else
         patch -p1 < ${../nix/startup-order.patch}

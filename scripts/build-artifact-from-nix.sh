@@ -94,7 +94,9 @@ case "$service" in
       manager_version="$(upstream_package_manager_version "$release_dir/source" npm)"
     elif [[ "$service" == studio ]]; then
       manager_version="$(upstream_package_manager_version "$release_dir/source" pnpm)"
-      framework="$(upstream_docker_arg "$node_source" STUDIO_FRAMEWORK)"
+      # Upstream's Dockerfile stopped declaring STUDIO_FRAMEWORK once TanStack
+      # Start became its only build (supabase/supabase#53199).
+      framework="$(upstream_docker_arg "$node_source" STUDIO_FRAMEWORK tanstack)"
     fi
     python3 - "$release_dir/release.json" "$node_major" "$manager_version" "$framework" <<'PYMETA'
 import json, sys
