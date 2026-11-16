@@ -31,6 +31,26 @@ printf '%s\n' '{"engines":{"node":">=22.13"},"packageManager":"pnpm@11.13.1"}' >
 [[ "$(upstream_docker_arg "$split_docker" STUDIO_FRAMEWORK)" == "next" ]]
 [[ "$(upstream_package_manager_version "$split_metadata" pnpm)" == "11.13.1" ]]
 
+no_framework="$test_dir/no-framework"
+mkdir -p "$no_framework"
+printf '%s\n' 'FROM node:22-slim' > "$no_framework/Dockerfile"
+if upstream_docker_arg "$no_framework" STUDIO_FRAMEWORK \
+  >"$test_dir/framework.out" 2>"$test_dir/framework.err"; then
+  fail "absent ARG unexpectedly passed without a default"
+fi
+grep -q 'exactly one ARG STUDIO_FRAMEWORK=<value>; found 0' "$test_dir/framework.err"
+[[ "$(upstream_docker_arg "$no_framework" STUDIO_FRAMEWORK tanstack)" == "tanstack" ]]
+[[ "$(upstream_docker_arg "$split_docker" STUDIO_FRAMEWORK tanstack)" == "next" ]]
+
+two_frameworks="$test_dir/two-frameworks"
+mkdir -p "$two_frameworks"
+printf '%s\n' 'ARG STUDIO_FRAMEWORK=next' 'ARG STUDIO_FRAMEWORK=tanstack' > "$two_frameworks/Dockerfile"
+if upstream_docker_arg "$two_frameworks" STUDIO_FRAMEWORK tanstack \
+  >"$test_dir/framework2.out" 2>"$test_dir/framework2.err"; then
+  fail "duplicate ARG unexpectedly passed with a default"
+fi
+grep -q 'found 2' "$test_dir/framework2.err"
+
 conflict="$test_dir/conflict"
 cp -R "$literal" "$conflict"
 printf '%s\n' 'v20' > "$conflict/.nvmrc"

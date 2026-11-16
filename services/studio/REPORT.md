@@ -16,9 +16,15 @@ images are assembled from that exact artifact on the generic Distroless Debian
 - Upstream's production Dockerfile selects Node 22. The build derives that
   major and pnpm `11.13.1` from the checked-out source instead of pinning them
   in this repository.
-- Upstream currently defaults `STUDIO_FRAMEWORK=next`; TanStack Start is a
-  supported explicit build alternative, not yet the published default. The
-  native builder follows the upstream Dockerfile default automatically.
+- Sources from 2026-09-15 (`3bac7165b`) until upstream
+  supabase/supabase#53199 declare `ARG STUDIO_FRAMEWORK=next` and build Next.
+  After #53199 the Dockerfile declares no `STUDIO_FRAMEWORK` and builds only
+  TanStack Start on Nitro, so the builder records `studioFramework` as the
+  declared value, or `tanstack` when the ARG is absent (declared more than
+  once is an error). The `tanstack` recipe builds with `build:tanstack` when
+  `apps/studio/package.json` has that script (sources that still carried both
+  builds), otherwise `build`, and ships Nitro's self-contained `.output` plus
+  upstream's `server.js` shim.
 
 ## Artifact layout
 
