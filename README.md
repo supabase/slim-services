@@ -10,7 +10,7 @@ This repo asks a simple question, on three axes:
 
 <!-- generated:release-summary:begin -->
 For the latest published Linux ARM64 release set (12 rows), upstream images
-total **2549.4 MiB** compressed; the slim set totals **746.8 MiB** (**70.7%**
+total **2549.5 MiB** compressed; the slim set totals **746.8 MiB** (**70.7%**
 smaller — exact numbers below). Every published service also has measured
 steady-state RSS and idle-CPU numbers. These isolated service smoke
 measurements do not establish complete Dockerless CLI-stack behavior or a
@@ -77,7 +77,7 @@ unavailable on Docker Hub.
 | Postgres OrioleDB | `17.11.0.019-orioledb` (OrioleDB 17: PG17 extensions plus orioledb; PostGIS and pgRouting are not allowlisted) | `317.0 MiB` | `117.3 MiB` | `63.0%` | `126.4 MiB` | `0.00%` | [release](https://github.com/supabase/slim-services/releases/tag/postgres-17.11.0.019-orioledb-r0) · [report](services/postgres/REPORT.md) |
 | PostgREST | `v16.5` | `19.5 MiB` | `6.8 MiB` | `65.2%` | `8.8 MiB` | `0.09%` | [release](https://github.com/supabase/slim-services/releases/tag/postgrest-v16.5-r0) · [report](services/postgrest/REPORT.md) |
 | Auth | `v2.197.0` | `27.4 MiB` | `12.5 MiB` | `54.3%` | `9.7 MiB` | `0.39%` | [release](https://github.com/supabase/slim-services/releases/tag/auth-v2.197.0-r0) · [report](services/auth/REPORT.md) |
-| Realtime | `v2.165.0` | `117.2 MiB` | `24.5 MiB` | `79.1%` | `187.3 MiB` | `0.19%` | [release](https://github.com/supabase/slim-services/releases/tag/realtime-v2.165.0-r0) · [report](services/realtime/REPORT.md) |
+| Realtime | `v2.167.0` | `117.3 MiB` | `24.5 MiB` | `79.1%` | `187.3 MiB` | `0.18%` | [release](https://github.com/supabase/slim-services/releases/tag/realtime-v2.167.0-r0) · [report](services/realtime/REPORT.md) |
 | Storage | `v1.96.0` | `241.0 MiB` | `59.7 MiB` | `75.2%` | `216.1 MiB` | `3.65%` | [release](https://github.com/supabase/slim-services/releases/tag/storage-v1.96.0-r0) · [report](services/storage/REPORT.md) |
 | Edge Runtime | `v1.79.1` (no-AI) | `352.3 MiB` | `46.2 MiB` | `86.9%` | `18.3 MiB` | `0.01%` | [release](https://github.com/supabase/slim-services/releases/tag/edge-runtime-v1.79.1-r0) · [report](services/edge-runtime/REPORT.md) |
 | Studio | `2026.11.16-sha-51bd16d` | `306.5 MiB` | `80.7 MiB` | `73.7%` | `251.5 MiB` | `6.19%` | [release](https://github.com/supabase/slim-services/releases/tag/studio-2026.11.16-sha-51bd16d-r0) · [report](services/studio/REPORT.md) |
@@ -128,7 +128,7 @@ define the runtime floor.
 | Postgres OrioleDB | `17.11.0.019-orioledb` | `102.8 MiB` | `484.1 MiB` | `213.9 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/postgres-17.11.0.019-orioledb-r0) · [report](services/postgres/REPORT.md) |
 | PostgREST | `v16.5` | `12.6 MiB` | `77.9 MiB` | `55.8 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/postgrest-v16.5-r0) · [report](services/postgrest/REPORT.md) |
 | Auth | `v2.197.0` | `9.6 MiB` | `33.9 MiB` | `29.8 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/auth-v2.197.0-r0) · [report](services/auth/REPORT.md) |
-| Realtime | `v2.165.0` | `12.3 MiB` | `49.9 MiB` | `239.9 MiB` | `0.03%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/realtime-v2.165.0-r0) · [report](services/realtime/REPORT.md) |
+| Realtime | `v2.167.0` | `12.3 MiB` | `49.9 MiB` | `230.2 MiB` | `0.23%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/realtime-v2.167.0-r0) · [report](services/realtime/REPORT.md) |
 | Storage | `v1.96.0` | `40.4 MiB` | `171.8 MiB` | `293.4 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/storage-v1.96.0-r0) · [report](services/storage/REPORT.md) |
 | Edge Runtime | `v1.79.1` | `40.0 MiB` | `161.6 MiB` | `56.3 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/edge-runtime-v1.79.1-r0) · [report](services/edge-runtime/REPORT.md) |
 | Studio | `2026.11.16-sha-51bd16d` | `61.8 MiB` | `268.5 MiB` | `385.2 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/studio-2026.11.16-sha-51bd16d-r0) · [report](services/studio/REPORT.md) |
