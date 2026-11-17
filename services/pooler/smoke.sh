@@ -50,14 +50,7 @@ if [[ -n "$artifact_rootfs" ]]; then
     || fail "pooler tenant Elixir helper not found: $artifact_rootfs/share/supabase-cli/provision-tenant.exs"
 
   pg_port="$(postgres_port)"
-  port="$(python3 - <<'PY'
-import socket
-
-with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-    sock.bind(("127.0.0.1", 0))
-    print(sock.getsockname()[1])
-PY
-)"
+  reserve_port port
   pooler_log="$(mktemp "${TMPDIR:-/tmp}/pooler-smoke.XXXXXX.log")"
 
   pooler_env=(

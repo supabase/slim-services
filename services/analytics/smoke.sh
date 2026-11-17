@@ -41,14 +41,7 @@ if [[ -n "$artifact_rootfs" ]]; then
   [[ -x "$artifact_rootfs/bin/prepare" ]] || fail "analytics preparation helper not found or not executable: $artifact_rootfs/bin/prepare"
 
   pg_port="$(postgres_port)"
-  port="$(python3 - <<'PY'
-import socket
-
-with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-    sock.bind(("127.0.0.1", 0))
-    print(sock.getsockname()[1])
-PY
-)"
+  reserve_port port
   analytics_log="$(mktemp "${TMPDIR:-/tmp}/analytics-smoke.XXXXXX.log")"
 
   analytics_env=(

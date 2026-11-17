@@ -62,6 +62,7 @@ jobs:
           scripts/test-portable-postgres.sh
           scripts/test-portable-postgrest.sh
           scripts/test-identity.sh
+          scripts/test-smoke-lib.sh
 
       - name: Test artifact contracts
         run: |

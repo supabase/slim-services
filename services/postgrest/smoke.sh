@@ -34,14 +34,7 @@ if [[ -n "$artifact_rootfs" ]]; then
   [[ -x "$postgrest_bin" ]] || fail "postgrest artifact binary not found or not executable: $postgrest_bin"
 
   pg_port="$(postgres_port)"
-  port="$(python3 - <<'PY'
-import socket
-
-with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-    sock.bind(("127.0.0.1", 0))
-    print(sock.getsockname()[1])
-PY
-)"
+  reserve_port port
   postgrest_log="$(mktemp "${TMPDIR:-/tmp}/postgrest-smoke.XXXXXX.log")"
 
   log "smoke testing postgrest host process on port $port"

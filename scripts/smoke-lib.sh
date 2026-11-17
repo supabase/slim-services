@@ -5,6 +5,12 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=scripts/lib.sh
 source "$ROOT_DIR/scripts/lib.sh"
 
+# bash 3.2 (macOS /bin/bash) exits 0 when a `set -u` error fires under the
+# EXIT trap below, so a smoke that dies on an unbound variable would pass.
+if (( BASH_VERSINFO[0] < 4 )); then
+  fail "smokes need bash >= 4 (running $BASH_VERSION); put a newer bash first on PATH"
+fi
+
 RUN_ID="${RUN_ID:-$(date +%s)-$$}"
 NETWORK="${NETWORK:-slim-smoke-$RUN_ID}"
 POSTGRES_CONTAINER="${POSTGRES_CONTAINER:-slim-smoke-postgres-$RUN_ID}"
@@ -15,6 +21,8 @@ network_created=0
 host_pg_dir=""
 host_pg_bin=""
 host_pg_port=""
+smoke_port_lock_dir="${TMPDIR:-/tmp}/slim-smoke-ports"
+reserved_port_locks=()
 
 cleanup_smoke() {
   set +e
@@ -38,6 +46,77 @@ cleanup_smoke() {
   if [[ "${network_created:-0}" == "1" ]]; then
     docker network rm "$NETWORK" >/dev/null 2>&1 || true
   fi
+  # Release port reservations last, once every process that bound them is gone.
+  for lock in "${reserved_port_locks[@]:-}"; do
+    [[ -n "$lock" ]] && rmdir "$lock" >/dev/null 2>&1
+  done
+  return 0
+}
+
+# Reserve a loopback TCP port for a host-process service: reserve_port VAR.
+# The port stays reserved until cleanup_smoke, across service restarts.
+#
+# Binding 127.0.0.1:0 and closing the socket hands back a port from the
+# kernel's ephemeral range, the pool every outbound connect() and port-0 bind
+# on the host draws from, so another socket can take it before the service
+# binds (EADDRINUSE). Ports here come from below the ephemeral range, which the
+# kernel never assigns implicitly; only an explicit bind can claim one. A bind
+# probe skips ports a running listener already holds, and an atomic per-port
+# lock directory excludes concurrent smokes on the same host.
+# Locals carry a reserve_port_ prefix: printf -v assigns the innermost variable
+# of that name, so a plain `local port` would shadow a caller's `port`.
+reserve_port() {
+  local reserve_port_var="$1"
+  local reserve_port_value
+  [[ "$reserve_port_var" != reserve_port_* ]] || fail "reserve_port: variable name $reserve_port_var is reserved"
+  require_cmd python3
+  mkdir -p "$smoke_port_lock_dir"
+  reserve_port_value="$(python3 - "$smoke_port_lock_dir" <<'PY'
+import os
+import platform
+import random
+import socket
+import subprocess
+import sys
+
+lock_dir = sys.argv[1]
+system = platform.system()
+if system == "Linux":
+    with open("/proc/sys/net/ipv4/ip_local_port_range", encoding="ascii") as fh:
+        ephemeral_first = int(fh.read().split()[0])
+elif system == "Darwin":
+    ephemeral_first = min(
+        int(subprocess.check_output(["sysctl", "-n", name], text=True))
+        for name in ("net.inet.ip.portrange.first", "net.inet.ip.portrange.hifirst")
+    )
+else:
+    sys.exit(f"reserve_port: unsupported host {system}")
+
+low, high = 10000, min(32767, ephemeral_first - 1)
+if high - low < 1000:
+    sys.exit(f"reserve_port: ephemeral range starts at {ephemeral_first}, leaving no non-ephemeral ports")
+
+candidates = list(range(low, high + 1))
+random.shuffle(candidates)
+for port in candidates:
+    lock = os.path.join(lock_dir, str(port))
+    try:
+        os.mkdir(lock)
+    except FileExistsError:
+        continue
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind(("127.0.0.1", port))
+    except OSError:
+        os.rmdir(lock)
+        continue
+    print(port)
+    sys.exit(0)
+sys.exit("reserve_port: no free non-ephemeral loopback port")
+PY
+)" || fail "could not reserve a loopback port"
+  reserved_port_locks+=("$smoke_port_lock_dir/$reserve_port_value")
+  printf -v "$reserve_port_var" '%s' "$reserve_port_value"
 }
 
 trap cleanup_smoke EXIT
@@ -135,14 +214,7 @@ start_host_postgres() {
   pg_store="$(nix_tool postgresql_16)"
   host_pg_bin="$pg_store/bin"
   host_pg_dir="$(mktemp -d "${TMPDIR:-/tmp}/slim-smoke-pg.XXXXXX")"
-  host_pg_port="$(python3 - <<'PY'
-import socket
-
-with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-    sock.bind(("127.0.0.1", 0))
-    print(sock.getsockname()[1])
-PY
-)"
+  reserve_port host_pg_port
 
   "$host_pg_bin/initdb" -D "$host_pg_dir/data" -U postgres --auth=trust >/dev/null
   "$host_pg_bin/pg_ctl" -D "$host_pg_dir/data" -l "$host_pg_dir/postgres.log" \
