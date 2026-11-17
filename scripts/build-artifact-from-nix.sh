@@ -152,20 +152,27 @@ fi
 # "same key => same bytes": a recipe change can legitimately move a key to a
 # different URL, so a pin only applies when the published release's
 # recorded URL for that key still matches the URL this evaluation produced.
+# The one exception is services/<service>/upstream-replacements.json, a
+# reviewed record of upstream bytes deliberately replaced under the same URL
+# (a defective build re-uploaded by its maintainer). An entry only applies
+# when the published hash equals its `replaced` hash AND its `url` equals the
+# URL this evaluation produced; the pin is then the entry's `replacement`
+# instead. It is still a pin (never a fallback to probing), so if upstream
+# changes the bytes again the build fails loudly.
 pinned_probe_urls="$(nix_release eval "$release_dir" "legacyPackages.$NIX_SYSTEM.pinnedProbes" --json)"
 if [[ "$(python3 -c 'import json,sys; print(len(json.loads(sys.argv[1])))' "$pinned_probe_urls")" != "0" ]]; then
   platform_dir="$(artifact_platform_dir "$TARGET_OS" "$ARCH")"
   if [[ -n "${GH_REPO:-}" ]]; then
     manifest_dir="$work_dir/pinned-manifest"
     mkdir -p "$manifest_dir"
-    if ! python3 - "$service" "$VERSION" "$GH_REPO" "$platform_dir" "$manifest_dir" "$release_dir/release.json" "$pinned_probe_urls" <<'PY'
+    if ! python3 - "$service" "$VERSION" "$GH_REPO" "$platform_dir" "$manifest_dir" "$release_dir/release.json" "$pinned_probe_urls" "$ROOT_DIR/services/$service/upstream-replacements.json" <<'PY'
 import json
 import os
 import re
 import subprocess
 import sys
 
-service, version, repo, platform_dir, manifest_dir, release_path, pinned_urls_json = sys.argv[1:]
+service, version, repo, platform_dir, manifest_dir, release_path, pinned_urls_json, replacements_path = sys.argv[1:]
 pinned_urls = json.loads(pinned_urls_json)
 
 
@@ -179,6 +186,51 @@ def info(message):
 
 def error(message):
     print(f"[slim] ERROR: {message}", file=sys.stderr)
+
+
+SRI_SHA256 = re.compile(r"sha256-[A-Za-z0-9+/]{43}=")
+REPLACEMENT_KEYS = {"url", "replaced", "replacement", "reason"}
+
+
+# Reviewed upstream byte replacements; absent file means none. Malformed
+# content fails closed: a typo here must never silently weaken the pin guard.
+def load_replacements(path):
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, encoding="utf-8") as stream:
+            entries = json.load(stream)
+    except (OSError, ValueError) as exc:
+        error(f"cannot read {path}: {exc}")
+        sys.exit(1)
+    if not isinstance(entries, list):
+        error(f"{path} must be a JSON array of replacement entries")
+        sys.exit(1)
+    seen = set()
+    for index, entry in enumerate(entries):
+        where = f"{path} entry {index}"
+        if not isinstance(entry, dict) or set(entry) != REPLACEMENT_KEYS:
+            error(f"{where} must be an object with exactly the keys {sorted(REPLACEMENT_KEYS)}")
+            sys.exit(1)
+        if not all(isinstance(value, str) and value for value in entry.values()):
+            error(f"{where} values must be non-empty strings")
+            sys.exit(1)
+        for field in ("replaced", "replacement"):
+            if SRI_SHA256.fullmatch(entry[field]) is None:
+                error(f"{where} {field} is not a sha256- SRI hash: {entry[field]}")
+                sys.exit(1)
+        if entry["replaced"] == entry["replacement"]:
+            error(f"{where} replaced and replacement are identical")
+            sys.exit(1)
+        identity = (entry["url"], entry["replaced"])
+        if identity in seen:
+            error(f"{where} duplicates the url and replaced hash of an earlier entry")
+            sys.exit(1)
+        seen.add(identity)
+    return entries
+
+
+replacements = load_replacements(replacements_path)
 
 
 # A hash we deliberately pinned must never be silently skipped because we
@@ -253,6 +305,26 @@ for key, current_url in pinned_urls.items():
         info(
             f"{key}'s upstream URL changed since {release_tag} "
             f"({recorded_url} -> {current_url}); probing normally"
+        )
+        continue
+    replacement = next(
+        (
+            entry for entry in replacements
+            if entry["url"] == current_url and entry["replaced"] == derived[key]
+        ),
+        None,
+    )
+    if replacement is not None:
+        release["hashes"][key] = replacement["replacement"]
+        pins[key] = {
+            "release_tag": release_tag,
+            "url": current_url,
+            "replaced": replacement["replaced"],
+        }
+        info(
+            f"pinning {key} to the reviewed upstream replacement of {release_tag}'s hash "
+            f"({replacement['replaced']} -> {replacement['replacement']}, url {current_url}): "
+            f"{replacement['reason']}"
         )
         continue
     release["hashes"][key] = derived[key]
@@ -338,8 +410,14 @@ with open(log_path, encoding="utf-8") as stream:
 for key, pin in pins.items():
     pinned_hash = release["hashes"].get(key)
     if pinned_hash and f"specified: {pinned_hash}" in log_text:
+        origin = f"from {pin['release_tag']}"
+        if "replaced" in pin:
+            origin = (
+                f"the reviewed replacement of {pin['replaced']} published in "
+                f"{pin['release_tag']}, per upstream-replacements.json"
+            )
         print(
-            f"[slim] ERROR: pinned hash for {key} ({pinned_hash}, from {pin['release_tag']}, "
+            f"[slim] ERROR: pinned hash for {key} ({pinned_hash}, {origin}, "
             f"url {pin['url']}) no longer matches upstream bytes; the upstream artifact "
             "changed under the same URL",
             file=sys.stderr,

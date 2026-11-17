@@ -1,0 +1,26 @@
+[
+  {
+    "url": "https://github.com/supabase/rusty_v8/releases/download/v130.0.7/librusty_v8_release_x86_64-unknown-linux-gnu.a.gz",
+    "replaced": "sha256-4tF7bHXad7K1ADwv3r718HUawEixSEOR5fNoBYJkFsA=",
+    "replacement": "sha256-8JvSFCBaJEAs+hagdkH6WqPoNM/pS/AAKpx/xT5ys50=",
+    "reason": "Upstream re-uploaded this asset to replace a build whose V8 snapshot froze wrong Math constants (supabase/edge-runtime#723)."
+  },
+  {
+    "url": "https://github.com/supabase/rusty_v8/releases/download/v130.0.7-patch.1/librusty_v8_release_x86_64-unknown-linux-gnu.a.gz",
+    "replaced": "sha256-4tF7bHXad7K1ADwv3r718HUawEixSEOR5fNoBYJkFsA=",
+    "replacement": "sha256-8JvSFCBaJEAs+hagdkH6WqPoNM/pS/AAKpx/xT5ys50=",
+    "reason": "Upstream re-uploaded this asset to replace a build whose V8 snapshot froze wrong Math constants (supabase/edge-runtime#723)."
+  },
+  {
+    "url": "https://github.com/supabase/rusty_v8/releases/download/v130.0.7/src_binding_release_x86_64-unknown-linux-gnu.rs",
+    "replaced": "sha256-sq8JII71BvnI43jNMm5yCj8WgGQ1K9n7AcOCJsfklRQ=",
+    "replacement": "sha256-pR88m+XXpSUyxHQiRoDPgxA3OdLJfmcvJfy8kdvSavw=",
+    "reason": "Upstream re-uploaded this asset to replace a build whose V8 snapshot froze wrong Math constants (supabase/edge-runtime#723)."
+  },
+  {
+    "url": "https://github.com/supabase/rusty_v8/releases/download/v130.0.7-patch.1/src_binding_release_x86_64-unknown-linux-gnu.rs",
+    "replaced": "sha256-sq8JII71BvnI43jNMm5yCj8WgGQ1K9n7AcOCJsfklRQ=",
+    "replacement": "sha256-pR88m+XXpSUyxHQiRoDPgxA3OdLJfmcvJfy8kdvSavw=",
+    "reason": "Upstream re-uploaded this asset to replace a build whose V8 snapshot froze wrong Math constants (supabase/edge-runtime#723)."
+  }
+]
