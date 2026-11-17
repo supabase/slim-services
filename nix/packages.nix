@@ -472,7 +472,10 @@ let
       # different URL (for example Analytics' rustlerNifVersion changing
       # which NIF asset a hotfix of an old version downloads); the build
       # path only pins when the published release's recorded URL for a key
-      # still matches the URL this evaluation produced.
+      # still matches the URL this evaluation produced. The one exception is
+      # services/<service>/upstream-replacements.json, a reviewed record of
+      # bytes upstream deliberately replaced under the same URL: an entry
+      # matching URL and old hash swaps in its replacement hash as the pin.
       pinnedProbes =
         if releaseService == "realtime" then
           { }

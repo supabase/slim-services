@@ -50,7 +50,12 @@ assert_smoke_body() {
 
     body="$(curl -fsS "$url" 2>/dev/null || true)"
     case "$body" in
-      *'"ok":true'*'"method":"GET"'*'"path":"/smoke"'*) break ;;
+      *'"ok":true'*'"method":"GET"'*'"path":"/smoke"'*'"math":{}'*) break ;;
+      # The function ran but its Math constants are wrong: waiting longer
+      # cannot fix a defective rusty_v8 build, so fail immediately.
+      *'"ok":true'*'"math":{"'*)
+        fail "edge-runtime smoke function reports wrong Math constants (defective rusty_v8 build, see https://github.com/supabase/edge-runtime/issues/723): $body"
+        ;;
     esac
 
     if (( "$(date +%s)" - start_time >= timeout )); then
