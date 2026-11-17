@@ -110,7 +110,7 @@ rebuilds can preview table changes with
 published release manifests remain the source of truth for this snapshot.
 
 Linux archives share a measured, CI-gated Ubuntu 22.04/glibc 2.35 floor (see
-CI_MATRIX.md); macOS archives require macOS 14+. Artifacts that consume host
+CI_MATRIX.md); macOS archives require macOS 15+. Artifacts that consume host
 glibc (currently edge-runtime and Mailpit) are checked against that floor.
 Postgres, PostgREST (dynamic Linux builds), imgproxy, the BEAM trio, and the
 Node services (storage, pgmeta, and Studio) carry a matched loader+glibc

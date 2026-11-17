@@ -39,7 +39,7 @@ host-glibc consumers must provide glibc >= 2.35 (including Ubuntu 22.04+,
 Debian 13+, and Fedora 40+). Every linux artifact is additionally executed
 inside `ubuntu:22.04` (glibc 2.35 exactly) by
 `scripts/floor-check-linux.sh`.
-Darwin archives may require at most **macOS 14.0** (Mach-O minos, same
+Darwin archives may require at most **macOS 15.0** (Mach-O minos, same
 audit). Per-service overrides: `GLIBC_FLOOR_MAX` / `MACOS_FLOOR_MAX` in
 `recipe.env`; global: `SLIM_GLIBC_FLOOR_MAX` / `SLIM_MACOS_FLOOR_MAX`.
 
