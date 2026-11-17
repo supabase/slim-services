@@ -42,6 +42,10 @@ inside `ubuntu:22.04` (glibc 2.35 exactly) by
 Darwin archives may require at most **macOS 14.0** (Mach-O minos, same
 audit). Per-service overrides: `GLIBC_FLOOR_MAX` / `MACOS_FLOOR_MAX` in
 `recipe.env`; global: `SLIM_GLIBC_FLOOR_MAX` / `SLIM_MACOS_FLOOR_MAX`.
+PostgREST's upstream macOS binary inherits its CI runner's deployment target
+(v16.2-v16.5 minos 14.0, v16.6 minos 15.0 with identical imports), so its Nix
+recipe runs `scripts/lower-macho-minos.py 14.0` on it, which only ever lowers a
+minos above 14.0 and leaves binaries already within policy byte-identical.
 
 The current service profiles are: edge-runtime and Mailpit consume host glibc;
 Postgres, dynamic Linux PostgREST, imgproxy, the BEAM services, and the Node
