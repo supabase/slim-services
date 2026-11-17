@@ -55,7 +55,7 @@ imgproxy, the BEAM services, and the Node services bundle a matched
 loader+glibc runtime and are proven in Ubuntu 22.04; their manifests report a
 null host floor because the artifact-owned libc defines the runtime floor.
 Auth is statically linked and Vector uses musl. macOS artifacts are gated at
-macOS 14. `darwin-amd64` has no supported build and smoke target. The floor
+macOS 15. `darwin-amd64` has no supported build and smoke target. The floor
 check is an execution proof; it does not replace service smoke.
 
 The glibc side-data decision is recorded in
