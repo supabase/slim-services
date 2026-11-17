@@ -60,6 +60,7 @@ class ReleasePollerTest(unittest.TestCase):
         self.fake_bin.mkdir()
         self.trace = self.directory / "gh-trace"
         self.api_trace = self.directory / "gh-api-trace"
+        self.run_trace = self.directory / "gh-run-trace"
         self.upstream_releases = self.directory / "upstream-releases"
         self.upstream_releases.write_text(
             "v2.129.0\nv2.128.3\nv2.128.2\nv2.128.1\nv2.128.0\n",
@@ -106,6 +107,7 @@ class ReleasePollerTest(unittest.TestCase):
             "    esac\n"
             "    ;;\n"
             "  run)\n"
+            "    printf '%s\\n' \"$*\" >> \"$FAKE_RUN_TRACE\"\n"
             "    cat \"$FAKE_RUNS_JSON\"\n"
             "    ;;\n"
             "  workflow)\n"
@@ -157,11 +159,12 @@ class ReleasePollerTest(unittest.TestCase):
         max_active_releases="12",
         docker_hub_api_base=None,
         compose_failure=False,
+        validation_services=None,
+        github_token="test-token",
     ):
         environment = {
             **os.environ,
             "PATH": f"{self.fake_bin}:{os.environ['PATH']}",
-            "GH_TOKEN": "test-token",
             "POLL_SERVICE": service,
             "SERVICE_RELEASE_REF": "main",
             "SERVICE_RELEASE_CONFIG": str(self.config),
@@ -172,10 +175,13 @@ class ReleasePollerTest(unittest.TestCase):
             "FAKE_COMPOSE_CONTENT": self.compose_content,
             "FAKE_COMPOSE_FAILURE": "1" if compose_failure else "0",
             "FAKE_API_TRACE": str(self.api_trace),
+            "FAKE_RUN_TRACE": str(self.run_trace),
             "FAKE_DOCKER_TRACE": str(self.docker_trace),
             "FAKE_MISSING_IMAGES": str(self.missing_images),
             "FAKE_TRANSIENT_IMAGES": str(self.transient_images),
         }
+        if github_token is not None:
+            environment["GH_TOKEN"] = github_token
         if max_dispatches_per_service is not None:
             environment["POLL_MAX_DISPATCHES_PER_SERVICE"] = str(
                 max_dispatches_per_service
@@ -185,13 +191,56 @@ class ReleasePollerTest(unittest.TestCase):
         if docker_hub_api_base is not None:
             environment["DOCKER_HUB_API_BASE"] = docker_hub_api_base
 
+        arguments = [str(POLLER)]
+        if validation_services is not None:
+            arguments += ["--validation-versions", *validation_services]
         return subprocess.run(
-            [str(POLLER)],
+            arguments,
             text=True,
             capture_output=True,
             env=environment,
             check=False,
         )
+
+    def run_validation(self, *services, **kwargs):
+        # Validation selection is read-only: whatever the outcome, it must
+        # neither list workflow runs nor dispatch a release.
+        result = self.run_poller(validation_services=list(services), **kwargs)
+        self.assertFalse(self.run_trace.exists(), "gh run must not be called")
+        self.assertFalse(self.trace.exists(), "no workflow may be dispatched")
+        return result
+
+    def serve_docker_hub(self, names):
+        class DockerHubHandler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                body = json.dumps(
+                    {
+                        "count": len(names),
+                        "next": None,
+                        "previous": None,
+                        "results": [{"name": name} for name in names],
+                    }
+                ).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *_args):
+                pass
+
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), DockerHubHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+
+        def stop():
+            server.shutdown()
+            server.server_close()
+            thread.join()
+
+        self.addCleanup(stop)
+        return f"http://127.0.0.1:{server.server_port}/v2"
 
     def configure_compose_pin(self):
         self.config.write_text(
@@ -1205,6 +1254,297 @@ class ReleasePollerTest(unittest.TestCase):
             result.stdout,
         )
         self.assertFalse(self.trace.exists())
+    def test_validation_selects_the_floor_and_newest_unpublished_version(self):
+        result = self.run_validation("realtime")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            result.stdout.splitlines(),
+            ["realtime\tv2.128.0", "realtime\tv2.129.0"],
+        )
+        # A published revision of the newest tag moves the pick to the newest
+        # tag that still has no release.
+        self.published.write_text(
+            published_jsonl_from_lines("realtime-v2.129.0-r1\nrealtime-v2.128.0-r0\n"),
+            encoding="utf-8",
+        )
+        result = self.run_validation("realtime")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            result.stdout.splitlines(),
+            ["realtime\tv2.128.0", "realtime\tv2.128.3"],
+        )
+
+    def test_validation_with_everything_published_takes_floor_and_newest(self):
+        self.published.write_text(
+            published_jsonl_from_lines(
+                "".join(
+                    f"realtime-{version}-r0\n"
+                    for version in (
+                        "v2.129.0",
+                        "v2.128.3",
+                        "v2.128.2",
+                        "v2.128.1",
+                        "v2.128.0",
+                    )
+                )
+            ),
+            encoding="utf-8",
+        )
+        result = self.run_validation("realtime")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            result.stdout.splitlines(),
+            ["realtime\tv2.128.0", "realtime\tv2.129.0"],
+        )
+
+    def test_validation_deduplicates_when_floor_is_the_only_version(self):
+        self.upstream_releases.write_text("v2.128.0\n", encoding="utf-8")
+        result = self.run_validation("realtime")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines(), ["realtime\tv2.128.0"])
+        self.assertFalse(self.docker_trace.exists())
+
+    def test_validation_orders_services_by_argument_and_deduplicates(self):
+        self.configure_storage()
+        config = json.loads(self.config.read_text(encoding="utf-8"))
+        config["services"]["realtime"] = {
+            "repository": "supabase/realtime",
+            "tag_pattern": r"^v[0-9]+\.[0-9]+\.[0-9]+$",
+            "release_floor": "v1.84.15",
+            "poll": True,
+        }
+        self.config.write_text(json.dumps(config), encoding="utf-8")
+        result = self.run_validation("storage", "realtime", "storage")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            result.stdout.splitlines(),
+            [
+                "storage\tv1.84.15",
+                "storage\tv1.84.18",
+                "realtime\tv1.84.15",
+                "realtime\tv1.84.18",
+            ],
+        )
+
+    def test_validation_identity_service_skips_newest_without_upstream_image(self):
+        self.configure_storage()
+        self.missing_images.write_text(
+            "supabase/storage-api:v1.84.18\n", encoding="utf-8"
+        )
+        result = self.run_validation("storage")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            result.stdout.splitlines(),
+            ["storage\tv1.84.15", "storage\tv1.84.17"],
+        )
+        self.assertEqual(
+            self.docker_trace.read_text(encoding="utf-8").splitlines(),
+            ["supabase/storage-api:v1.84.18", "supabase/storage-api:v1.84.17"],
+        )
+
+    def test_validation_identity_service_without_any_image_takes_newest_eligible(self):
+        self.configure_storage()
+        self.missing_images.write_text(
+            "".join(
+                f"supabase/storage-api:v1.84.{patch}\n" for patch in (15, 16, 17, 18)
+            ),
+            encoding="utf-8",
+        )
+        result = self.run_validation("storage")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            result.stdout.splitlines(),
+            ["storage\tv1.84.15", "storage\tv1.84.18"],
+        )
+
+    def test_validation_identity_service_with_everything_published_checks_no_image(self):
+        self.configure_storage()
+        self.published.write_text(
+            published_jsonl_from_lines(
+                "".join(
+                    f"storage-v1.84.{patch}-r0\n" for patch in (15, 16, 17, 18)
+                )
+            ),
+            encoding="utf-8",
+        )
+        result = self.run_validation("storage")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            result.stdout.splitlines(),
+            ["storage\tv1.84.15", "storage\tv1.84.18"],
+        )
+        self.assertFalse(self.docker_trace.exists())
+
+    def test_validation_fails_when_the_upstream_image_state_is_unknown(self):
+        self.configure_storage()
+        self.transient_images.write_text(
+            "supabase/storage-api:v1.84.18\n", encoding="utf-8"
+        )
+        result = self.run_validation("storage")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("429 Too Many Requests", result.stderr)
+
+    def test_validation_selects_a_floor_and_newest_per_release_line(self):
+        production_config = json.loads(
+            (ROOT / ".github" / "service-release-sources.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.config.write_text(
+            json.dumps(
+                {"services": {"postgres": production_config["services"]["postgres"]}}
+            ),
+            encoding="utf-8",
+        )
+        self.published.write_text(
+            published_jsonl_from_lines(
+                "postgres-15.14.1.177-r0\npostgres-17.6.1.177-r0\npostgres-17.9.0.028-orioledb-r0\n"
+            ),
+            encoding="utf-8",
+        )
+        docker_hub = self.serve_docker_hub(
+            [
+                "17.6.1.178",
+                "15.14.1.179",
+                "15.14.1.177-arm64",
+                "15.14.1.176",
+                "17.6.1.176",
+                "17.6.1.177",
+                "15.14.1.178",
+                "15.14.1.177",
+                "17.6.1.179",
+                "17.9.0.028-orioledb",
+            ]
+        )
+        # The newest PG17 image is not published yet, so that line falls back
+        # to the next older unpublished tag; the orioledb line has a single,
+        # already published version, so floor and newest coincide.
+        self.missing_images.write_text(
+            "supabase/postgres:17.6.1.179\n", encoding="utf-8"
+        )
+        result = self.run_validation("postgres", docker_hub_api_base=docker_hub)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            result.stdout.splitlines(),
+            [
+                "postgres\t15.14.1.177",
+                "postgres\t15.14.1.179",
+                "postgres\t17.6.1.177",
+                "postgres\t17.6.1.178",
+                "postgres\t17.9.0.028-orioledb",
+            ],
+        )
+
+    def test_validation_selects_the_single_pinned_compose_version(self):
+        self.configure_compose_pin()
+        result = self.run_validation("imgproxy")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines(), ["imgproxy\tv3.26.0"])
+        self.published.write_text(
+            published_jsonl_from_lines("imgproxy-v3.26.0-r2\n"), encoding="utf-8"
+        )
+        result = self.run_validation("imgproxy")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines(), ["imgproxy\tv3.26.0"])
+
+    def configure_external(self):
+        self.config.write_text(
+            json.dumps(
+                {
+                    "services": {
+                        "mailpit": {
+                            "repository": "axllent/mailpit",
+                            "tag_pattern": r"^v[0-9]+\.[0-9]+\.[0-9]+$",
+                            "external_release_descriptor": "services/mailpit/external-release.json",
+                            "poll": False,
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    def test_validation_selects_the_newest_published_version_of_external_services(self):
+        self.configure_external()
+        self.published.write_text(
+            published_jsonl_from_lines(
+                "mailpit-v1.9.0-r3\nmailpit-v1.28.0-r0\nmailpit-v1.28.0-r1\n"
+                "mailpit-v1.30.0\nmailpit-v1.31.0-r0-rc\nmailpit-extra-v9.0.0-r0\n"
+            ),
+            encoding="utf-8",
+        )
+        result = self.run_validation("mailpit")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines(), ["mailpit\tv1.28.0"])
+        self.assertFalse(self.docker_trace.exists())
+
+    def test_validation_fails_when_external_service_is_unpublished(self):
+        self.configure_external()
+        self.published.write_text(
+            published_jsonl_from_lines(
+                "mailpit-v1.28.0-r0-draft\nrealtime-v2.128.0-r0\n"
+            ),
+            encoding="utf-8",
+        )
+        result = self.run_validation("mailpit")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("no published release of mailpit", result.stderr)
+        self.assertIn("cannot select validation versions for mailpit", result.stderr)
+
+    def test_validation_rejects_unknown_services(self):
+        result = self.run_validation("realtime", "nonesuch")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("unknown service: nonesuch", result.stderr)
+
+    def test_validation_requires_services_and_a_token(self):
+        result = self.run_validation()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("at least one service", result.stderr)
+        result = self.run_validation("realtime", github_token=None)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("GH_TOKEN is required", result.stderr)
+
+    def test_validation_fails_where_the_normal_poll_continues(self):
+        # Each branch below is a path the normal poll logs and skips; skipping
+        # a service during validation would let it go unvalidated.
+        def assert_fails_only_in_validation(service, **kwargs):
+            normal = self.run_poller(service=service, **kwargs)
+            self.assertEqual(normal.returncode, 0, normal.stderr)
+            self.assertIn("continuing", normal.stderr)
+            self.assertFalse(self.trace.exists())
+            self.run_trace.unlink()
+            validation = self.run_validation(service, **kwargs)
+            self.assertNotEqual(validation.returncode, 0)
+            self.assertEqual(validation.stdout, "")
+
+        # Upstream query failure.
+        self.upstream_releases.unlink()
+        assert_fails_only_in_validation("realtime")
+        # Floor missing from the upstream releases.
+        self.upstream_releases.write_text("v2.129.0\nv2.128.3\n", encoding="utf-8")
+        assert_fails_only_in_validation("realtime")
+        # Compose resolution failure.
+        self.configure_compose_pin()
+        assert_fails_only_in_validation("imgproxy", compose_failure=True)
+        # Docker Hub reconciliation failure (nothing listens on the port).
+        production_config = json.loads(
+            (ROOT / ".github" / "service-release-sources.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.config.write_text(
+            json.dumps(
+                {"services": {"studio": production_config["services"]["studio"]}}
+            ),
+            encoding="utf-8",
+        )
+        assert_fails_only_in_validation(
+            "studio", docker_hub_api_base="http://127.0.0.1:9/v2"
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

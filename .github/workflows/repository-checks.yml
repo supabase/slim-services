@@ -54,6 +54,7 @@ jobs:
           scripts/test-release-results.sh
           scripts/test-dockerhub-release.sh
           scripts/test-poll-service-releases.sh
+          scripts/test-select-service-validation.sh
           scripts/test-portable-audit.sh
           scripts/test-os-floor.sh
           scripts/test-portable-node.sh

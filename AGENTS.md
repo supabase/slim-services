@@ -29,9 +29,11 @@
 ## Verify image changes in CI
 
 Do not local-build artifacts or smoke slim images when `service-release`
-can run the same path. Push the branch (and `workflow_dispatch`
-`service-release.yml` with `validation_only=true` on the PR ref to build
-and smoke without publishing), then watch those GitHub Actions runs.
+can run the same path. Push the branch and open the PR: the required
+`service validation` check builds and smokes the floor and newest backlog
+version of every affected service. For other backlog versions,
+`workflow_dispatch` `service-release.yml` with `validation_only=true` on the
+PR ref. Watch those GitHub Actions runs.
 Publishing, including hotfixes, only runs from `main`.
 `scripts/test-identity.sh` and other host-only unit scripts may still
 run locally. Build or smoke on the laptop only when CI cannot exercise

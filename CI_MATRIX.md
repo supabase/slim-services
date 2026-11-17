@@ -62,6 +62,19 @@ the checks in the workflow pass.
 Pass `validation_only=true` to build, smoke, and upload CI artifacts without
 publishing a release or image.
 
+`.github/workflows/service-validation.yml` runs that same workflow with
+`validation_only=true` on every pull request and merge-queue group.
+`scripts/select-service-validation.sh` maps the changed paths to services:
+`services/<svc>/**` and `sources/<svc>` select that service, a changed entry
+in `.github/service-release-sources.json` selects its service, and shared
+build inputs (`scripts/**`, `nix/**`, `flake.*`, the release workflows)
+select every service. Documentation and host-only unit tests select nothing.
+For each selected service, `scripts/poll-service-releases.sh
+--validation-versions` picks the release floor and the newest unpublished
+backlog version of each release line (the newest eligible version when the
+backlog is empty). The `service validation` job aggregates the matrix and is
+a required check; it passes when nothing was selected.
+
 Use the repository's release policy and workflow as the source of truth for
 which service versions are eligible. This document does not assert that the
 latest upstream version has been built or released.
