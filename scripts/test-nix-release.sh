@@ -313,6 +313,97 @@ sys.exit(1)
         calls = [json.loads(line) for line in self.trace.read_text().splitlines()]
         self.assertTrue(any("dependencyProbes" in " ".join(call["args"]) for call in calls))
 
+    # Fixture hashes are well-formed SRI values (43 base64 chars + "=").
+    OLD_HASH = "sha256-" + "O" * 43 + "="
+    NEW_HASH = "sha256-" + "N" * 43 + "="
+
+    def write_replacements(self, entries):
+        (self.repo / "services/auth/upstream-replacements.json").write_text(
+            entries if isinstance(entries, str) else json.dumps(entries))
+
+    def replacement_entry(self, **overrides):
+        return {"url": self.PIN_URL, "replaced": self.OLD_HASH, "replacement": self.NEW_HASH,
+                "reason": "Upstream re-uploaded the asset to fix a defect.", **overrides}
+
+    def publish_old_hash(self):
+        manifest = {
+            "service": "auth", "version": "v1.0.0-r0", "platform": "linux/amd64",
+            "nix_derived_hashes": {"vendor_hash": self.OLD_HASH},
+        }
+        return self.write_fake_gh(["auth-v1.0.0-r0"], manifest_tag="auth-v1.0.0-r0", manifest_data=manifest)
+
+    def nix_calls(self):
+        return [json.loads(line) for line in self.trace.read_text().splitlines()]
+
+    def test_matching_upstream_replacement_pins_the_replacement_hash(self):
+        self.write_replacements([self.replacement_entry()])
+        result = self.build("v1.0.0", **self.publish_old_hash())
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertIn("pinning vendor_hash to the reviewed upstream replacement of auth-v1.0.0-r0", result.stdout)
+        for expected in (self.OLD_HASH, self.NEW_HASH, self.PIN_URL, "Upstream re-uploaded"):
+            self.assertIn(expected, result.stdout)
+        manifest_out = json.loads((self.repo / "artifacts/auth/v1.0.0/linux-amd64/manifest.json").read_text())
+        self.assertEqual(manifest_out["nix_derived_hashes"]["vendor_hash"], self.NEW_HASH)
+        self.assertEqual(manifest_out["nix_pinned_urls"]["vendor_hash"], self.PIN_URL)
+        calls = self.nix_calls()
+        # Still a pin: the replacement is never re-probed, and the runtime
+        # build consumed exactly the replacement hash.
+        self.assertFalse(any("dependencyProbes" in " ".join(call["args"]) for call in calls))
+        self.assertEqual(calls[-1]["release"]["hashes"]["vendor_hash"], self.NEW_HASH)
+
+    def test_replaced_pin_still_fails_loudly_when_upstream_changes_again(self):
+        self.write_replacements([self.replacement_entry()])
+        result = self.build("v1.0.0", FAKE_HASH_MISMATCH="1", **self.publish_old_hash())
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("[slim] ERROR: pinned hash for vendor_hash", result.stderr)
+        self.assertIn(self.NEW_HASH, result.stderr)
+        self.assertIn("reviewed replacement of " + self.OLD_HASH, result.stderr)
+        self.assertIn("upstream artifact changed", result.stderr)
+        self.assertFalse(any("dependencyProbes" in " ".join(call["args"]) for call in self.nix_calls()))
+
+    def assert_published_hash_pinned_despite_replacements(self, entries):
+        self.write_replacements(entries)
+        result = self.build("v1.0.0", **self.publish_old_hash())
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertNotIn("upstream replacement", result.stdout)
+        manifest_out = json.loads((self.repo / "artifacts/auth/v1.0.0/linux-amd64/manifest.json").read_text())
+        self.assertEqual(manifest_out["nix_derived_hashes"]["vendor_hash"], self.OLD_HASH)
+        self.assertFalse(any("dependencyProbes" in " ".join(call["args"]) for call in self.nix_calls()))
+
+    def test_replacement_for_a_different_url_is_ignored(self):
+        self.assert_published_hash_pinned_despite_replacements(
+            [self.replacement_entry(url="https://example.test/vendor-other.tar.gz")])
+
+    def test_replacement_for_a_different_replaced_hash_is_ignored(self):
+        self.assert_published_hash_pinned_despite_replacements(
+            [self.replacement_entry(replaced="sha256-" + "X" * 43 + "=")])
+
+    def test_malformed_replacements_fail_before_any_nix_build(self):
+        entry = self.replacement_entry()
+        cases = {
+            "not json": "{",
+            "not a list": {"url": self.PIN_URL},
+            "entry not an object": ["x"],
+            "missing key": [{k: v for k, v in entry.items() if k != "reason"}],
+            "extra key": [{**entry, "note": "x"}],
+            "empty reason": [{**entry, "reason": ""}],
+            "replaced not sri": [{**entry, "replaced": "deadbeef"}],
+            "replacement not sha256": [{**entry, "replacement": "sha512-" + "N" * 43 + "="}],
+            "replaced equals replacement": [{**entry, "replacement": self.OLD_HASH}],
+            "duplicate url and replaced": [entry, {**entry, "replacement": "sha256-" + "M" * 43 + "="}],
+        }
+        for name, content in cases.items():
+            with self.subTest(name):
+                self.trace.unlink(missing_ok=True)
+                self.write_replacements(content)
+                result = self.build("v1.0.0", **self.publish_old_hash())
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("[slim] ERROR:", result.stderr)
+                self.assertIn("upstream-replacements.json", result.stderr)
+                self.assertFalse((self.repo / "artifacts/auth/v1.0.0/linux-amd64/rootfs").exists())
+                # Only the pinnedProbes eval ran; no probe and no runtime build.
+                self.assertEqual(len(self.nix_calls()), 1)
+
     def test_release_listing_failure_fails_closed_without_probing(self):
         gh_env = self.write_fake_gh([], list_fails=True)
         result = self.build("v1.0.0", **gh_env)
