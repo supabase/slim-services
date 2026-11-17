@@ -57,12 +57,15 @@ cleanup_smoke() {
 # kernel never assigns implicitly; only an explicit bind can claim one. A bind
 # probe skips ports a running listener already holds, and an atomic per-port
 # lock directory excludes concurrent smokes on the same host.
+# Locals carry a reserve_port_ prefix: printf -v assigns the innermost variable
+# of that name, so a plain `local port` would shadow a caller's `port`.
 reserve_port() {
-  local var="$1"
-  local port
+  local reserve_port_var="$1"
+  local reserve_port_value
+  [[ "$reserve_port_var" != reserve_port_* ]] || fail "reserve_port: variable name $reserve_port_var is reserved"
   require_cmd python3
   mkdir -p "$smoke_port_lock_dir"
-  port="$(python3 - "$smoke_port_lock_dir" <<'PY'
+  reserve_port_value="$(python3 - "$smoke_port_lock_dir" <<'PY'
 import os
 import platform
 import random
@@ -106,8 +109,8 @@ for port in candidates:
 sys.exit("reserve_port: no free non-ephemeral loopback port")
 PY
 )" || fail "could not reserve a loopback port"
-  reserved_port_locks+=("$smoke_port_lock_dir/$port")
-  printf -v "$var" '%s' "$port"
+  reserved_port_locks+=("$smoke_port_lock_dir/$reserve_port_value")
+  printf -v "$reserve_port_var" '%s' "$reserve_port_value"
 }
 
 trap cleanup_smoke EXIT
