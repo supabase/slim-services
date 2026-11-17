@@ -80,14 +80,7 @@ PY
   done
 
   pg_data_dir="$(mktemp -d "${TMPDIR:-/tmp}/postgres-smoke.XXXXXX")"
-  port="$(python3 - <<'PY'
-import socket
-
-with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-    sock.bind(("127.0.0.1", 0))
-    print(sock.getsockname()[1])
-PY
-)"
+  reserve_port port
 
   log "starting postgres host process through service-owned lifecycle on port $port"
   # Use the bundled docker.io preload set (including plpgsql_check). A reduced

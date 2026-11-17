@@ -108,14 +108,7 @@ else
   "$auth_bin" version >/dev/null
 
   pg_port="$(postgres_port)"
-  port="$(python3 - <<'PY'
-import socket
-
-with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-    sock.bind(("127.0.0.1", 0))
-    print(sock.getsockname()[1])
-PY
-)"
+  reserve_port port
   auth_log="$(mktemp "${TMPDIR:-/tmp}/auth-smoke.XXXXXX.log")"
 
   log "smoke testing auth host process on port $port"

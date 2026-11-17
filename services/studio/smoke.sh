@@ -32,14 +32,7 @@ if [[ -n "$artifact_rootfs" ]]; then
   [[ -x "$artifact_rootfs/node/bin/node" ]] \
     || fail "studio artifact does not bundle a node runtime: $artifact_rootfs/node/bin/node"
 
-  port="$(python3 - <<'PY'
-import socket
-
-with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-    sock.bind(("127.0.0.1", 0))
-    print(sock.getsockname()[1])
-PY
-)"
+  reserve_port port
   studio_log="$(mktemp "${TMPDIR:-/tmp}/studio-smoke.XXXXXX.log")"
 
   log "smoke testing studio host process on port $port"

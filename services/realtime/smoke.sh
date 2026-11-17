@@ -58,14 +58,7 @@ if [[ -n "$artifact_rootfs" ]]; then
   api_secret='realtime-api-secret-with-at-least-32-characters'
   metrics_secret='realtime-metrics-secret-with-at-least-32'
   secret_key_base="$(openssl rand -hex 32)"
-  port="$(python3 - <<'PY'
-import socket
-
-with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-    sock.bind(("127.0.0.1", 0))
-    print(sock.getsockname()[1])
-PY
-)"
+  reserve_port port
   realtime_log="$(mktemp "${TMPDIR:-/tmp}/realtime-smoke.XXXXXX.log")"
 
   rt_env=(

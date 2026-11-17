@@ -2,6 +2,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=scripts/smoke-lib.sh
+source "$ROOT_DIR/scripts/smoke-lib.sh"
 require_bin="${MAILPIT_BIN:-}"
 [[ -x "$require_bin" ]] || {
   printf 'MAILPIT_BIN must name the normalized Mailpit executable\n' >&2
@@ -23,24 +25,13 @@ cleanup() {
   if [[ -d "$test_dir" ]]; then
     rm -r "$test_dir"
   fi
+  cleanup_smoke
 }
 trap cleanup EXIT
 
-read -r http_port smtp_port pop3_port <<<"$(python3 - <<'PY'
-import socket
-
-ports = []
-sockets = []
-for _ in range(3):
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.bind(("127.0.0.1", 0))
-    sockets.append(sock)
-    ports.append(str(sock.getsockname()[1]))
-print(" ".join(ports))
-for sock in sockets:
-    sock.close()
-PY
-)"
+reserve_port http_port
+reserve_port smtp_port
+reserve_port pop3_port
 
 message_id="<mailpit-persistence-${RUN_ID:-$$}@example.test>"
 checker="$ROOT_DIR/services/mailpit/smoke.py"

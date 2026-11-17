@@ -17,15 +17,6 @@ smoke_log="$(mktemp "${TMPDIR:-/tmp}/imgproxy-smoke.XXXXXX.log")"
 container=""
 port=""
 
-free_port() {
-  python3 - <<'PY'
-import socket
-with socket.socket() as sock:
-    sock.bind(("127.0.0.1", 0))
-    print(sock.getsockname()[1])
-PY
-}
-
 port_released() {
   python3 - "$1" <<'PY'
 import socket, sys
@@ -58,7 +49,7 @@ trap 'set +e; cleanup_smoke; rm -f "$smoke_log"' EXIT
 
 if [[ -n "$artifact_rootfs" ]]; then
   [[ -x "$artifact_rootfs/bin/imgproxy" ]] || fail "imgproxy artifact binary not found: $artifact_rootfs/bin/imgproxy"
-  port="$(free_port)"
+  reserve_port port
   # The native smoke serves its source fixture from localhost; allow that
   # loopback address only for this test harness, not in the image defaults.
   host_env=(IMGPROXY_BIND="127.0.0.1:$port" IMGPROXY_ALLOW_ORIGIN="*" IMGPROXY_ALLOW_LOOPBACK_SOURCE_ADDRESSES=true)

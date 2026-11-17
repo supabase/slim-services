@@ -38,21 +38,6 @@ cleanup_mailpit_smoke() {
 }
 trap cleanup_mailpit_smoke EXIT
 
-read -r http_port smtp_port pop3_port <<<"$(python3 - <<'PY'
-import socket
-
-ports = []
-sockets = []
-for _ in range(3):
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.bind(("127.0.0.1", 0))
-    sockets.append(sock)
-    ports.append(str(sock.getsockname()[1]))
-print(" ".join(ports))
-for sock in sockets:
-    sock.close()
-PY
-)"
 message_id="<mailpit-smoke-${RUN_ID}@example.test>"
 smoke_checker="$ROOT_DIR/services/mailpit/smoke.py"
 
@@ -92,6 +77,9 @@ stop_host_mailpit() {
 if [[ -n "$artifact_rootfs" ]]; then
   mailpit_bin="$artifact_rootfs/bin/mailpit"
   [[ -x "$mailpit_bin" ]] || fail "mailpit artifact binary not found or not executable: $mailpit_bin"
+  reserve_port http_port
+  reserve_port smtp_port
+  reserve_port pop3_port
 
   host_env=(
     MP_UI_BIND_ADDR="127.0.0.1:$http_port"

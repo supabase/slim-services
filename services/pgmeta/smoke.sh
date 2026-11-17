@@ -40,14 +40,7 @@ if [[ -n "$artifact_rootfs" ]]; then
     || fail "pgmeta artifact does not bundle a node runtime: $artifact_rootfs/node/bin/node"
 
   pg_port="$(postgres_port)"
-  port="$(python3 - <<'PY'
-import socket
-
-with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-    sock.bind(("127.0.0.1", 0))
-    print(sock.getsockname()[1])
-PY
-)"
+  reserve_port port
   pgmeta_log="$(mktemp "${TMPDIR:-/tmp}/pgmeta-smoke.XXXXXX.log")"
 
   log "smoke testing pgmeta host process on port $port"

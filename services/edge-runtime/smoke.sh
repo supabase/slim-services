@@ -160,14 +160,7 @@ else
   log "smoke testing edge-runtime artifact: --help"
   "$edge_runtime_bin" --help >/dev/null
 
-  port="$(python3 - <<'PY'
-import socket
-
-with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-    sock.bind(("127.0.0.1", 0))
-    print(sock.getsockname()[1])
-PY
-)"
+  reserve_port port
   edge_runtime_log="$(mktemp "${TMPDIR:-/tmp}/edge-runtime-smoke.XXXXXX.log")"
 
   log "smoke testing edge-runtime artifact: local function serve"
