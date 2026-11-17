@@ -68,8 +68,11 @@ permissions:
 env:
   GH_REPO: ${{ github.repository }}
 
+# Releases of one version serialize. Validation runs publish nothing, so each
+# gets its own group: sharing one would let a newer queued run cancel an older
+# pending one, failing a pull request's validation (service-validation.yml).
 concurrency:
-  group: service-release-${{ inputs.service }}-${{ inputs.version }}
+  group: service-release-${{ inputs.service }}-${{ inputs.version }}${{ inputs.validation_only && format('-validation-{0}', github.run_id) || '' }}
   cancel-in-progress: false
 
 jobs:

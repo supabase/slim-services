@@ -1,0 +1,123 @@
+name: Service validation
+
+# Builds, audits, and smokes the services a pull request (or merge-queue
+# group) affects on every supported target, through the same
+# service-release.yml path that publishes, with validation_only=true.
+# scripts/select-service-validation.sh maps the changed paths to services and
+# picks each service's versions from the release policy: the release floor
+# and the newest unpublished backlog version (AGENTS.md, release-backlog
+# compatibility). The `service validation` job is the stable required check;
+# it passes when nothing relevant changed.
+"on":
+  pull_request:
+  merge_group:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: service-validation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  select:
+    name: select services
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      count: ${{ steps.select.outputs.count }}
+      matrix: ${{ steps.select.outputs.matrix }}
+    steps:
+      - name: Checkout without persisted credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Select services and versions
+        id: select
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == "merge_group" ]]; then
+            base="$MERGE_GROUP_BASE_SHA"
+            git fetch --no-tags --depth=1 origin "$base"
+          else
+            # pull_request checks out the test merge commit; its first parent
+            # is the base branch tip it was merged onto.
+            base="$(git rev-parse HEAD^1)"
+          fi
+          matrix="$(scripts/select-service-validation.sh "$base" HEAD)"
+          count="$(jq '.include | length' <<< "$matrix")"
+          {
+            printf 'matrix=%s\n' "$matrix"
+            printf 'count=%s\n' "$count"
+          } >> "$GITHUB_OUTPUT"
+          {
+            printf '## Service validation\n\n'
+            if [[ "$count" == "0" ]]; then
+              printf 'No service build inputs changed.\n'
+            else
+              printf '| Service | Version |\n| --- | --- |\n'
+              jq -r '.include[] | "| \(.service) | \(.version) |"' <<< "$matrix"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  validate:
+    name: validate ${{ matrix.service }} ${{ matrix.version }}
+    needs: select
+    if: needs.select.outputs.count != '0'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.select.outputs.matrix) }}
+    # service-release.yml declares write scopes on its publish jobs, and
+    # GitHub checks a called workflow's permissions against the caller's
+    # before any job runs. Those jobs never run here: validation_only plans
+    # publish=false, and plan-release-revision.sh refuses to publish outside
+    # refs/heads/main. Fork pull requests still receive a read-only token.
+    permissions:
+      contents: write
+      packages: write
+    uses: ./.github/workflows/service-release.yml
+    with:
+      service: ${{ matrix.service }}
+      version: ${{ matrix.version }}
+      validation_only: true
+
+  service-validation:
+    name: service validation
+    needs:
+      - select
+      - validate
+    # always(): a cancelled or failed selection must fail this required
+    # check instead of skipping it (a skipped required check passes).
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require every selected validation to pass
+        shell: bash
+        env:
+          COUNT: ${{ needs.select.outputs.count }}
+          SELECT_RESULT: ${{ needs.select.result }}
+          VALIDATE_RESULT: ${{ needs.validate.result }}
+        run: |
+          set -euo pipefail
+          if [[ "$SELECT_RESULT" != "success" ]]; then
+            printf 'service selection %s\n' "$SELECT_RESULT" >&2
+            exit 1
+          fi
+          if [[ "$COUNT" == "0" ]]; then
+            printf 'no service build inputs changed\n'
+            exit 0
+          fi
+          if [[ "$VALIDATE_RESULT" != "success" ]]; then
+            printf 'service validation %s\n' "$VALIDATE_RESULT" >&2
+            exit 1
+          fi
+          printf '%s service versions validated\n' "$COUNT"

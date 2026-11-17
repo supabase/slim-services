@@ -180,26 +180,70 @@ PY
   exit 0
 fi
 
+# --validation-versions SERVICE...: print the SERVICE<TAB>VERSION pairs pull
+# request validation must build, one per line. Read-only: it never dispatches
+# and never queries workflow runs, and any service it cannot resolve fails the
+# command instead of being skipped.
+VALIDATION_MODE=0
+VALIDATION_SERVICES=""
+if [[ "${1:-}" == "--validation-versions" ]]; then
+  shift
+  if (( $# == 0 )); then
+    printf '%s\n' '--validation-versions requires at least one service' >&2
+    exit 1
+  fi
+  VALIDATION_MODE=1
+  VALIDATION_SERVICES="$*"
+fi
+
 [[ -n "${GH_TOKEN:-}" ]] || {
   printf 'GH_TOKEN is required to query releases and dispatch workflows\n' >&2
   exit 1
 }
 
-poll_configs="$(python3 - "$CONFIG_FILE" "$POLL_SERVICE" <<'PY'
+poll_configs="$(python3 - "$CONFIG_FILE" "$POLL_SERVICE" "$VALIDATION_SERVICES" <<'PY'
 import json
 import sys
 
-config_file, selected_service = sys.argv[1:]
+config_file, selected_service, validation_services = sys.argv[1:]
 with open(config_file, encoding="utf-8") as fh:
     services = json.load(fh)["services"]
 
-for service, config in services.items():
-    if selected_service and service != selected_service:
-        continue
-    if config.get("poll") is True and (
+def polled(config):
+    return config.get("poll") is True and (
         not config.get("external_release_descriptor")
         or config.get("release_source") == "github-compose"
-    ):
+    )
+
+if validation_services:
+    # Validation mode: only the named services, in argument order. A service
+    # that is not polled is marked "nonpolled" so the caller resolves it from
+    # its published releases instead of an upstream feed.
+    requested = list(dict.fromkeys(validation_services.split()))
+    for service in requested:
+        if service not in services:
+            raise SystemExit(f"unknown service: {service}")
+    selection = [(service, services[service]) for service in requested]
+else:
+    selection = list(services.items())
+
+for service, config in selection:
+    if not validation_services and selected_service and service != selected_service:
+        continue
+    if validation_services and not polled(config):
+        print(
+            service,
+            config.get("repository", "-"),
+            config["tag_pattern"],
+            "-",
+            "nonpolled",
+            "-",
+            "[]",
+            "{}",
+            sep="\t",
+        )
+        continue
+    if polled(config):
         print(
             service,
             config["repository"],
@@ -308,14 +352,19 @@ published_release_tags="$(
   gh api --paginate "repos/$TARGET_REPOSITORY/releases?per_page=100" \
     --jq '.[] | select(.draft | not) | .tag_name'
 )"
-runs_json="$(
-  gh run list \
-    --repo "$TARGET_REPOSITORY" \
-    --workflow "$TARGET_WORKFLOW" \
-    --limit 100 \
-    --json displayTitle,status,conclusion,createdAt,updatedAt
-)"
-active_release_count="$(RUNS_JSON="$runs_json" python3 - <<'PY'
+if [[ "$VALIDATION_MODE" == 1 ]]; then
+  # Validation only needs to know what is published, not what is running.
+  runs_json="[]"
+  active_release_count=0
+else
+  runs_json="$(
+    gh run list \
+      --repo "$TARGET_REPOSITORY" \
+      --workflow "$TARGET_WORKFLOW" \
+      --limit 100 \
+      --json displayTitle,status,conclusion,createdAt,updatedAt
+  )"
+  active_release_count="$(RUNS_JSON="$runs_json" python3 - <<'PY'
 import json
 import os
 
@@ -327,11 +376,155 @@ print(
     )
 )
 PY
-)"
+  )"
+fi
+
+# A service that cannot be resolved must fail validation selection rather than
+# be skipped like a normal poll, or the service would go unvalidated.
+abort_if_validating() {
+  if [[ "$VALIDATION_MODE" == 1 ]]; then
+    printf 'cannot select validation versions for %s\n' "$1" >&2
+    exit 1
+  fi
+}
+
+# Validation set for the current service (from $versions, ascending): per
+# release group, the floor plus the newest unpublished version that can build
+# (the newest overall when nothing is unpublished). Identity services need
+# their upstream image, so a missing image falls back to the next older tag.
+select_validation_versions() {
+  local groups group candidate image_state image_ref image_error floor newest picks
+  local identity=0 index
+  local -a group_versions
+  if is_identity_service "$service"; then
+    identity=1
+  fi
+  groups="$(
+    VERSIONS="$versions" python3 - "$release_lines_json" <<'PY'
+import json
+import os
+import re
+import sys
+
+release_lines = json.loads(sys.argv[1])
+versions = os.environ["VERSIONS"].split()
+if not release_lines:
+    print(*versions)
+    raise SystemExit(0)
+patterns = [re.compile(line["tag_pattern"]) for line in release_lines]
+buckets = [[] for _ in patterns]
+for version in versions:
+    matched = [index for index, pattern in enumerate(patterns) if pattern.fullmatch(version)]
+    if not matched:
+        raise SystemExit(f"version {version} matches no release line")
+    buckets[matched[0]].append(version)
+for bucket in buckets:
+    print(*bucket)
+PY
+  )"
+  picks=""
+  while IFS= read -r group; do
+    [[ -n "$group" ]] || continue
+    read -r -a group_versions <<< "$group"
+    floor="${group_versions[0]}"
+    picks+="$floor"$'\n'
+    newest=""
+    for (( index = ${#group_versions[@]} - 1; index >= 0; index-- )); do
+      candidate="${group_versions[index]}"
+      if [[ "$(release_candidate_state "$candidate")" == "published" ]]; then
+        continue
+      fi
+      if (( identity )); then
+        command -v docker >/dev/null 2>&1 || {
+          printf 'required command not found: docker\n' >&2
+          exit 1
+        }
+        IFS=$'\t' read -r image_state image_ref image_error \
+          <<< "$(upstream_image_state "$service" "$candidate")"
+        case "$image_state" in
+          present) ;;
+          missing)
+            printf '%s %s: upstream image %s is not published yet; trying an older version\n' \
+              "$service" "$candidate" "$image_ref" >&2
+            continue
+            ;;
+          *)
+            printf 'could not check upstream image %s for %s %s (%s)\n' \
+              "$image_ref" "$service" "$candidate" "$image_error" >&2
+            exit 1
+            ;;
+        esac
+      fi
+      newest="$candidate"
+      break
+    done
+    if [[ -z "$newest" ]]; then
+      newest="${group_versions[${#group_versions[@]} - 1]}"
+    fi
+    picks+="$newest"$'\n'
+  done <<< "$groups"
+  PICKS="$picks" python3 - "$service" <<'PY'
+import os
+import re
+import sys
+
+service = sys.argv[1]
+
+def version_key(value):
+    return tuple(
+        (0, int(part)) if part.isdigit() else (1, part)
+        for part in re.findall(r"\d+|\D+", value)
+    )
+
+for version in sorted(set(os.environ["PICKS"].split()), key=version_key):
+    print(f"{service}\t{version}")
+PY
+}
+
+# Non-polled services (external release descriptors) have no upstream feed to
+# poll: validate the newest version that has already been published.
+select_newest_published_version() {
+  local newest
+  newest="$(
+    PUBLISHED_RELEASE_TAGS="$published_release_tags" python3 - "$service" "$tag_pattern" <<'PY'
+import os
+import re
+import sys
+
+service, tag_pattern = sys.argv[1:]
+pattern = re.compile(tag_pattern)
+published = re.compile(rf"^{re.escape(service)}-(.+)-r(0|[1-9][0-9]*)$")
+
+def version_key(value):
+    return tuple(
+        (0, int(part)) if part.isdigit() else (1, part)
+        for part in re.findall(r"\d+|\D+", value)
+    )
+
+versions = set()
+for tag in os.environ["PUBLISHED_RELEASE_TAGS"].splitlines():
+    match = published.match(tag)
+    if match and pattern.fullmatch(match.group(1)):
+        versions.add(match.group(1))
+if versions:
+    print(max(versions, key=version_key))
+PY
+  )"
+  if [[ -z "$newest" ]]; then
+    printf '::warning::no published release of %s to validate against; selecting nothing for it\n' \
+      "$service" >&2
+    return 0
+  fi
+  printf '%s\t%s\n' "$service" "$newest"
+}
 
 while IFS=$'\t' read -r service upstream_repository tag_pattern release_floor release_source upstream_image_repository release_lines_json compose_pin_json; do
   service_dispatch_count=0
   versions=""
+  if [[ "$release_source" == "nonpolled" ]]; then
+    select_newest_published_version
+    continue
+  fi
   if [[ "$release_source" == "github-compose" ]]; then
     command -v ruby >/dev/null 2>&1 || {
       printf 'required command not found: ruby\n' >&2
@@ -367,6 +560,7 @@ PY
         '
     )"; then
       printf 'could not resolve pinned Compose image for %s; continuing\n' "$service" >&2
+      abort_if_validating "$service"
       continue
     fi
   elif [[ "$release_source" == "dockerhub" ]]; then
@@ -439,6 +633,7 @@ PY
     )"; then
       printf 'could not reconcile Docker Hub tags for %s from floor %s (%s); continuing\n' \
         "$service" "$release_floor" "$upstream_image_repository" >&2
+      abort_if_validating "$service"
       continue
     fi
   else
@@ -448,6 +643,7 @@ PY
     )"; then
       printf 'could not query stable releases for %s (%s); continuing\n' \
         "$service" "$upstream_repository" >&2
+      abort_if_validating "$service"
       continue
     fi
 
@@ -486,6 +682,7 @@ PY
     )"; then
       printf 'release floor %s was not found for %s (%s); continuing\n' \
         "$release_floor" "$service" "$upstream_repository" >&2
+      abort_if_validating "$service"
       continue
     fi
   fi
@@ -493,6 +690,12 @@ PY
   if [[ -z "$versions" ]]; then
     printf 'no stable release tags for %s match %s from floor %s\n' \
       "$service" "$tag_pattern" "$release_floor" >&2
+    abort_if_validating "$service"
+    continue
+  fi
+
+  if [[ "$VALIDATION_MODE" == 1 ]]; then
+    select_validation_versions
     continue
   fi
 
