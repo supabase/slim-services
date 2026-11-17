@@ -225,7 +225,7 @@ jobs:
               printf 'artifact_source=%s\n' "$artifact_source"
               printf 'build=%s\n' "$build"
               printf 'external=true\n'
-              printf 'external_snapshot_artifact=external-release-%s\n' "$GITHUB_RUN_ID"
+              printf 'external_snapshot_artifact=external-release-%s-%s-%s\n' "$GITHUB_RUN_ID" "$SERVICE" "$VERSION"
               printf 'image_release=%s\n' "$image_release"
               printf 'image_repository=%s\n' "$image_repository"
               printf 'matrix=%s\n' "$matrix"
@@ -386,7 +386,9 @@ jobs:
         if: steps.plan.outputs.external == 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: external-release-${{ github.run_id }}
+          # github.run_id is the caller's run in a workflow_call, which
+          # service-validation.yml makes once per service version.
+          name: external-release-${{ github.run_id }}-${{ inputs.service }}-${{ inputs.version }}
           if-no-files-found: error
           retention-days: 7
           path: ${{ runner.temp }}/external-release/

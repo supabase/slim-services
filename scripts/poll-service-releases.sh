@@ -482,7 +482,8 @@ PY
 }
 
 # Non-polled services (external release descriptors) have no upstream feed to
-# poll: validate the newest version that has already been published.
+# poll: validate the newest version that has already been published. With
+# none published, selection fails rather than leave the service unvalidated.
 select_newest_published_version() {
   local newest
   newest="$(
@@ -511,9 +512,8 @@ if versions:
 PY
   )"
   if [[ -z "$newest" ]]; then
-    printf '::warning::no published release of %s to validate against; selecting nothing for it\n' \
-      "$service" >&2
-    return 0
+    printf 'no published release of %s to validate against\n' "$service" >&2
+    abort_if_validating "$service"
   fi
   printf '%s\t%s\n' "$service" "$newest"
 }

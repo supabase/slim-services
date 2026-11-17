@@ -1479,7 +1479,7 @@ class ReleasePollerTest(unittest.TestCase):
         self.assertEqual(result.stdout.splitlines(), ["mailpit\tv1.28.0"])
         self.assertFalse(self.docker_trace.exists())
 
-    def test_validation_warns_and_selects_nothing_when_external_service_is_unpublished(self):
+    def test_validation_fails_when_external_service_is_unpublished(self):
         self.configure_external()
         self.published.write_text(
             published_jsonl_from_lines(
@@ -1488,10 +1488,10 @@ class ReleasePollerTest(unittest.TestCase):
             encoding="utf-8",
         )
         result = self.run_validation("mailpit")
-        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotEqual(result.returncode, 0)
         self.assertEqual(result.stdout, "")
-        self.assertIn("::warning::", result.stderr)
-        self.assertIn("mailpit", result.stderr)
+        self.assertIn("no published release of mailpit", result.stderr)
+        self.assertIn("cannot select validation versions for mailpit", result.stderr)
 
     def test_validation_rejects_unknown_services(self):
         result = self.run_validation("realtime", "nonesuch")
