@@ -322,6 +322,18 @@ jobs:
         if: steps.artifact-cache.outputs.cache-hit != 'true'
         uses: nixbuild/nix-quick-install-action@9f63be77f412a248c9d9a65a4c82cf066cdf8f0c # v35
 
+      # macOS ships bash 3.2, which exits 0 when a `set -u` error fires under
+      # an EXIT trap: a smoke that dies on an unbound variable reports success.
+      # Run every script under the bash 5 from the pinned nixpkgs instead.
+      - name: Put bash 5 on PATH
+        if: matrix.target_os == 'darwin' && steps.artifact-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          rev="$(python3 -c 'import json; print(json.load(open("flake.lock"))["nodes"]["nixpkgs"]["locked"]["rev"])')"
+          bash_out="$(nix build --no-link --print-out-paths "github:NixOS/nixpkgs/$rev#bash")"
+          printf '%s/bin\n' "$bash_out" >> "$GITHUB_PATH"
+
       - name: Restore/save Nix store cache
         if: steps.artifact-cache.outputs.cache-hit != 'true'
         uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7

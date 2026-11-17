@@ -5,6 +5,12 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=scripts/lib.sh
 source "$ROOT_DIR/scripts/lib.sh"
 
+# bash 3.2 (macOS /bin/bash) exits 0 when a `set -u` error fires under the
+# EXIT trap below, so a smoke that dies on an unbound variable would pass.
+if (( BASH_VERSINFO[0] < 4 )); then
+  fail "smokes need bash >= 4 (running $BASH_VERSION); put a newer bash first on PATH"
+fi
+
 RUN_ID="${RUN_ID:-$(date +%s)-$$}"
 NETWORK="${NETWORK:-slim-smoke-$RUN_ID}"
 POSTGRES_CONTAINER="${POSTGRES_CONTAINER:-slim-smoke-postgres-$RUN_ID}"
