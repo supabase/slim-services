@@ -78,7 +78,7 @@ unavailable on Docker Hub.
 | PostgREST | `v16.6` | `19.5 MiB` | `6.8 MiB` | `65.2%` | `9.1 MiB` | `0.05%` | [release](https://github.com/supabase/slim-services/releases/tag/postgrest-v16.6-r0) · [report](services/postgrest/REPORT.md) |
 | Auth | `v2.198.0` | `27.5 MiB` | `12.5 MiB` | `54.5%` | `9.9 MiB` | `0.41%` | [release](https://github.com/supabase/slim-services/releases/tag/auth-v2.198.0-r0) · [report](services/auth/REPORT.md) |
 | Realtime | `v2.172.0` | `117.3 MiB` | `24.5 MiB` | `79.1%` | `187.2 MiB` | `0.22%` | [release](https://github.com/supabase/slim-services/releases/tag/realtime-v2.172.0-r0) · [report](services/realtime/REPORT.md) |
-| Storage | `v1.97.0` | `241.0 MiB` | `59.7 MiB` | `75.2%` | `217.5 MiB` | `4.53%` | [release](https://github.com/supabase/slim-services/releases/tag/storage-v1.97.0-r0) · [report](services/storage/REPORT.md) |
+| Storage | `v1.97.1` | `241.0 MiB` | `59.7 MiB` | `75.2%` | `216.4 MiB` | `3.48%` | [release](https://github.com/supabase/slim-services/releases/tag/storage-v1.97.1-r0) · [report](services/storage/REPORT.md) |
 | Edge Runtime | `v1.79.1` (no-AI) | `352.3 MiB` | `46.2 MiB` | `86.9%` | `18.3 MiB` | `0.01%` | [release](https://github.com/supabase/slim-services/releases/tag/edge-runtime-v1.79.1-r0) · [report](services/edge-runtime/REPORT.md) |
 | Studio | `2026.11.16-sha-51bd16d` | `306.5 MiB` | `80.7 MiB` | `73.7%` | `251.5 MiB` | `6.19%` | [release](https://github.com/supabase/slim-services/releases/tag/studio-2026.11.16-sha-51bd16d-r0) · [report](services/studio/REPORT.md) |
 | Analytics | `v1.54.8` | `139.9 MiB` | `57.6 MiB` | `58.8%` | `534.8 MiB` | `0.32%` | [release](https://github.com/supabase/slim-services/releases/tag/analytics-v1.54.8-r0) · [report](services/analytics/REPORT.md) |
@@ -129,7 +129,7 @@ define the runtime floor.
 | PostgREST | `v16.6` | `14.5 MiB` | `78.0 MiB` | `58.0 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/postgrest-v16.6-r0) · [report](services/postgrest/REPORT.md) |
 | Auth | `v2.198.0` | `9.7 MiB` | `34.1 MiB` | `30.2 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/auth-v2.198.0-r0) · [report](services/auth/REPORT.md) |
 | Realtime | `v2.172.0` | `12.3 MiB` | `49.9 MiB` | `231.7 MiB` | `0.03%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/realtime-v2.172.0-r0) · [report](services/realtime/REPORT.md) |
-| Storage | `v1.97.0` | `40.4 MiB` | `171.9 MiB` | `257.3 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/storage-v1.97.0-r0) · [report](services/storage/REPORT.md) |
+| Storage | `v1.97.1` | `40.4 MiB` | `171.9 MiB` | `258.9 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/storage-v1.97.1-r0) · [report](services/storage/REPORT.md) |
 | Edge Runtime | `v1.79.1` | `40.0 MiB` | `161.6 MiB` | `56.3 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/edge-runtime-v1.79.1-r0) · [report](services/edge-runtime/REPORT.md) |
 | Studio | `2026.11.16-sha-51bd16d` | `61.8 MiB` | `268.5 MiB` | `385.2 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/studio-2026.11.16-sha-51bd16d-r0) · [report](services/studio/REPORT.md) |
 | Analytics | `v1.54.8` | `34.8 MiB` | `146.4 MiB` | `509.0 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/analytics-v1.54.8-r0) · [report](services/analytics/REPORT.md) |
