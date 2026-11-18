@@ -10,7 +10,7 @@ This repo asks a simple question, on three axes:
 
 <!-- generated:release-summary:begin -->
 For the latest published Linux ARM64 release set (12 rows), upstream images
-total **2549.7 MiB** compressed; the slim set totals **746.8 MiB** (**70.7%**
+total **2549.5 MiB** compressed; the slim set totals **746.8 MiB** (**70.7%**
 smaller — exact numbers below). Every published service also has measured
 steady-state RSS and idle-CPU numbers. These isolated service smoke
 measurements do not establish complete Dockerless CLI-stack behavior or a
@@ -72,9 +72,9 @@ unavailable on Docker Hub.
 <!-- generated:results:begin -->
 | Service | Version | Upstream ARM64 | Published slim | Reduction | Idle RSS | Idle CPU | Sources |
 |---|---:|---:|---:|---:|---:|---:|---|
-| Postgres 15 | `15.20.0.000` (all PostgreSQL extensions for the selected major, matching upstream preload configuration) | `314.2 MiB` | `130.1 MiB` | `58.6%` | `84.0 MiB` | `0.01%` | [release](https://github.com/supabase/slim-services/releases/tag/postgres-15.20.0.000-r0) · [report](services/postgres/REPORT.md) |
-| Postgres 17 | `17.12.0.000` (all PostgreSQL extensions for the selected major, matching upstream preload configuration) | `316.3 MiB` | `116.7 MiB` | `63.1%` | `81.2 MiB` | `0.01%` | [release](https://github.com/supabase/slim-services/releases/tag/postgres-17.12.0.000-r0) · [report](services/postgres/REPORT.md) |
-| Postgres OrioleDB | `17.11.0.019-orioledb` (OrioleDB 17: PG17 extensions plus orioledb; PostGIS and pgRouting are not allowlisted) | `317.0 MiB` | `117.3 MiB` | `63.0%` | `126.4 MiB` | `0.00%` | [release](https://github.com/supabase/slim-services/releases/tag/postgres-17.11.0.019-orioledb-r0) · [report](services/postgres/REPORT.md) |
+| Postgres 15 | `15.20.0.001` (all PostgreSQL extensions for the selected major, matching upstream preload configuration) | `314.1 MiB` | `130.1 MiB` | `58.6%` | `84.0 MiB` | `0.00%` | [release](https://github.com/supabase/slim-services/releases/tag/postgres-15.20.0.001-r0) · [report](services/postgres/REPORT.md) |
+| Postgres 17 | `17.12.0.001` (all PostgreSQL extensions for the selected major, matching upstream preload configuration) | `316.3 MiB` | `116.7 MiB` | `63.1%` | `81.3 MiB` | `0.01%` | [release](https://github.com/supabase/slim-services/releases/tag/postgres-17.12.0.001-r0) · [report](services/postgres/REPORT.md) |
+| Postgres OrioleDB | `17.11.0.020-orioledb` (OrioleDB 17: PG17 extensions plus orioledb; PostGIS and pgRouting are not allowlisted) | `316.9 MiB` | `117.3 MiB` | `63.0%` | `126.2 MiB` | `0.01%` | [release](https://github.com/supabase/slim-services/releases/tag/postgres-17.11.0.020-orioledb-r0) · [report](services/postgres/REPORT.md) |
 | PostgREST | `v16.6` | `19.5 MiB` | `6.8 MiB` | `65.2%` | `9.1 MiB` | `0.05%` | [release](https://github.com/supabase/slim-services/releases/tag/postgrest-v16.6-r0) · [report](services/postgrest/REPORT.md) |
 | Auth | `v2.198.0` | `27.5 MiB` | `12.5 MiB` | `54.5%` | `9.9 MiB` | `0.41%` | [release](https://github.com/supabase/slim-services/releases/tag/auth-v2.198.0-r0) · [report](services/auth/REPORT.md) |
 | Realtime | `v2.172.0` | `117.3 MiB` | `24.5 MiB` | `79.1%` | `187.2 MiB` | `0.22%` | [release](https://github.com/supabase/slim-services/releases/tag/realtime-v2.172.0-r0) · [report](services/realtime/REPORT.md) |
@@ -123,9 +123,9 @@ define the runtime floor.
 <!-- generated:host-native:begin -->
 | Service | Version | Archive | rootfs | Idle RSS | Idle CPU | Portable | Sources |
 |---|---:|---:|---:|---:|---:|---|---|
-| Postgres 15 | `15.20.0.000` | `118.8 MiB` | `570.5 MiB` | `115.5 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/postgres-15.20.0.000-r0) · [report](services/postgres/REPORT.md) |
-| Postgres 17 | `17.12.0.000` | `102.3 MiB` | `482.8 MiB` | `105.9 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/postgres-17.12.0.000-r0) · [report](services/postgres/REPORT.md) |
-| Postgres OrioleDB | `17.11.0.019-orioledb` | `102.8 MiB` | `484.1 MiB` | `213.9 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/postgres-17.11.0.019-orioledb-r0) · [report](services/postgres/REPORT.md) |
+| Postgres 15 | `15.20.0.001` | `118.8 MiB` | `570.5 MiB` | `113.7 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/postgres-15.20.0.001-r0) · [report](services/postgres/REPORT.md) |
+| Postgres 17 | `17.12.0.001` | `102.4 MiB` | `482.8 MiB` | `104.9 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/postgres-17.12.0.001-r0) · [report](services/postgres/REPORT.md) |
+| Postgres OrioleDB | `17.11.0.020-orioledb` | `102.9 MiB` | `484.1 MiB` | `211.8 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/postgres-17.11.0.020-orioledb-r0) · [report](services/postgres/REPORT.md) |
 | PostgREST | `v16.6` | `14.5 MiB` | `78.0 MiB` | `58.0 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/postgrest-v16.6-r0) · [report](services/postgrest/REPORT.md) |
 | Auth | `v2.198.0` | `9.7 MiB` | `34.1 MiB` | `30.2 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/auth-v2.198.0-r0) · [report](services/auth/REPORT.md) |
 | Realtime | `v2.172.0` | `12.3 MiB` | `49.9 MiB` | `231.7 MiB` | `0.03%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/realtime-v2.172.0-r0) · [report](services/realtime/REPORT.md) |
