@@ -41,12 +41,3 @@ index f69444eaf..6e5929860 100644
      pool_size = Application.get_env(:logflare, Logflare.PubSub)[:pool_size]
      read_replicas = Application.get_env(:logflare, :read_replicas, [])
  
-@@ -126,7 +132,7 @@ defmodule Logflare.Application do
-          endpoint: LogflareGrpc.Endpoint,
-          port: grpc_port,
-          start_server: true,
--         adapter_opts: [cred: grpc_creds],
-+         adapter_opts: grpc_adapter_opts,
-          exception_log_filter: {LogflareGrpc.ExceptionLogFilter, :emit_log?}},
-         # Monitor system level metrics
-         SystemMetricsSup,
