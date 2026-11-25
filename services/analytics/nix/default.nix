@@ -232,6 +232,13 @@ let
     # unset.
     postPatch = ''
       patch -p1 < ${./grpc-bind-ip.patch}
+      # Swap only the credential list for the patch's grpc_adapter_opts: later
+      # releases append to that list (v1.55.0 adds
+      # `++ LogflareGrpc.Shutdown.protocol_options()`), so diff context there
+      # breaks.
+      substituteInPlace lib/logflare/application.ex --replace-fail \
+        'adapter_opts: [cred: grpc_creds]' \
+        'adapter_opts: grpc_adapter_opts'
     '';
 
     preConfigure = ''
