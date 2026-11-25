@@ -278,6 +278,16 @@ PY
   fi
 elif [[ "$TARGET_OS" == "linux" && "$mirror_mode" == "1" ]]; then
   log "mirror mode: skipping artifact-derived Docker image construction"
+  # The mirror publishes the pinned upstream bytes unchanged, so prove the
+  # CLI healthcheck probe against that exact digest before it is copied.
+  policy_file="${UPSTREAM_ASSETS_FILE:?mirror mode needs UPSTREAM_ASSETS_FILE}"
+  [[ "$policy_file" = /* ]] || policy_file="$ROOT_DIR/$policy_file"
+  upstream_image_ref="$(
+    python3 "$ROOT_DIR/scripts/upstream-release.py" image "$policy_file" "$version" |
+      python3 -c 'import json, sys; image = json.load(sys.stdin); print(image["source"] + "@" + image["index_digest"])'
+  )"
+  PLATFORM="$(docker_platform "$TARGET_OS" "$ARCH")" \
+    "$ROOT_DIR/scripts/exec-probe-check.sh" "$service" "$upstream_image_ref"
 elif [[ "$TARGET_OS" == "darwin" ]]; then
   log "Darwin target complete; Docker images are only produced for Linux targets"
 else
