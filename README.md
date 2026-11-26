@@ -10,7 +10,7 @@ This repo asks a simple question, on three axes:
 
 <!-- generated:release-summary:begin -->
 For the latest published Linux ARM64 release set (12 rows), upstream images
-total **2547.9 MiB** compressed; the slim set totals **747.5 MiB** (**70.7%**
+total **2547.9 MiB** compressed; the slim set totals **747.6 MiB** (**70.7%**
 smaller — exact numbers below). Every published service also has measured
 steady-state RSS and idle-CPU numbers. These isolated service smoke
 measurements do not establish complete Dockerless CLI-stack behavior or a
@@ -83,7 +83,7 @@ unavailable on Docker Hub.
 | Studio | `2026.11.23-sha-4a73166` | `306.5 MiB` | `80.7 MiB` | `73.7%` | `252.1 MiB` | `6.00%` | [release](https://github.com/supabase/slim-services/releases/tag/studio-2026.11.23-sha-4a73166-r0) · [report](services/studio/REPORT.md) |
 | Analytics | `v1.56.0` | `136.7 MiB` | `57.8 MiB` | `57.7%` | `518.3 MiB` | `0.41%` | [release](https://github.com/supabase/slim-services/releases/tag/analytics-v1.56.0-r0) · [report](services/analytics/REPORT.md) |
 | PgMeta | `v1.1.0` | `108.8 MiB` | `58.8 MiB` | `46.0%` | `118.5 MiB` | `3.96%` | [release](https://github.com/supabase/slim-services/releases/tag/pgmeta-v1.1.0-r0) · [report](services/pgmeta/REPORT.md) |
-| Pooler | `v2.10.1` | `289.4 MiB`* | `35.9 MiB` | `87.6%`* | `161.4 MiB` | `0.08%` | [release](https://github.com/supabase/slim-services/releases/tag/pooler-v2.10.1-r0) · [report](services/pooler/REPORT.md) |
+| Pooler | `v2.10.2` | `289.4 MiB`* | `36.0 MiB` | `87.6%`* | `164.1 MiB` | `0.05%` | [release](https://github.com/supabase/slim-services/releases/tag/pooler-v2.10.2-r0) · [report](services/pooler/REPORT.md) |
 
 `*` Upstream comparison uses `UPSTREAM_COMPARE_IMAGE` from the recipe (the exact tag is not published on Docker Hub), so the percentage is directional.
 <!-- generated:results:end -->
@@ -134,7 +134,7 @@ define the runtime floor.
 | Studio | `2026.11.23-sha-4a73166` | `61.8 MiB` | `268.5 MiB` | `363.7 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/studio-2026.11.23-sha-4a73166-r0) · [report](services/studio/REPORT.md) |
 | Analytics | `v1.56.0` | `35.0 MiB` | `146.7 MiB` | `521.3 MiB` | `0.10%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/analytics-v1.56.0-r0) · [report](services/analytics/REPORT.md) |
 | PgMeta | `v1.1.0` | `40.4 MiB` | `186.1 MiB` | `166.6 MiB` | `0.20%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/pgmeta-v1.1.0-r0) · [report](services/pgmeta/REPORT.md) |
-| Pooler | `v2.10.1` | `23.8 MiB` | `53.3 MiB` | `208.6 MiB` | `0.10%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/pooler-v2.10.1-r0) · [report](services/pooler/REPORT.md) |
+| Pooler | `v2.10.2` | `23.9 MiB` | `53.5 MiB` | `202.1 MiB` | `0.00%` | yes | [release](https://github.com/supabase/slim-services/releases/tag/pooler-v2.10.2-r0) · [report](services/pooler/REPORT.md) |
 <!-- generated:host-native:end -->
 
 See [SLIM_IMAGES_REPORT.md](SLIM_IMAGES_REPORT.md) for the global summary.
