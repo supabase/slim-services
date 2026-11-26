@@ -33,6 +33,7 @@ load_recipe "$service"
 case "$mode" in
   --image)
     image="$value"
+    "$ROOT_DIR/scripts/exec-probe-check.sh" "$service" "$image"
     IMAGE="$image" "$ROOT_DIR/services/$service/smoke.sh"
     ;;
   --artifact)
@@ -72,6 +73,7 @@ PY
       smoke_platform="$(docker_platform "$artifact_os" "$artifact_arch")"
       UPDATE_MANIFEST=0 PLATFORM="$smoke_platform" \
         "$ROOT_DIR/scripts/build-image-from-artifact.sh" "$service" "$artifact_rootfs" "$image"
+      PLATFORM="$smoke_platform" "$ROOT_DIR/scripts/exec-probe-check.sh" "$service" "$image"
       PLATFORM="$smoke_platform" IMAGE="$image" "$ROOT_DIR/services/$service/smoke.sh"
     else
       fail "$service does not support direct artifact smoke for $artifact_os/$artifact_arch on this host"
